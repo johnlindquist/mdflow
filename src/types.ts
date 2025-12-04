@@ -1,5 +1,6 @@
 export interface CopilotFrontmatter {
-  pre?: string | string[];
+  before?: string | string[];
+  after?: string | string[];
   model?:
   | "claude-sonnet-4.5"
   | "claude-haiku-4.5"
@@ -27,8 +28,11 @@ export interface ParsedMarkdown {
   body: string;
 }
 
-export interface PreCommandResult {
+export interface CommandResult {
   command: string;
   output: string;
   exitCode: number;
 }
+
+/** @deprecated Use CommandResult instead */
+export type PreCommandResult = CommandResult;

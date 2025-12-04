@@ -4,9 +4,19 @@
   "description": "Schema for .md file frontmatter that configures copilot CLI prompts",
   "type": "object",
   "properties": {
-    "pre": {
-      "type": "string",
-      "description": "Command to run before copilot, output is prepended to prompt"
+    "before": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ],
+      "description": "Command(s) to run before copilot, output is prepended to prompt"
+    },
+    "after": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ],
+      "description": "Command(s) to run after copilot completes"
     },
     "model": {
       "type": "string",
@@ -50,18 +60,25 @@
       "default": false
     },
     "allow-tool": {
-      "type": "string",
-      "description": "Allow specific tools (e.g., 'shell(git:*)', 'write')",
-      "examples": ["shell(git:*)", "write", "read"]
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ],
+      "description": "Allow specific tools. Patterns: shell, shell(cmd), shell(cmd:*), write, MCP_SERVER, MCP_SERVER(tool)"
     },
     "deny-tool": {
-      "type": "string",
-      "description": "Deny specific tools (takes precedence over allow)",
-      "examples": ["shell(git push)"]
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ],
+      "description": "Deny specific tools (takes precedence over allow). Same patterns as allow-tool."
     },
     "add-dir": {
-      "type": "string",
-      "description": "Additional directory to allow file access"
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ],
+      "description": "Additional directory/directories to allow file access"
     }
   },
   "additionalProperties": false

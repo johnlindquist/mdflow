@@ -1,4 +1,4 @@
-import type { CopilotFrontmatter, PreCommandResult } from "./types";
+import type { CopilotFrontmatter, CommandResult } from "./types";
 
 /**
  * Convert a command string to a valid XML tag name
@@ -12,18 +12,19 @@ export function slugify(command: string): string {
 }
 
 /**
- * Run pre-commands and collect output
+ * Run commands and collect output
  */
-export async function runPreCommands(
-  pre: string | string[] | undefined
-): Promise<PreCommandResult[]> {
-  if (!pre) return [];
+export async function runCommands(
+  commands: string | string[] | undefined,
+  label: string = "Running"
+): Promise<CommandResult[]> {
+  if (!commands) return [];
 
-  const commands = Array.isArray(pre) ? pre : [pre];
-  const results: PreCommandResult[] = [];
+  const cmdList = Array.isArray(commands) ? commands : [commands];
+  const results: CommandResult[] = [];
 
-  for (const command of commands) {
-    console.log(`Running: ${command}`);
+  for (const command of cmdList) {
+    console.log(`${label}: ${command}`);
     const proc = Bun.spawn(["sh", "-c", command], {
       stdout: "pipe",
       stderr: "pipe",
@@ -42,6 +43,58 @@ export async function runPreCommands(
 
   return results;
 }
+
+/**
+ * Run before-commands and collect output
+ */
+export async function runBeforeCommands(
+  before: string | string[] | undefined
+): Promise<CommandResult[]> {
+  return runCommands(before, "Before");
+}
+
+/**
+ * Run after-commands when copilot completes
+ * First command receives pipedInput via stdin if provided
+ */
+export async function runAfterCommands(
+  after: string | string[] | undefined,
+  pipedInput?: string
+): Promise<CommandResult[]> {
+  if (!after) return [];
+
+  const cmdList = Array.isArray(after) ? after : [after];
+  const results: CommandResult[] = [];
+
+  for (let i = 0; i < cmdList.length; i++) {
+    const command = cmdList[i];
+    const isFirst = i === 0;
+
+    console.log(`After: ${command}`);
+
+    // First command gets piped input
+    const proc = Bun.spawn(["sh", "-c", command], {
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: isFirst && pipedInput ? new Response(pipedInput).body : undefined,
+    });
+
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    const output = (stdout + stderr).trim();
+    console.log(output);
+    console.log("---");
+
+    results.push({ command, output, exitCode });
+  }
+
+  return results;
+}
+
+/** @deprecated Use runBeforeCommands */
+export const runPreCommands = runBeforeCommands;
 
 /**
  * Build copilot command arguments from frontmatter
@@ -83,38 +136,53 @@ export function buildCopilotArgs(frontmatter: CopilotFrontmatter): string[] {
 }
 
 /**
- * Build the final prompt from pre-command output and body
+ * Build the final prompt from before-command output and body
  */
 export function buildPrompt(
-  preResults: PreCommandResult[],
+  beforeResults: CommandResult[],
   body: string
 ): string {
-  if (preResults.length === 0) {
+  if (beforeResults.length === 0) {
     return body;
   }
 
-  const preOutput = preResults
+  const beforeOutput = beforeResults
     .map(r => {
       const tag = slugify(r.command);
       return `<${tag}>\n${r.output}\n</${tag}>`;
     })
     .join("\n\n");
 
-  return `${preOutput}\n\n${body}`;
+  return `${beforeOutput}\n\n${body}`;
+}
+
+export interface CopilotResult {
+  exitCode: number;
+  output: string;
 }
 
 /**
  * Execute copilot with the given args and prompt
+ * If captureOutput is true, captures stdout instead of streaming
  */
 export async function runCopilot(
   args: string[],
-  prompt: string
-): Promise<number> {
+  prompt: string,
+  captureOutput: boolean = false
+): Promise<CopilotResult> {
   const proc = Bun.spawn(["copilot", ...args, prompt], {
-    stdout: "inherit",
+    stdout: captureOutput ? "pipe" : "inherit",
     stderr: "inherit",
     stdin: "inherit",
   });
 
-  return await proc.exited;
+  let output = "";
+  if (captureOutput && proc.stdout) {
+    output = await new Response(proc.stdout).text();
+    // Still print to console so user sees it
+    console.log(output);
+  }
+
+  const exitCode = await proc.exited;
+  return { exitCode, output };
 }

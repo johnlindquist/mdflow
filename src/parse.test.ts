@@ -34,34 +34,34 @@ Body`;
 
   test("parses inline array", () => {
     const content = `---
-pre: [command1, command2]
+before: [command1, command2]
 ---
 Body`;
     const result = parseFrontmatter(content);
-    expect(result.frontmatter.pre).toEqual(["command1", "command2"]);
+    expect(result.frontmatter.before).toEqual(["command1", "command2"]);
   });
 
   test("parses multiline array", () => {
     const content = `---
-pre:
+before:
   - gh run list
   - git status
 model: gpt-5
 ---
 Body`;
     const result = parseFrontmatter(content);
-    expect(result.frontmatter.pre).toEqual(["gh run list", "git status"]);
+    expect(result.frontmatter.before).toEqual(["gh run list", "git status"]);
     expect(result.frontmatter.model).toBe("gpt-5");
   });
 
-  test("parses single pre value as string", () => {
+  test("parses single before value as string", () => {
     const content = `---
-pre: gh run list --limit 5
+before: gh run list --limit 5
 model: claude-haiku-4.5
 ---
 Body`;
     const result = parseFrontmatter(content);
-    expect(result.frontmatter.pre).toBe("gh run list --limit 5");
+    expect(result.frontmatter.before).toBe("gh run list --limit 5");
   });
 
   test("handles kebab-case keys", () => {

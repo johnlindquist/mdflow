@@ -1,6 +1,6 @@
 import { expect, test, describe } from "bun:test";
 import { buildCopilotArgs, buildPrompt, slugify } from "./run";
-import type { CopilotFrontmatter, PreCommandResult } from "./types";
+import type { CopilotFrontmatter, CommandResult } from "./types";
 
 describe("slugify", () => {
   test("converts command to lowercase kebab-case", () => {
@@ -66,32 +66,43 @@ describe("buildCopilotArgs", () => {
 });
 
 describe("buildPrompt", () => {
-  test("returns body when no pre results", () => {
+  test("returns body when no before results", () => {
     const prompt = buildPrompt([], "Do something");
     expect(prompt).toBe("Do something");
   });
 
-  test("combines pre output with body", () => {
-    const preResults: PreCommandResult[] = [
+  test("wraps before output in XML tags", () => {
+    const beforeResults: CommandResult[] = [
       { command: "echo hello", output: "hello", exitCode: 0 },
     ];
-    const prompt = buildPrompt(preResults, "Analyze this");
-    expect(prompt).toContain("Command output:");
-    expect(prompt).toContain("$ echo hello");
+    const prompt = buildPrompt(beforeResults, "Analyze this");
+    expect(prompt).toContain("<echo-hello>");
     expect(prompt).toContain("hello");
-    expect(prompt).toContain("Instructions:");
+    expect(prompt).toContain("</echo-hello>");
     expect(prompt).toContain("Analyze this");
   });
 
-  test("combines multiple pre commands", () => {
-    const preResults: PreCommandResult[] = [
-      { command: "cmd1", output: "out1", exitCode: 0 },
-      { command: "cmd2", output: "out2", exitCode: 0 },
+  test("wraps multiple before commands in separate XML tags", () => {
+    const beforeResults: CommandResult[] = [
+      { command: "gh run list", output: "run1\nrun2", exitCode: 0 },
+      { command: "git status", output: "clean", exitCode: 0 },
     ];
-    const prompt = buildPrompt(preResults, "Body");
-    expect(prompt).toContain("$ cmd1");
-    expect(prompt).toContain("out1");
-    expect(prompt).toContain("$ cmd2");
-    expect(prompt).toContain("out2");
+    const prompt = buildPrompt(beforeResults, "Body");
+    expect(prompt).toContain("<gh-run-list>");
+    expect(prompt).toContain("run1\nrun2");
+    expect(prompt).toContain("</gh-run-list>");
+    expect(prompt).toContain("<git-status>");
+    expect(prompt).toContain("clean");
+    expect(prompt).toContain("</git-status>");
+  });
+
+  test("places body after XML tags", () => {
+    const beforeResults: CommandResult[] = [
+      { command: "cmd", output: "out", exitCode: 0 },
+    ];
+    const prompt = buildPrompt(beforeResults, "Instructions here");
+    const tagEnd = prompt.indexOf("</cmd>");
+    const bodyStart = prompt.indexOf("Instructions here");
+    expect(bodyStart).toBeGreaterThan(tagEnd);
   });
 });

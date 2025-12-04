@@ -1,7 +1,10 @@
 ---
-pre: gh run list --limit 5
+before: gh run list --limit 2
 model: claude-haiku-4.5
 silent: true
+allow-tool:
+    - shell(gh run:*)
+interactive: true
 ---
 
 Analyze the GitHub Actions output above. Tell me:
@@ -10,3 +13,5 @@ Analyze the GitHub Actions output above. Tell me:
 3. Any runs currently in progress?
 
 Be concise.
+
+Use the gh cli to dig deeper into the issue.
