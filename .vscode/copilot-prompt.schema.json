@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Copilot Prompt Frontmatter",
+  "description": "Schema for .md file frontmatter that configures copilot CLI prompts",
+  "type": "object",
+  "properties": {
+    "pre": {
+      "type": "string",
+      "description": "Command to run before copilot, output is prepended to prompt"
+    },
+    "model": {
+      "type": "string",
+      "description": "AI model to use",
+      "enum": [
+        "claude-sonnet-4.5",
+        "claude-haiku-4.5",
+        "claude-opus-4.5",
+        "claude-sonnet-4",
+        "gpt-5",
+        "gpt-5.1",
+        "gpt-5.1-codex-mini",
+        "gpt-5.1-codex",
+        "gpt-5-mini",
+        "gpt-4.1",
+        "gemini-3-pro-preview"
+      ]
+    },
+    "agent": {
+      "type": "string",
+      "description": "Custom agent to use (prompt mode only)"
+    },
+    "silent": {
+      "type": "boolean",
+      "description": "Output only agent response, no stats (useful for scripting)",
+      "default": false
+    },
+    "interactive": {
+      "type": "boolean",
+      "description": "Start interactive mode instead of single prompt",
+      "default": false
+    },
+    "allow-all-tools": {
+      "type": "boolean",
+      "description": "Allow all tools without confirmation",
+      "default": false
+    },
+    "allow-all-paths": {
+      "type": "boolean",
+      "description": "Disable file path verification, allow any path",
+      "default": false
+    },
+    "allow-tool": {
+      "type": "string",
+      "description": "Allow specific tools (e.g., 'shell(git:*)', 'write')",
+      "examples": ["shell(git:*)", "write", "read"]
+    },
+    "deny-tool": {
+      "type": "string",
+      "description": "Deny specific tools (takes precedence over allow)",
+      "examples": ["shell(git push)"]
+    },
+    "add-dir": {
+      "type": "string",
+      "description": "Additional directory to allow file access"
+    }
+  },
+  "additionalProperties": false
+}

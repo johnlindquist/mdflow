@@ -1,0 +1,12 @@
+{
+  "yaml.schemas": {
+    "./.vscode/copilot-prompt.schema.json": "*.md"
+  },
+  "[markdown]": {
+    "editor.quickSuggestions": {
+      "other": true,
+      "comments": false,
+      "strings": true
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "agents",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "handle-md": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test --bail=1",
+    "handle-md": "bun run src/index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
