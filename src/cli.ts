@@ -1,13 +1,16 @@
-import type { CopilotFrontmatter } from "./types";
+import type { AgentFrontmatter, CopilotFrontmatter } from "./types";
+import type { RunnerName } from "./runners/types";
 import { parseTemplateArgs, type TemplateVars } from "./template";
 
 export interface CliArgs {
   filePath: string;
-  overrides: Partial<CopilotFrontmatter>;
+  overrides: Partial<AgentFrontmatter>;
   appendText: string;
   templateVars: TemplateVars;
   noCache: boolean;
   dryRun: boolean;
+  runner?: RunnerName;
+  passthroughArgs: string[];
 }
 
 /** Known CLI flags that shouldn't be treated as template variables */
@@ -24,7 +27,11 @@ export const KNOWN_FLAGS = new Set([
   "--help", "-h",
   "--dry-run",
   "--no-cache",
+  "--runner", "-r",
+  "--",  // Passthrough separator
 ]);
+
+const VALID_RUNNERS = new Set(["claude", "codex", "copilot", "gemini"]);
 
 /**
  * Parse CLI arguments and extract overrides for frontmatter
@@ -32,14 +39,28 @@ export const KNOWN_FLAGS = new Set([
 export function parseCliArgs(argv: string[]): CliArgs {
   const args = argv.slice(2); // Skip node and script path
   let filePath = "";
-  const overrides: Partial<CopilotFrontmatter> = {};
+  const overrides: Partial<AgentFrontmatter> = {};
   const positionalArgs: string[] = [];
+  const passthroughArgs: string[] = [];
   let noCache = false;
   let dryRun = false;
+  let runner: RunnerName | undefined;
+  let inPassthrough = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     const nextArg = args[i + 1];
+
+    // After --, everything is passthrough
+    if (arg === "--") {
+      inPassthrough = true;
+      continue;
+    }
+
+    if (inPassthrough) {
+      passthroughArgs.push(arg);
+      continue;
+    }
 
     // Non-flag argument
     if (!arg.startsWith("-")) {
@@ -56,14 +77,15 @@ export function parseCliArgs(argv: string[]): CliArgs {
       case "--model":
       case "-m":
         if (nextArg) {
-          overrides.model = nextArg as CopilotFrontmatter["model"];
+          overrides.model = nextArg;
           i++;
         }
         break;
 
       case "--agent":
         if (nextArg) {
-          overrides.agent = nextArg;
+          // Agent goes to copilot config
+          overrides.copilot = { ...overrides.copilot, agent: nextArg };
           i++;
         }
         break;
@@ -111,6 +133,17 @@ export function parseCliArgs(argv: string[]): CliArgs {
         }
         break;
 
+      case "--runner":
+      case "-r":
+        if (nextArg && VALID_RUNNERS.has(nextArg)) {
+          runner = nextArg as RunnerName;
+          i++;
+        } else if (nextArg) {
+          console.error(`Invalid runner: ${nextArg}. Valid options: claude, codex, copilot, gemini`);
+          process.exit(1);
+        }
+        break;
+
       case "--help":
       case "-h":
         printHelp();
@@ -130,7 +163,16 @@ export function parseCliArgs(argv: string[]): CliArgs {
   // Parse template variables from remaining args
   const templateVars = parseTemplateArgs(args, KNOWN_FLAGS);
 
-  return { filePath, overrides, appendText: positionalArgs.join(" "), templateVars, noCache, dryRun };
+  return {
+    filePath,
+    overrides,
+    appendText: positionalArgs.join(" "),
+    templateVars,
+    noCache,
+    dryRun,
+    runner,
+    passthroughArgs,
+  };
 }
 
 /**
@@ -138,26 +180,44 @@ export function parseCliArgs(argv: string[]): CliArgs {
  * Applies defaults for unset values
  */
 export function mergeFrontmatter(
-  frontmatter: CopilotFrontmatter,
-  overrides: Partial<CopilotFrontmatter>
-): CopilotFrontmatter {
-  const defaults: Partial<CopilotFrontmatter> = {
+  frontmatter: AgentFrontmatter,
+  overrides: Partial<AgentFrontmatter>
+): AgentFrontmatter {
+  const defaults: Partial<AgentFrontmatter> = {
     silent: true,
   };
-  return { ...defaults, ...frontmatter, ...overrides };
+
+  // Deep merge backend-specific configs
+  const merged = { ...defaults, ...frontmatter, ...overrides };
+
+  if (frontmatter.claude || overrides.claude) {
+    merged.claude = { ...frontmatter.claude, ...overrides.claude };
+  }
+  if (frontmatter.codex || overrides.codex) {
+    merged.codex = { ...frontmatter.codex, ...overrides.codex };
+  }
+  if (frontmatter.copilot || overrides.copilot) {
+    merged.copilot = { ...frontmatter.copilot, ...overrides.copilot };
+  }
+  if (frontmatter.gemini || overrides.gemini) {
+    merged.gemini = { ...frontmatter.gemini, ...overrides.gemini };
+  }
+
+  return merged;
 }
 
 function printHelp() {
   console.log(`
-Usage: <file.md> [text] [options]
+Usage: <file.md> [text] [options] [-- passthrough-args]
 
 Arguments:
   text                    Additional text appended to the prompt body
 
 Options:
-  --model, -m <model>     Override AI model (claude-haiku-4.5, gpt-5, etc.)
-  --agent <agent>         Override custom agent
-  --silent, -s            Enable silent mode (no stats)
+  --runner, -r <runner>   Select backend: claude, codex, copilot, gemini (default: auto)
+  --model, -m <model>     Override AI model
+  --agent <agent>         Override custom agent (copilot)
+  --silent, -s            Enable silent mode (non-interactive)
   --no-silent             Disable silent mode
   --interactive, -i       Enable interactive mode
   --allow-all-tools       Allow all tools without confirmation
@@ -169,9 +229,14 @@ Options:
   --dry-run               Show what would be executed without running
   --help, -h              Show this help
 
+Passthrough:
+  --                      Everything after -- is passed to the runner
+
 Examples:
   DEMO.md "focus on error handling"
-  DEMO.md --model gpt-5 "be concise"
-  CHECK_ACTIONS.md -m claude-opus-4.5
+  DEMO.md --runner claude --model sonnet
+  DEMO.md --runner codex --model gpt-5
+  DEMO.md --runner gemini --model gemini-2.5-pro
+  DEMO.md -- --verbose --debug
 `);
 }

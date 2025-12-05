@@ -109,6 +109,51 @@ describe("parseCliArgs", () => {
     const result = parseCliArgs(["node", "script", "DEMO.md", "--dry-run"]);
     expect(result.dryRun).toBe(true);
   });
+
+  test("parses --runner flag", () => {
+    const result = parseCliArgs(["node", "script", "DEMO.md", "--runner", "claude"]);
+    expect(result.runner).toBe("claude");
+  });
+
+  test("parses -r short flag", () => {
+    const result = parseCliArgs(["node", "script", "DEMO.md", "-r", "codex"]);
+    expect(result.runner).toBe("codex");
+  });
+
+  test("runner defaults to undefined", () => {
+    const result = parseCliArgs(["node", "script", "DEMO.md"]);
+    expect(result.runner).toBeUndefined();
+  });
+
+  test("collects passthrough args after --", () => {
+    const result = parseCliArgs([
+      "node", "script", "DEMO.md",
+      "--model", "gpt-5",
+      "--", "--verbose", "--debug"
+    ]);
+    expect(result.filePath).toBe("DEMO.md");
+    expect(result.overrides.model).toBe("gpt-5");
+    expect(result.passthroughArgs).toEqual(["--verbose", "--debug"]);
+  });
+
+  test("passthrough args default to empty array", () => {
+    const result = parseCliArgs(["node", "script", "DEMO.md"]);
+    expect(result.passthroughArgs).toEqual([]);
+  });
+
+  test("all args after -- are passthrough even if they look like known flags", () => {
+    const result = parseCliArgs([
+      "node", "script", "DEMO.md",
+      "--", "--model", "ignored"
+    ]);
+    expect(result.overrides.model).toBeUndefined();
+    expect(result.passthroughArgs).toEqual(["--model", "ignored"]);
+  });
+
+  test("parses --agent into copilot config", () => {
+    const result = parseCliArgs(["node", "script", "DEMO.md", "--agent", "my-agent"]);
+    expect(result.overrides.copilot).toEqual({ agent: "my-agent" });
+  });
 });
 
 describe("mergeFrontmatter", () => {
@@ -143,5 +188,44 @@ describe("mergeFrontmatter", () => {
     const result = mergeFrontmatter(frontmatter, { "allow-all-tools": true });
     expect(result.model).toBe("claude-haiku-4.5");
     expect(result["allow-all-tools"]).toBe(true);
+  });
+
+  test("merges claude config", () => {
+    const frontmatter: CopilotFrontmatter = {
+      model: "sonnet",
+      claude: { "mcp-config": "./mcp.json" }
+    };
+    const result = mergeFrontmatter(frontmatter, {
+      claude: { "dangerously-skip-permissions": true }
+    });
+    expect(result.claude).toEqual({
+      "mcp-config": "./mcp.json",
+      "dangerously-skip-permissions": true
+    });
+  });
+
+  test("merges codex config", () => {
+    const frontmatter: CopilotFrontmatter = {
+      model: "gpt-5",
+      codex: { sandbox: "workspace-write" }
+    };
+    const result = mergeFrontmatter(frontmatter, {
+      codex: { "full-auto": true }
+    });
+    expect(result.codex).toEqual({
+      sandbox: "workspace-write",
+      "full-auto": true
+    });
+  });
+
+  test("merges copilot config", () => {
+    const frontmatter: CopilotFrontmatter = {
+      model: "gpt-5",
+      copilot: { agent: "my-agent" }
+    };
+    const result = mergeFrontmatter(frontmatter, {
+      copilot: { agent: "new-agent" }
+    });
+    expect(result.copilot?.agent).toBe("new-agent");
   });
 });

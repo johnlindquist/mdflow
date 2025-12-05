@@ -1,3 +1,5 @@
+import type { RunnerName } from "./runners/types";
+
 /** Input field definition for wizard mode */
 export interface InputField {
   name: string;
@@ -13,38 +15,93 @@ export interface Prerequisites {
   env?: string[];   // Required environment variables
 }
 
-export interface CopilotFrontmatter {
-  inputs?: InputField[];
-  context?: string | string[];  // Glob patterns for files to include
-  extract?: "json" | "code" | "markdown" | "raw";  // Output extraction mode
-  requires?: Prerequisites;     // Prerequisite checks
-  cache?: boolean;              // Enable result caching
-  before?: string | string[];
-  after?: string | string[];
-  model?:
-  | "claude-sonnet-4.5"
-  | "claude-haiku-4.5"
-  | "claude-opus-4.5"
-  | "claude-sonnet-4"
-  | "gpt-5"
-  | "gpt-5.1"
-  | "gpt-5.1-codex-mini"
-  | "gpt-5.1-codex"
-  | "gpt-5-mini"
-  | "gpt-4.1"
-  | "gemini-3-pro-preview";
+/** Claude-specific configuration */
+export interface ClaudeConfig {
+  "dangerously-skip-permissions"?: boolean;
+  "mcp-config"?: string | string[];
+  "allowed-tools"?: string;
+  [key: string]: unknown;
+}
+
+/** Codex-specific configuration */
+export interface CodexConfig {
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  approval?: "untrusted" | "on-failure" | "on-request" | "never";
+  "full-auto"?: boolean;
+  oss?: boolean;
+  "local-provider"?: string;
+  cd?: string;
+  [key: string]: unknown;
+}
+
+/** Copilot-specific configuration (legacy) */
+export interface CopilotConfig {
   agent?: string;
-  silent?: boolean;
-  interactive?: boolean;
-  "allow-all-tools"?: boolean;
+  [key: string]: unknown;
+}
+
+/** Gemini-specific configuration */
+export interface GeminiConfig {
+  sandbox?: boolean;
+  yolo?: boolean;
+  "approval-mode"?: "default" | "auto_edit" | "yolo";
+  "allowed-tools"?: string | string[];
+  extensions?: string | string[];
+  resume?: string;
+  "allowed-mcp-server-names"?: string | string[];
+  [key: string]: unknown;
+}
+
+/** Universal frontmatter that maps to all backends */
+export interface AgentFrontmatter {
+  // --- Runner Selection ---
+  runner?: RunnerName | "auto";  // Default: auto
+
+  // --- Identity ---
+  model?: string;  // Maps to --model on all backends
+
+  // --- Modes ---
+  silent?: boolean;        // Script mode (non-interactive output)
+  interactive?: boolean;   // Force TTY session
+
+  // --- Permissions (Universal) ---
+  "allow-all-tools"?: boolean;  // Maps to "God Mode" flags
   "allow-all-paths"?: boolean;
   "allow-tool"?: string;
   "deny-tool"?: string;
-  "add-dir"?: string;
+  "add-dir"?: string | string[];  // Maps to native --add-dir if supported
+
+  // --- Wizard Mode ---
+  inputs?: InputField[];
+
+  // --- Context ---
+  context?: string | string[];  // Glob patterns for files to include
+
+  // --- Output ---
+  extract?: "json" | "code" | "markdown" | "raw";  // Output extraction mode
+
+  // --- Caching ---
+  cache?: boolean;  // Enable result caching
+
+  // --- Prerequisites ---
+  requires?: Prerequisites;
+
+  // --- Hooks ---
+  before?: string | string[];
+  after?: string | string[];
+
+  // --- Backend Specific Config (Escape Hatches) ---
+  claude?: ClaudeConfig;
+  codex?: CodexConfig;
+  copilot?: CopilotConfig;
+  gemini?: GeminiConfig;
 }
 
+/** @deprecated Use AgentFrontmatter instead */
+export type CopilotFrontmatter = AgentFrontmatter;
+
 export interface ParsedMarkdown {
-  frontmatter: CopilotFrontmatter;
+  frontmatter: AgentFrontmatter;
   body: string;
 }
 

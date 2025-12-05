@@ -3,13 +3,16 @@
  * Shows commands and prompt without running anything
  */
 
-import type { CopilotFrontmatter } from "./types";
+import type { AgentFrontmatter, CopilotFrontmatter } from "./types";
 import type { ContextFile } from "./context";
+import type { RunnerName } from "./runners/types";
 
 export interface DryRunInfo {
-  frontmatter: CopilotFrontmatter;
+  frontmatter: AgentFrontmatter;
   prompt: string;
-  copilotArgs: string[];
+  copilotArgs: string[];  // Kept for backward compatibility
+  runnerArgs?: string[];
+  runnerName?: RunnerName;
   contextFiles: ContextFile[];
   beforeCommands: string[];
   afterCommands: string[];
@@ -21,6 +24,8 @@ export interface DryRunInfo {
  */
 export function formatDryRun(info: DryRunInfo): string {
   const sections: string[] = [];
+  const runnerName = info.runnerName || "copilot";
+  const args = info.runnerArgs || info.copilotArgs;
 
   // Header
   sections.push("═══════════════════════════════════════════════════════════════");
@@ -72,10 +77,10 @@ export function formatDryRun(info: DryRunInfo): string {
     sections.push("");
   }
 
-  // Copilot command
-  sections.push("🤖 COPILOT COMMAND");
+  // Runner command
+  sections.push(`🤖 ${runnerName.toUpperCase()} COMMAND`);
   sections.push("───────────────────────────────────────────────────────────────");
-  sections.push(`  copilot ${info.copilotArgs.join(" ")} <prompt>`);
+  sections.push(`  ${runnerName} ${args.join(" ")} <prompt>`);
   sections.push("");
 
   // Prompt preview
@@ -97,7 +102,7 @@ export function formatDryRun(info: DryRunInfo): string {
     sections.push("⚡ AFTER COMMANDS (will execute)");
     sections.push("───────────────────────────────────────────────────────────────");
     for (let i = 0; i < info.afterCommands.length; i++) {
-      const note = i === 0 ? " (receives copilot output via stdin)" : "";
+      const note = i === 0 ? ` (receives ${runnerName} output via stdin)` : "";
       sections.push(`  ${i + 1}. ${info.afterCommands[i]}${note}`);
     }
     sections.push("");
@@ -106,11 +111,13 @@ export function formatDryRun(info: DryRunInfo): string {
   // Configuration summary
   sections.push("⚙️  CONFIGURATION");
   sections.push("───────────────────────────────────────────────────────────────");
+  sections.push(`  Runner: ${runnerName}`);
   if (info.frontmatter.model) {
     sections.push(`  Model: ${info.frontmatter.model}`);
   }
-  if (info.frontmatter.agent) {
-    sections.push(`  Agent: ${info.frontmatter.agent}`);
+  const agent = info.frontmatter.copilot?.agent;
+  if (agent) {
+    sections.push(`  Agent: ${agent}`);
   }
   if (info.frontmatter.extract) {
     sections.push(`  Extract: ${info.frontmatter.extract}`);

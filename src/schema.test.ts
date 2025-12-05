@@ -111,6 +111,100 @@ describe("validateFrontmatter", () => {
   });
 });
 
+describe("runner selection", () => {
+  test("validates runner field", () => {
+    for (const runner of ["claude", "codex", "copilot", "auto"]) {
+      const result = validateFrontmatter({ runner });
+      expect(result.runner).toBe(runner);
+    }
+  });
+
+  test("rejects invalid runner", () => {
+    expect(() => validateFrontmatter({ runner: "invalid" })).toThrow();
+  });
+});
+
+describe("backend-specific configs", () => {
+  test("validates claude config", () => {
+    const result = validateFrontmatter({
+      runner: "claude",
+      claude: {
+        "dangerously-skip-permissions": true,
+        "mcp-config": "./mcp.json",
+        "allowed-tools": "Read,Write"
+      }
+    });
+    expect(result.claude?.["dangerously-skip-permissions"]).toBe(true);
+    expect(result.claude?.["mcp-config"]).toBe("./mcp.json");
+    expect(result.claude?.["allowed-tools"]).toBe("Read,Write");
+  });
+
+  test("validates claude mcp-config as array", () => {
+    const result = validateFrontmatter({
+      claude: { "mcp-config": ["./mcp1.json", "./mcp2.json"] }
+    });
+    expect(result.claude?.["mcp-config"]).toEqual(["./mcp1.json", "./mcp2.json"]);
+  });
+
+  test("validates codex config", () => {
+    const result = validateFrontmatter({
+      runner: "codex",
+      codex: {
+        sandbox: "workspace-write",
+        approval: "on-failure",
+        "full-auto": true,
+        oss: false,
+        "local-provider": "ollama",
+        cd: "./src"
+      }
+    });
+    expect(result.codex?.sandbox).toBe("workspace-write");
+    expect(result.codex?.approval).toBe("on-failure");
+    expect(result.codex?.["full-auto"]).toBe(true);
+    expect(result.codex?.oss).toBe(false);
+    expect(result.codex?.["local-provider"]).toBe("ollama");
+    expect(result.codex?.cd).toBe("./src");
+  });
+
+  test("rejects invalid codex sandbox", () => {
+    expect(() => validateFrontmatter({
+      codex: { sandbox: "invalid" }
+    })).toThrow();
+  });
+
+  test("rejects invalid codex approval", () => {
+    expect(() => validateFrontmatter({
+      codex: { approval: "invalid" }
+    })).toThrow();
+  });
+
+  test("validates copilot config", () => {
+    const result = validateFrontmatter({
+      copilot: { agent: "my-agent" }
+    });
+    expect(result.copilot?.agent).toBe("my-agent");
+  });
+
+  test("allows unknown keys in backend configs", () => {
+    const result = validateFrontmatter({
+      claude: { "future-flag": true }
+    });
+    expect((result.claude as any)?.["future-flag"]).toBe(true);
+  });
+});
+
+describe("add-dir as array", () => {
+  test("validates add-dir as string", () => {
+    const result = validateFrontmatter({ "add-dir": "/some/path" });
+    expect(result["add-dir"]).toBe("/some/path");
+  });
+
+  test("validates add-dir as array", () => {
+    const result = validateFrontmatter({ "add-dir": ["/path1", "/path2"] });
+    expect(result["add-dir"]).toEqual(["/path1", "/path2"]);
+  });
+});
+
 describe("safeParseFrontmatter", () => {
   test("returns success with valid data", () => {
     const result = safeParseFrontmatter({ model: "gpt-5" });

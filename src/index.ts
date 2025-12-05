@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { parseFrontmatter } from "./parse";
 import { parseCliArgs, mergeFrontmatter } from "./cli";
-import { runBeforeCommands, runAfterCommands, buildCopilotArgs, buildPrompt, runCopilot, slugify } from "./run";
+import { runBeforeCommands, runAfterCommands, buildPrompt, slugify } from "./run";
 import { substituteTemplateVars, extractTemplateVars } from "./template";
 import { promptInputs, validateInputField } from "./inputs";
 import { resolveContextGlobs, formatContextAsXml, getContextStats, type ContextFile } from "./context";
@@ -10,6 +10,7 @@ import { generateCacheKey, readCache, writeCache } from "./cache";
 import { validatePrerequisites, handlePrerequisiteFailure } from "./prerequisites";
 import { formatDryRun, toCommandList, type DryRunInfo } from "./dryrun";
 import { isRemoteUrl, fetchRemote, cleanupRemote, printRemoteWarning } from "./remote";
+import { resolveRunnerSync, type RunContext } from "./runners";
 import type { InputField } from "./types";
 import { dirname, resolve } from "path";
 
@@ -31,7 +32,7 @@ async function readStdin(): Promise<string> {
 }
 
 async function main() {
-  const { filePath, overrides, appendText, templateVars, noCache, dryRun } = parseCliArgs(process.argv);
+  const { filePath, overrides, appendText, templateVars, noCache, dryRun, runner: cliRunner, passthroughArgs } = parseCliArgs(process.argv);
 
   if (!filePath) {
     console.error("Usage: <file.md> [text] [options]");
@@ -148,15 +149,24 @@ async function main() {
     finalBody = `${finalBody}\n\n${appendText}`;
   }
 
-  // Build copilot args
-  const args = buildCopilotArgs(frontmatter);
+  // Resolve which runner to use
+  const runner = resolveRunnerSync({ cliRunner, frontmatter });
+  console.log(`Runner: ${runner.name}`);
 
   // Handle dry-run mode - show what would be executed without running
   if (dryRun) {
+    const runnerArgs = runner.buildArgs({
+      prompt: finalBody,
+      frontmatter,
+      passthroughArgs,
+      captureOutput: false,
+    });
     const dryRunInfo: DryRunInfo = {
       frontmatter,
       prompt: finalBody,
-      copilotArgs: args,
+      copilotArgs: runnerArgs,
+      runnerArgs,
+      runnerName: runner.name,
       contextFiles,
       beforeCommands: toCommandList(frontmatter.before),
       afterCommands: toCommandList(frontmatter.after),
@@ -183,8 +193,16 @@ async function main() {
   const useCache = frontmatter.cache === true && !noCache;
   const captureOutput = hasAfterCommands || hasExtract || useCache;
 
+  // Build run context
+  const runContext: RunContext = {
+    prompt,
+    frontmatter,
+    passthroughArgs,
+    captureOutput,
+  };
+
   // Check cache first if enabled
-  let copilotResult: { exitCode: number; output: string };
+  let runResult: { exitCode: number; output: string };
   const cacheKey = useCache
     ? generateCacheKey({ frontmatter, body: finalBody, contextFiles })
     : null;
@@ -194,25 +212,25 @@ async function main() {
     if (cachedOutput !== null) {
       console.log("Cache: hit");
       console.log(cachedOutput);
-      copilotResult = { exitCode: 0, output: cachedOutput };
+      runResult = { exitCode: 0, output: cachedOutput };
     } else {
       console.log("Cache: miss");
-      copilotResult = await runCopilot(args, prompt, captureOutput);
+      runResult = await runner.run(runContext);
       // Write to cache on success
-      if (copilotResult.exitCode === 0 && copilotResult.output) {
-        await writeCache(cacheKey, copilotResult.output);
+      if (runResult.exitCode === 0 && runResult.output) {
+        await writeCache(cacheKey, runResult.output);
       }
     }
   } else {
-    copilotResult = await runCopilot(args, prompt, captureOutput);
+    runResult = await runner.run(runContext);
   }
 
   // Apply output extraction if specified
-  let outputForPipe = copilotResult.output;
-  if (hasExtract && copilotResult.output) {
-    outputForPipe = extractOutput(copilotResult.output, frontmatter.extract as ExtractMode);
-    // Print extracted output (different from full output already shown by runCopilot)
-    if (outputForPipe !== copilotResult.output) {
+  let outputForPipe = runResult.output;
+  if (hasExtract && runResult.output) {
+    outputForPipe = extractOutput(runResult.output, frontmatter.extract as ExtractMode);
+    // Print extracted output (different from full output already shown by runner)
+    if (outputForPipe !== runResult.output) {
       console.log("\n--- Extracted output ---");
       console.log(outputForPipe);
     }
@@ -226,9 +244,9 @@ async function main() {
     await cleanupRemote(localFilePath);
   }
 
-  // Exit with copilot's exit code (or first failed after command)
+  // Exit with runner's exit code (or first failed after command)
   const failedAfter = afterResults.find(r => r.exitCode !== 0);
-  process.exit(failedAfter ? failedAfter.exitCode : copilotResult.exitCode);
+  process.exit(failedAfter ? failedAfter.exitCode : runResult.exitCode);
 }
 
 main();

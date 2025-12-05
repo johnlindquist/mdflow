@@ -1,4 +1,4 @@
-import type { CopilotFrontmatter, CommandResult } from "./types";
+import type { AgentFrontmatter, CommandResult } from "./types";
 
 /**
  * Convert a command string to a valid XML tag name
@@ -54,7 +54,7 @@ export async function runBeforeCommands(
 }
 
 /**
- * Run after-commands when copilot completes
+ * Run after-commands when agent completes
  * First command receives pipedInput via stdin if provided
  */
 export async function runAfterCommands(
@@ -97,19 +97,46 @@ export async function runAfterCommands(
 export const runPreCommands = runBeforeCommands;
 
 /**
- * Build copilot command arguments from frontmatter
+ * Build the final prompt from before-command output and body
  */
-export function buildCopilotArgs(frontmatter: CopilotFrontmatter): string[] {
+export function buildPrompt(
+  beforeResults: CommandResult[],
+  body: string
+): string {
+  if (beforeResults.length === 0) {
+    return body;
+  }
+
+  const beforeOutput = beforeResults
+    .map(r => {
+      const tag = slugify(r.command);
+      return `<${tag}>\n${r.output}\n</${tag}>`;
+    })
+    .join("\n\n");
+
+  return `${beforeOutput}\n\n${body}`;
+}
+
+// Legacy exports for backward compatibility
+// These are now handled by runners
+
+/** @deprecated Use runner.buildArgs() instead */
+export function buildCopilotArgs(frontmatter: AgentFrontmatter): string[] {
   const args: string[] = [];
 
   if (frontmatter.model) {
     args.push("--model", frontmatter.model);
   }
-  if (frontmatter.agent) {
-    args.push("--agent", frontmatter.agent);
+  const agent = frontmatter.copilot?.agent;
+  if (agent) {
+    args.push("--agent", String(agent));
   }
-  if (frontmatter["add-dir"]) {
-    args.push("--add-dir", frontmatter["add-dir"]);
+  const addDir = frontmatter["add-dir"];
+  if (addDir) {
+    const dirs = Array.isArray(addDir) ? addDir : [addDir];
+    for (const dir of dirs) {
+      args.push("--add-dir", dir);
+    }
   }
   if (frontmatter["allow-tool"]) {
     args.push("--allow-tool", frontmatter["allow-tool"]);
@@ -135,36 +162,12 @@ export function buildCopilotArgs(frontmatter: CopilotFrontmatter): string[] {
   return args;
 }
 
-/**
- * Build the final prompt from before-command output and body
- */
-export function buildPrompt(
-  beforeResults: CommandResult[],
-  body: string
-): string {
-  if (beforeResults.length === 0) {
-    return body;
-  }
-
-  const beforeOutput = beforeResults
-    .map(r => {
-      const tag = slugify(r.command);
-      return `<${tag}>\n${r.output}\n</${tag}>`;
-    })
-    .join("\n\n");
-
-  return `${beforeOutput}\n\n${body}`;
-}
-
 export interface CopilotResult {
   exitCode: number;
   output: string;
 }
 
-/**
- * Execute copilot with the given args and prompt
- * If captureOutput is true, captures stdout instead of streaming
- */
+/** @deprecated Use runner.run() instead */
 export async function runCopilot(
   args: string[],
   prompt: string,
