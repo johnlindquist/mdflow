@@ -6,6 +6,7 @@ export interface CliArgs {
   overrides: Partial<CopilotFrontmatter>;
   appendText: string;
   templateVars: TemplateVars;
+  noCache: boolean;
 }
 
 /** Known CLI flags that shouldn't be treated as template variables */
@@ -32,6 +33,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   let filePath = "";
   const overrides: Partial<CopilotFrontmatter> = {};
   const positionalArgs: string[] = [];
+  let noCache = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -112,13 +114,17 @@ export function parseCliArgs(argv: string[]): CliArgs {
         printHelp();
         process.exit(0);
         break;
+
+      case "--no-cache":
+        noCache = true;
+        break;
     }
   }
 
   // Parse template variables from remaining args
   const templateVars = parseTemplateArgs(args, KNOWN_FLAGS);
 
-  return { filePath, overrides, appendText: positionalArgs.join(" "), templateVars };
+  return { filePath, overrides, appendText: positionalArgs.join(" "), templateVars, noCache };
 }
 
 /**
@@ -153,6 +159,7 @@ Options:
   --allow-tool <pattern>  Allow specific tool
   --deny-tool <pattern>   Deny specific tool
   --add-dir <dir>         Add directory to allowed list
+  --no-cache              Skip cache and force fresh execution
   --help, -h              Show this help
 
 Examples:

@@ -4,8 +4,9 @@ import { parseCliArgs, mergeFrontmatter } from "./cli";
 import { runBeforeCommands, runAfterCommands, buildCopilotArgs, buildPrompt, runCopilot, slugify } from "./run";
 import { substituteTemplateVars, extractTemplateVars } from "./template";
 import { promptInputs, validateInputField } from "./inputs";
-import { resolveContextGlobs, formatContextAsXml, getContextStats } from "./context";
+import { resolveContextGlobs, formatContextAsXml, getContextStats, type ContextFile } from "./context";
 import { extractOutput, isValidExtractMode, type ExtractMode } from "./extract";
+import { generateCacheKey, readCache, writeCache } from "./cache";
 import type { InputField } from "./types";
 import { dirname } from "path";
 
@@ -27,7 +28,7 @@ async function readStdin(): Promise<string> {
 }
 
 async function main() {
-  const { filePath, overrides, appendText, templateVars } = parseCliArgs(process.argv);
+  const { filePath, overrides, appendText, templateVars, noCache } = parseCliArgs(process.argv);
 
   if (!filePath) {
     console.error("Usage: <file.md> [text] [options]");
@@ -96,9 +97,10 @@ async function main() {
 
   // Resolve context globs and include file contents
   let contextXml = "";
+  let contextFiles: ContextFile[] = [];
   if (frontmatter.context) {
     const cwd = dirname(filePath);
-    const contextFiles = await resolveContextGlobs(frontmatter.context, cwd);
+    contextFiles = await resolveContextGlobs(frontmatter.context, cwd);
     if (contextFiles.length > 0) {
       const stats = getContextStats(contextFiles);
       console.log(`Context: ${stats.fileCount} files, ${stats.totalLines} lines`);
@@ -125,11 +127,35 @@ async function main() {
   const args = buildCopilotArgs(frontmatter);
   const prompt = buildPrompt(beforeResults, finalBody);
 
-  // Capture output if we have extract mode or after commands
+  // Capture output if we have extract mode, after commands, or caching
   const hasAfterCommands = frontmatter.after !== undefined;
   const hasExtract = frontmatter.extract && isValidExtractMode(frontmatter.extract);
-  const captureOutput = hasAfterCommands || hasExtract;
-  const copilotResult = await runCopilot(args, prompt, captureOutput);
+  const useCache = frontmatter.cache === true && !noCache;
+  const captureOutput = hasAfterCommands || hasExtract || useCache;
+
+  // Check cache first if enabled
+  let copilotResult: { exitCode: number; output: string };
+  const cacheKey = useCache
+    ? generateCacheKey({ frontmatter, body: finalBody, contextFiles })
+    : null;
+
+  if (cacheKey && !noCache) {
+    const cachedOutput = await readCache(cacheKey);
+    if (cachedOutput !== null) {
+      console.log("Cache: hit");
+      console.log(cachedOutput);
+      copilotResult = { exitCode: 0, output: cachedOutput };
+    } else {
+      console.log("Cache: miss");
+      copilotResult = await runCopilot(args, prompt, captureOutput);
+      // Write to cache on success
+      if (copilotResult.exitCode === 0 && copilotResult.output) {
+        await writeCache(cacheKey, copilotResult.output);
+      }
+    }
+  } else {
+    copilotResult = await runCopilot(args, prompt, captureOutput);
+  }
 
   // Apply output extraction if specified
   let outputForPipe = copilotResult.output;

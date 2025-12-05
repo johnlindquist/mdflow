@@ -9,6 +9,7 @@ describe("parseCliArgs", () => {
     expect(result.overrides).toEqual({});
     expect(result.appendText).toBe("");
     expect(result.templateVars).toEqual({});
+    expect(result.noCache).toBe(false);
   });
 
   test("extracts positional text after file path", () => {
@@ -96,6 +97,11 @@ describe("parseCliArgs", () => {
       target: "src/utils.ts",
       reference: "src/main.ts"
     });
+  });
+
+  test("parses --no-cache flag", () => {
+    const result = parseCliArgs(["node", "script", "DEMO.md", "--no-cache"]);
+    expect(result.noCache).toBe(true);
   });
 });
 
