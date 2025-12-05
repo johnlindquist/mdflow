@@ -7,6 +7,7 @@ import { promptInputs, validateInputField } from "./inputs";
 import { resolveContextGlobs, formatContextAsXml, getContextStats, type ContextFile } from "./context";
 import { extractOutput, isValidExtractMode, type ExtractMode } from "./extract";
 import { generateCacheKey, readCache, writeCache } from "./cache";
+import { validatePrerequisites, handlePrerequisiteFailure } from "./prerequisites";
 import type { InputField } from "./types";
 import { dirname } from "path";
 
@@ -93,6 +94,14 @@ async function main() {
   if (Object.keys(frontmatter).length === 0) {
     console.log(content);
     process.exit(0);
+  }
+
+  // Check prerequisites before proceeding
+  if (frontmatter.requires) {
+    const prereqResult = await validatePrerequisites(frontmatter.requires);
+    if (!prereqResult.success) {
+      handlePrerequisiteFailure(prereqResult);
+    }
   }
 
   // Resolve context globs and include file contents
