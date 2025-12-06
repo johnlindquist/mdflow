@@ -1,3 +1,30 @@
+# [2.0.0](https://github.com/johnlindquist/markdown-agent/compare/v1.0.0...v2.0.0) (2025-12-06)
+
+
+### Features
+
+* rename runners to harnesses and implement new unified frontmatter keys ([66ad305](https://github.com/johnlindquist/markdown-agent/commit/66ad305ed8b3df4afb2a010b33513ca284705abd))
+
+
+### BREAKING CHANGES
+
+* The 'runners' directory is now 'harnesses'. Old names still work via aliases.
+
+New unified frontmatter keys with backward-compatible deprecated aliases:
+- `approval`: enum ("ask" | "sandbox" | "yolo") replaces `allow-all-tools`
+- `tools`: nested `{ allow, deny }` replaces `allow-tool`/`deny-tool`
+- `dirs`: replaces `add-dir`
+- `session`: unified `{ resume, fork }` replaces `resume`/`continue`
+- `output`: replaces `output-format`
+
+All harnesses (Claude, Codex, Gemini, Copilot) updated with:
+- New key handling with `??` fallback to deprecated keys
+- Consistent approval mode mapping across backends
+- Session resume support via unified object
+- Output format standardization
+
+Tests updated with 95 passing tests covering both new and deprecated keys.
+
 # 1.0.0 (2025-12-06)
 
 
