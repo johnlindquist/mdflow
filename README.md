@@ -505,23 +505,27 @@ ma PLANNER.md --request "Add dark mode" | ma --run-batch
 
 ## Shell Setup: Treat .md as Agents
 
-Run the setup wizard to configure your shell:
+### The Power of Zsh Suffix Aliases
+
+Zsh has a hidden superpower: **suffix aliases**. They let you associate file extensions with commands, making any `.md` file directly executable:
+
+```bash
+TASK.md                    # Just type the filename
+TASK.md --model opus       # With options
+TASK.md "focus on tests"   # With arguments
+```
+
+No `./`, no `ma` prefix, no shebangs. The shell sees `.md` and knows what to do.
+
+Run the setup wizard to configure this:
 
 ```bash
 ma --setup
 ```
 
-This adds a suffix alias that lets you run `.md` files directly:
+### Manual Setup (macOS/Linux)
 
-```bash
-./TASK.md                              # Run agent
-./TASK.md --model opus                 # With options
-./TASK.md "focus on tests" --dry-run   # With text and flags
-```
-
-### Manual Setup
-
-If you prefer to configure manually, add this to `~/.zshrc`:
+Add this to `~/.zshrc`:
 
 ```bash
 # markdown-agent: Treat .md files as executable agents
@@ -548,6 +552,28 @@ _handle_md() {
 ```
 
 Then reload your shell: `source ~/.zshrc`
+
+### Bash Users
+
+Bash doesn't have suffix aliases, but you can use a function with tab completion:
+
+```bash
+# Add to ~/.bashrc
+ma() {
+  command ma "$@"
+}
+# Then use: ma TASK.md --model opus
+```
+
+### Windows
+
+Windows doesn't have an equivalent to suffix aliases. Current options:
+
+1. **WSL (recommended)**: Use Windows Subsystem for Linux with zsh
+2. **Git Bash**: Use the bash approach above
+3. **Direct invocation**: Always use `ma TASK.md`
+
+We're exploring better Windows solutions. Contributions welcome!
 
 ## Building Your Agent Library
 
