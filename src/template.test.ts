@@ -56,17 +56,48 @@ describe("substituteTemplateVars", () => {
     expect(result).toBe("1 + 1 = 2x");
   });
 
-  test("leaves unknown variables unchanged by default", () => {
+  test("renders unknown variables as empty by default", () => {
     const result = substituteTemplateVars("{{ known }} and {{ unknown }}", {
       known: "yes",
     });
-    expect(result).toBe("yes and {{ unknown }}");
+    expect(result).toBe("yes and ");
+  });
+
+  test("uses default filter for fallback values", () => {
+    const result = substituteTemplateVars('Hello {{ name | default: "World" }}!', {});
+    expect(result).toBe("Hello World!");
   });
 
   test("throws in strict mode for missing variables", () => {
     expect(() =>
       substituteTemplateVars("{{ missing }}", {}, { strict: true })
     ).toThrow("Missing required template variable: missing");
+  });
+
+  test("supports conditionals", () => {
+    const result = substituteTemplateVars(
+      "{% if force %}--force{% endif %}",
+      { force: "true" }
+    );
+    expect(result).toBe("--force");
+  });
+
+  test("supports conditional else", () => {
+    const result = substituteTemplateVars(
+      "{% if debug %}DEBUG{% else %}PRODUCTION{% endif %}",
+      {}
+    );
+    expect(result).toBe("PRODUCTION");
+  });
+
+  test("supports upcase filter", () => {
+    const result = substituteTemplateVars("{{ name | upcase }}", { name: "hello" });
+    expect(result).toBe("HELLO");
+  });
+
+  test("supports downcase filter", () => {
+    const result = substituteTemplateVars("{{ name | downcase }}", { name: "HELLO" });
+    expect(result).toBe("hello");
   });
 });
 

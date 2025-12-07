@@ -13,8 +13,6 @@ export interface CliArgs {
   passthroughArgs: string[];
   check: boolean;
   json: boolean;
-  runBatch: boolean;
-  concurrency?: number;
   setup: boolean;
 }
 
@@ -27,8 +25,6 @@ export const KNOWN_FLAGS = new Set([
   "--verbose", "-v",
   "--check",
   "--json",
-  "--run-batch",
-  "--concurrency",
   "--setup",
   "--",  // Passthrough separator
 ]);
@@ -49,8 +45,6 @@ export function parseCliArgs(argv: string[]): CliArgs {
   let inPassthrough = false;
   let check = false;
   let json = false;
-  let runBatch = false;
-  let concurrency: number | undefined;
   let setup = false;
 
   for (let i = 0; i < args.length; i++) {
@@ -114,17 +108,6 @@ export function parseCliArgs(argv: string[]): CliArgs {
         json = true;
         break;
 
-      case "--run-batch":
-        runBatch = true;
-        break;
-
-      case "--concurrency":
-        if (nextArg && !isNaN(parseInt(nextArg))) {
-          concurrency = parseInt(nextArg);
-          i++;
-        }
-        break;
-
       case "--setup":
         setup = true;
         break;
@@ -146,8 +129,6 @@ export function parseCliArgs(argv: string[]): CliArgs {
     passthroughArgs,
     check,
     json,
-    runBatch,
-    concurrency,
     setup,
   };
 }
@@ -165,7 +146,6 @@ export function mergeFrontmatter(
 function printHelp() {
   console.log(`
 Usage: ma <file.md> [text] [options] [-- passthrough-args]
-       ma --run-batch [options] < manifest.json
        ma --setup
 
 Arguments:
@@ -181,10 +161,6 @@ Options:
   --verbose, -v           Show debug info
   --setup                 Configure shell to run .md files directly
   --help, -h              Show this help
-
-Batch Mode:
-  --run-batch             Read JSON manifest from stdin, dispatch parallel agents
-  --concurrency <n>       Max parallel agents (default: 4)
 
 Passthrough:
   --                      Everything after -- is passed to the command

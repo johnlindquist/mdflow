@@ -126,31 +126,6 @@ describe("parseCliArgs", () => {
     expect(result.json).toBe(false);
   });
 
-  test("parses --run-batch flag", () => {
-    const result = parseCliArgs(["node", "script", "--run-batch"]);
-    expect(result.runBatch).toBe(true);
-  });
-
-  test("runBatch defaults to false", () => {
-    const result = parseCliArgs(["node", "script", "DEMO.md"]);
-    expect(result.runBatch).toBe(false);
-  });
-
-  test("parses --concurrency flag", () => {
-    const result = parseCliArgs(["node", "script", "--run-batch", "--concurrency", "8"]);
-    expect(result.runBatch).toBe(true);
-    expect(result.concurrency).toBe(8);
-  });
-
-  test("concurrency defaults to undefined", () => {
-    const result = parseCliArgs(["node", "script", "--run-batch"]);
-    expect(result.concurrency).toBeUndefined();
-  });
-
-  test("ignores invalid concurrency value", () => {
-    const result = parseCliArgs(["node", "script", "--run-batch", "--concurrency", "invalid"]);
-    expect(result.concurrency).toBeUndefined();
-  });
 });
 
 describe("mergeFrontmatter", () => {

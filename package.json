@@ -32,6 +32,7 @@
   "dependencies": {
     "@inquirer/prompts": "^8.0.2",
     "js-yaml": "^4.1.1",
+    "liquidjs": "^10.24.0",
     "zod": "^4.1.13"
   }
 }

@@ -10,7 +10,6 @@ import { validatePrerequisites, handlePrerequisiteFailure } from "./prerequisite
 import { formatDryRun, type DryRunInfo } from "./dryrun";
 import { isRemoteUrl, fetchRemote, cleanupRemote, printRemoteWarning } from "./remote";
 import { resolveCommand, buildArgs, runCommand } from "./command";
-import { runBatch, formatBatchResults, parseBatchManifest } from "./batch";
 import { runSetup } from "./setup";
 import { offerRepair } from "./repair";
 import { expandImports, hasImports } from "./imports";
@@ -45,8 +44,6 @@ async function main() {
     passthroughArgs,
     check,
     json,
-    runBatch: runBatchMode,
-    concurrency,
     setup,
   } = parseCliArgs(process.argv);
 
@@ -56,48 +53,6 @@ async function main() {
   if (setup) {
     await runSetup();
     process.exit(0);
-  }
-
-  // ---------------------------------------------------------
-  // BATCH / SWARM MODE
-  // ---------------------------------------------------------
-  if (runBatchMode) {
-    const stdinContent = await readStdin();
-    if (!stdinContent) {
-      console.error("Error: --run-batch requires a JSON manifest via stdin");
-      console.error("Example: ma PLANNER.md | ma --run-batch");
-      process.exit(1);
-    }
-
-    let jobs;
-    try {
-      jobs = parseBatchManifest(stdinContent);
-    } catch (err) {
-      console.error(`Error parsing batch manifest: ${(err as Error).message}`);
-      process.exit(1);
-    }
-
-    if (verbose) {
-      console.error(`[batch] Dispatching ${jobs.length} agents (concurrency: ${concurrency || 4})...`);
-    }
-
-    const results = await runBatch(jobs, {
-      concurrency,
-      verbose,
-    });
-
-    console.log(formatBatchResults(results));
-
-    const branches = results
-      .filter((r) => r.exitCode === 0 && r.branchName)
-      .map((r) => r.branchName);
-
-    if (branches.length > 0) {
-      console.error("\n🌿 Worktrees committed. To merge:");
-      console.error(`   git merge ${branches.join(" ")}`);
-    }
-
-    process.exit(results.some((r) => r.exitCode !== 0) ? 1 : 0);
   }
 
   if (!filePath) {

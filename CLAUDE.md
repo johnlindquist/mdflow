@@ -50,7 +50,7 @@ bun run ma task.claude.md
 
 - **`imports.ts`** - File imports (`@./path.md`) and command inlines (`` !`cmd` ``)
 
-- **`batch.ts`** - Swarm execution via `--run-batch` with git worktree isolation
+- **`template.ts`** - LiquidJS-powered template engine for variable substitution
 
 ### Command Resolution
 
@@ -74,10 +74,14 @@ add-dir:                     # → --add-dir ./src --add-dir ./tests
 ---
 ```
 
-### Template System
+### Template System (LiquidJS)
 
-- `{{ variable }}` syntax in markdown body
-- CLI args: `--varname value` (unknown flags become template vars, not passed to command)
+Uses [LiquidJS](https://liquidjs.com/) for full template support:
+
+- Variables: `{{ variable }}`
+- Conditionals: `{% if force %}--force{% endif %}`
+- Filters: `{{ name | upcase }}`, `{{ value | default: "fallback" }}`
+- CLI args: `--varname value` (unknown flags become template vars)
 - `inputs:` frontmatter for wizard mode (interactive prompts)
 
 ## Testing Patterns

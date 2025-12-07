@@ -1,15 +1,24 @@
 /**
  * Template variable substitution for markdown content
- * Supports {{ variable }} syntax with named arguments
+ * Uses LiquidJS for full template support including conditionals and loops
  */
+
+import { Liquid } from "liquidjs";
 
 export interface TemplateVars {
   [key: string]: string;
 }
 
+// Shared Liquid engine instance with lenient settings
+const engine = new Liquid({
+  strictVariables: false,  // Don't throw on undefined variables
+  strictFilters: false,    // Don't throw on undefined filters
+});
+
 /**
  * Extract template variables from content
  * Returns array of variable names found in {{ variable }} patterns
+ * Note: This only extracts simple variable names, not filter expressions
  */
 export function extractTemplateVars(content: string): string[] {
   const regex = /\{\{\s*(\w+)\s*\}\}/g;
@@ -22,9 +31,13 @@ export function extractTemplateVars(content: string): string[] {
 }
 
 /**
- * Substitute template variables in content
- * Replaces {{ variable }} with corresponding values from vars
- * Throws error if required variable is missing and strict mode is enabled
+ * Substitute template variables in content using LiquidJS
+ * Supports:
+ * - Variable substitution: {{ variable }}
+ * - Conditionals: {% if condition %}...{% endif %}
+ * - Loops: {% for item in items %}...{% endfor %}
+ * - Filters: {{ name | upcase }}
+ * - Default values: {{ name | default: "World" }}
  */
 export function substituteTemplateVars(
   content: string,
@@ -33,15 +46,17 @@ export function substituteTemplateVars(
 ): string {
   const { strict = false } = options;
 
-  return content.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, varName: string) => {
-    if (varName in vars) {
-      return vars[varName]!;
+  if (strict) {
+    // In strict mode, check for missing variables before rendering
+    const required = extractTemplateVars(content);
+    const missing = required.filter(v => !(v in vars));
+    if (missing.length > 0) {
+      throw new Error(`Missing required template variable: ${missing[0]}`);
     }
-    if (strict) {
-      throw new Error(`Missing required template variable: ${varName}`);
-    }
-    return match; // Leave unreplaced if not strict
-  });
+  }
+
+  // Use synchronous renderSync for compatibility
+  return engine.parseAndRenderSync(content, vars);
 }
 
 /**
