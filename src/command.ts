@@ -29,34 +29,28 @@ export function parseCommandFromFilename(filePath: string): string | undefined {
 
 /**
  * Resolve which command to use
- * Priority: CLI --command > frontmatter command > filename inference
+ * Priority: frontmatter command > filename inference
  */
 export function resolveCommand(options: {
-  cliCommand?: string;
   frontmatter: AgentFrontmatter;
   filePath: string;
 }): string {
-  const { cliCommand, frontmatter, filePath } = options;
+  const { frontmatter, filePath } = options;
 
-  // 1. CLI flag takes highest priority
-  if (cliCommand) {
-    return cliCommand;
-  }
-
-  // 2. Frontmatter explicit command
+  // 1. Frontmatter explicit command
   if (frontmatter.command) {
     return frontmatter.command;
   }
 
-  // 3. Infer from filename
+  // 2. Infer from filename
   const fromFilename = parseCommandFromFilename(filePath);
   if (fromFilename) {
     return fromFilename;
   }
 
-  // 4. No command specified - error will be handled by caller
+  // 3. No command specified - error will be handled by caller
   throw new Error(
-    "No command specified. Use --command, add 'command:' to frontmatter, " +
+    "No command specified. Add 'command:' to frontmatter, " +
     "or name your file like 'task.claude.md'"
   );
 }

@@ -25,18 +25,8 @@ describe("parseCommandFromFilename", () => {
 });
 
 describe("resolveCommand", () => {
-  test("CLI command takes priority", () => {
-    const result = resolveCommand({
-      cliCommand: "claude",
-      frontmatter: { command: "gemini" },
-      filePath: "task.codex.md",
-    });
-    expect(result).toBe("claude");
-  });
-
   test("frontmatter command takes priority over filename", () => {
     const result = resolveCommand({
-      cliCommand: undefined,
       frontmatter: { command: "gemini" },
       filePath: "task.claude.md",
     });
@@ -45,7 +35,6 @@ describe("resolveCommand", () => {
 
   test("filename inference works when no command specified", () => {
     const result = resolveCommand({
-      cliCommand: undefined,
       frontmatter: {},
       filePath: "task.claude.md",
     });
@@ -54,7 +43,6 @@ describe("resolveCommand", () => {
 
   test("throws when no command can be resolved", () => {
     expect(() => resolveCommand({
-      cliCommand: undefined,
       frontmatter: {},
       filePath: "task.md",
     })).toThrow("No command specified");
