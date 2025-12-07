@@ -87,6 +87,14 @@ async function main() {
     remainingArgs.splice(commandFlagIndex, 2); // Consume --command and its value
   }
 
+  // Check for --dry-run flag (consumed by ma, not passed to command)
+  let dryRun = false;
+  const dryRunIndex = remainingArgs.indexOf("--dry-run");
+  if (dryRunIndex !== -1) {
+    dryRun = true;
+    remainingArgs.splice(dryRunIndex, 1); // Consume it
+  }
+
   // Resolve command: CLI --command > MA_COMMAND env > filename
   let command: string;
   try {
@@ -229,6 +237,32 @@ async function main() {
   // Build positionals array: body is $1, any remaining unmapped CLI args would be $2+
   // For now, body is the only positional we support
   const positionals = [finalBody];
+
+  // Handle dry-run mode: print what would be executed and exit
+  if (dryRun) {
+    console.log("═══════════════════════════════════════════════════════════");
+    console.log("DRY RUN - Command will NOT be executed");
+    console.log("═══════════════════════════════════════════════════════════\n");
+
+    console.log("Command:");
+    console.log(`   ${command} ${args.join(" ")}\n`);
+
+    console.log("Final Prompt:");
+    console.log("───────────────────────────────────────────────────────────");
+    console.log(finalBody);
+    console.log("───────────────────────────────────────────────────────────\n");
+
+    const estimatedTokens = Math.ceil(finalBody.length / 4);
+    console.log(`Estimated tokens: ~${estimatedTokens.toLocaleString()}`);
+
+    // Cleanup remote temporary file if needed
+    if (isRemote) {
+      await cleanupRemote(localFilePath);
+    }
+
+    logger.info({ dryRun: true }, "Dry run completed");
+    process.exit(0);
+  }
 
   getCommandLogger().info({ command, argsCount: args.length, promptLength: finalBody.length }, "Executing command");
 

@@ -59,6 +59,7 @@ function printHelp() {
   console.log(`
 Usage: ma <file.md> [any flags for the command]
        ma <file.md> --command <cmd>
+       ma <file.md> --dry-run
        ma --setup
        ma --logs
        ma --help
@@ -76,11 +77,16 @@ Examples:
   ma commit.gemini.md
   ma task.md --command claude
   ma task.md -c gemini
+  ma task.claude.md --dry-run    # Preview without executing
 
 Config file example (~/.markdown-agent/config.yaml):
   commands:
     copilot:
       $1: prompt    # Map body to --prompt flag
+
+ma-specific flags (consumed, not passed to command):
+  --command, -c   Specify command to run
+  --dry-run       Show resolved command and prompt without executing
 
 Without a file:
   ma --setup    Configure shell to run .md files directly
