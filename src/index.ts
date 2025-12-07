@@ -3,7 +3,7 @@ import { parseFrontmatter } from "./parse";
 import { parseCliArgs, handleMaCommands } from "./cli";
 import { substituteTemplateVars, extractTemplateVars } from "./template";
 import { isRemoteUrl, fetchRemote, cleanupRemote } from "./remote";
-import { resolveCommand, buildArgs, runCommand, extractPositionalMappings, extractEnvVars } from "./command";
+import { resolveCommand, buildArgs, runCommand, extractPositionalMappings, extractEnvVars, killCurrentChildProcess } from "./command";
 import { expandImports, hasImports } from "./imports";
 import { loadEnvFiles } from "./env";
 import { loadGlobalConfig, getCommandDefaults, applyDefaults } from "./config";
@@ -52,6 +52,26 @@ async function main() {
     localFilePath = remoteResult.localPath!;
     isRemote = true;
   }
+
+  // Set up graceful signal handling for SIGINT (Ctrl+C) and SIGTERM
+  // This ensures cleanup of temp files and child processes on interruption
+  const handleSignal = async (signal: string) => {
+    // Kill child process if running
+    killCurrentChildProcess();
+
+    // Cleanup remote temporary file if applicable
+    if (isRemote) {
+      await cleanupRemote(localFilePath);
+    }
+
+    // Exit with appropriate code (128 + signal number)
+    // SIGINT = 2, SIGTERM = 15
+    const exitCode = signal === "SIGINT" ? 130 : 143;
+    process.exit(exitCode);
+  };
+
+  process.on("SIGINT", () => handleSignal("SIGINT"));
+  process.on("SIGTERM", () => handleSignal("SIGTERM"));
 
   const file = Bun.file(localFilePath);
 

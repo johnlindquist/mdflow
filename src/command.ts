@@ -7,6 +7,37 @@ import type { AgentFrontmatter } from "./types";
 import { basename } from "path";
 
 /**
+ * Module-level reference to the current child process
+ * Used for graceful signal handling (SIGINT/SIGTERM cleanup)
+ */
+let currentChildProcess: ReturnType<typeof Bun.spawn> | null = null;
+
+/**
+ * Get the current child process reference
+ * Returns null if no process is running
+ */
+export function getCurrentChildProcess(): ReturnType<typeof Bun.spawn> | null {
+  return currentChildProcess;
+}
+
+/**
+ * Kill the current child process if running
+ * Returns true if a process was killed, false otherwise
+ */
+export function killCurrentChildProcess(): boolean {
+  if (currentChildProcess) {
+    try {
+      currentChildProcess.kill("SIGTERM");
+      return true;
+    } catch {
+      // Process may have already exited
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
  * Keys handled by the system, not passed to the command
  * - args: consumed for template variable mapping
  * - env (when object): sets process.env, not passed as flag
@@ -164,6 +195,8 @@ export interface RunContext {
 export interface RunResult {
   exitCode: number;
   output: string;
+  /** The subprocess reference for signal handling */
+  process: ReturnType<typeof Bun.spawn>;
 }
 
 /**
@@ -203,6 +236,9 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
     env: runEnv,
   });
 
+  // Store reference for signal handling
+  currentChildProcess = proc;
+
   let output = "";
   if (captureOutput && proc.stdout) {
     output = await new Response(proc.stdout).text();
@@ -211,5 +247,9 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
   }
 
   const exitCode = await proc.exited;
-  return { exitCode, output };
+
+  // Clear reference after process exits
+  currentChildProcess = null;
+
+  return { exitCode, output, process: proc };
 }
