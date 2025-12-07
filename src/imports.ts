@@ -21,9 +21,11 @@ import ignore from "ignore";
 /** Track files being processed to detect circular imports */
 type ImportStack = Set<string>;
 
-/** Maximum token count before warning (approx 4 chars per token) */
-const MAX_TOKENS = 100_000;
-const CHARS_PER_TOKEN = 4;
+/** Maximum token count before error (approx 4 chars per token) */
+export const MAX_TOKENS = 100_000;
+/** Warning threshold for high token count */
+export const WARN_TOKENS = 50_000;
+export const CHARS_PER_TOKEN = 4;
 const MAX_CHARS = MAX_TOKENS * CHARS_PER_TOKEN;
 
 /**
@@ -314,9 +316,8 @@ async function processUrlImport(
   url: string,
   verbose: boolean
 ): Promise<string> {
-  if (verbose) {
-    console.error(`[imports] Fetching: ${url}`);
-  }
+  // Always log URL fetches to stderr for visibility
+  console.error(`[imports] Fetching: ${url}`);
 
   try {
     const response = await fetch(url, {
@@ -419,6 +420,11 @@ async function processGlobImport(
 
   // Check token limit
   const estimatedTokens = Math.ceil(totalChars / CHARS_PER_TOKEN);
+
+  // Always log glob expansion to stderr for visibility
+  console.error(`[imports] Expanding ${pattern}: ${files.length} files (~${estimatedTokens.toLocaleString()} tokens)`);
+
+  // Error threshold (100k tokens)
   if (totalChars > MAX_CHARS && !process.env.MA_FORCE_CONTEXT) {
     throw new Error(
       `Glob import "${pattern}" would include ~${estimatedTokens.toLocaleString()} tokens (${files.length} files), ` +
@@ -427,8 +433,9 @@ async function processGlobImport(
     );
   }
 
-  if (verbose) {
-    console.error(`[imports] Glob matched ${files.length} files (~${estimatedTokens.toLocaleString()} tokens)`);
+  // Warning threshold (50k tokens) - warn but don't error
+  if (estimatedTokens > WARN_TOKENS && estimatedTokens <= MAX_TOKENS) {
+    console.error(`[imports] Warning: High token count (~${estimatedTokens.toLocaleString()}). This may be expensive.`);
   }
 
   return formatFilesAsXml(files);
@@ -499,9 +506,8 @@ async function processFileImport(
     throw new Error(`Import not found: ${importPath} (resolved to ${resolvedPath})`);
   }
 
-  if (verbose) {
-    console.error(`[imports] Loading: ${importPath}`);
-  }
+  // Always log file loading to stderr for visibility
+  console.error(`[imports] Loading: ${importPath}`);
 
   // Read file content
   const content = await file.text();
@@ -521,9 +527,8 @@ async function processCommandInline(
   currentFileDir: string,
   verbose: boolean
 ): Promise<string> {
-  if (verbose) {
-    console.error(`[imports] Executing: ${command}`);
-  }
+  // Always log command execution to stderr for visibility
+  console.error(`[imports] Executing: ${command}`);
 
   try {
     const result = Bun.spawnSync(["sh", "-c", command], {
