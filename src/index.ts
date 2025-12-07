@@ -10,7 +10,6 @@ import { formatDryRun, type DryRunInfo } from "./dryrun";
 import { isRemoteUrl, fetchRemote, cleanupRemote, printRemoteWarning } from "./remote";
 import { resolveCommand, buildArgs, runCommand } from "./command";
 import { runSetup } from "./setup";
-import { offerRepair } from "./repair";
 import { expandImports, hasImports } from "./imports";
 import { loadEnvFiles } from "./env";
 import { initLogger, getLogger, getParseLogger, getTemplateLogger, getCommandLogger, getCacheLogger, getImportLogger, getLogDir, listLogDirs } from "./logger";
@@ -157,39 +156,9 @@ async function main() {
     process.exit(validation.success ? 0 : 1);
   }
 
-  // Parse frontmatter with interactive repair on error
-  let baseFrontmatter;
-  let rawBody;
-  let currentContent = content;
-
-  while (true) {
-    try {
-      const parsed = parseFrontmatter(currentContent);
-      baseFrontmatter = parsed.frontmatter;
-      rawBody = parsed.body;
-      getParseLogger().debug({ frontmatter: baseFrontmatter, bodyLength: rawBody.length }, "Frontmatter parsed");
-      break;
-    } catch (err) {
-      const errorMessage = (err as Error).message;
-
-      const errors = errorMessage.includes("Invalid frontmatter:")
-        ? errorMessage.replace("Invalid frontmatter:\n", "").split("\n").map(e => e.trim()).filter(Boolean)
-        : [errorMessage];
-
-      const shouldRetry = await offerRepair({
-        filePath: resolve(localFilePath),
-        content: currentContent,
-        errors,
-      });
-
-      if (!shouldRetry) {
-        console.error(`\n${errorMessage}`);
-        process.exit(1);
-      }
-
-      currentContent = await Bun.file(localFilePath).text();
-    }
-  }
+  // Parse frontmatter
+  const { frontmatter: baseFrontmatter, body: rawBody } = parseFrontmatter(content);
+  getParseLogger().debug({ frontmatter: baseFrontmatter, bodyLength: rawBody.length }, "Frontmatter parsed");
 
   // Handle wizard mode inputs
   let allTemplateVars = { ...templateVars };
