@@ -9,6 +9,7 @@ import { loadEnvFiles } from "./env";
 import { loadGlobalConfig, getCommandDefaults, applyDefaults } from "./config";
 import { initLogger, getParseLogger, getTemplateLogger, getCommandLogger, getImportLogger } from "./logger";
 import { dirname, resolve } from "path";
+import { input } from "@inquirer/prompts";
 
 /**
  * Read stdin if it's being piped (not a TTY)
@@ -189,9 +190,18 @@ async function main() {
   const missingVars = requiredVars.filter(v => !(v in templateVars));
 
   if (missingVars.length > 0) {
-    console.error(`Missing template variables: ${missingVars.join(", ")}`);
-    console.error(`Use 'args:' in frontmatter to map CLI arguments to variables`);
-    process.exit(1);
+    // Check if interactive (TTY)
+    if (process.stdin.isTTY) {
+      console.error("Missing required variables. Please provide values:");
+      for (const v of missingVars) {
+        templateVars[v] = await input({ message: `${v}:` });
+      }
+    } else {
+      // Only exit if piping/non-interactive
+      console.error(`Missing template variables: ${missingVars.join(", ")}`);
+      console.error(`Use 'args:' in frontmatter to map CLI arguments to variables`);
+      process.exit(1);
+    }
   }
 
   // Apply template substitution to body
