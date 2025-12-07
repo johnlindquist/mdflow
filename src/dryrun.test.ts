@@ -1,19 +1,5 @@
 import { expect, test, describe } from "bun:test";
-import { formatDryRun, toCommandList, type DryRunInfo } from "./dryrun";
-
-describe("toCommandList", () => {
-  test("converts string to array", () => {
-    expect(toCommandList("echo hello")).toEqual(["echo hello"]);
-  });
-
-  test("passes array through", () => {
-    expect(toCommandList(["cmd1", "cmd2"])).toEqual(["cmd1", "cmd2"]);
-  });
-
-  test("returns empty array for undefined", () => {
-    expect(toCommandList(undefined)).toEqual([]);
-  });
-});
+import { formatDryRun, type DryRunInfo } from "./dryrun";
 
 describe("formatDryRun", () => {
   test("includes header", () => {
@@ -21,10 +7,8 @@ describe("formatDryRun", () => {
       frontmatter: {},
       prompt: "Test prompt",
       harnessArgs: ["-p"],
-      harnessName: "copilot",
+      harnessName: "claude",
       contextFiles: [],
-      beforeCommands: [],
-      afterCommands: [],
       templateVars: {},
     };
     const output = formatDryRun(info);
@@ -36,10 +20,8 @@ describe("formatDryRun", () => {
       frontmatter: {},
       prompt: "My test prompt content",
       harnessArgs: ["-p"],
-      harnessName: "copilot",
+      harnessName: "claude",
       contextFiles: [],
-      beforeCommands: [],
-      afterCommands: [],
       templateVars: {},
     };
     const output = formatDryRun(info);
@@ -52,10 +34,8 @@ describe("formatDryRun", () => {
       frontmatter: {},
       prompt: "Test",
       harnessArgs: [],
-      harnessName: "copilot",
+      harnessName: "claude",
       contextFiles: [],
-      beforeCommands: [],
-      afterCommands: [],
       templateVars: { target: "src/main.ts", branch: "develop" },
     };
     const output = formatDryRun(info);
@@ -71,12 +51,10 @@ describe("formatDryRun", () => {
       frontmatter: {},
       prompt: "Test",
       harnessArgs: [],
-      harnessName: "copilot",
+      harnessName: "claude",
       contextFiles: [
         { path: "/full/path/utils.ts", relativePath: "utils.ts", content: "const x = 1;\nconst y = 2;" }
       ],
-      beforeCommands: [],
-      afterCommands: [],
       templateVars: {},
     };
     const output = formatDryRun(info);
@@ -85,54 +63,18 @@ describe("formatDryRun", () => {
     expect(output).toContain("2 lines");
   });
 
-  test("includes before commands", () => {
+  test("includes command", () => {
     const info: DryRunInfo = {
-      frontmatter: {},
+      frontmatter: { model: "opus" },
       prompt: "Test",
-      harnessArgs: [],
-      harnessName: "copilot",
+      harnessArgs: ["--model", "opus", "-p"],
+      harnessName: "claude",
       contextFiles: [],
-      beforeCommands: ["git status", "cat README.md"],
-      afterCommands: [],
       templateVars: {},
     };
     const output = formatDryRun(info);
-    expect(output).toContain("BEFORE COMMANDS");
-    expect(output).toContain("git status");
-    expect(output).toContain("cat README.md");
-  });
-
-  test("includes after commands with stdin note", () => {
-    const info: DryRunInfo = {
-      frontmatter: {},
-      prompt: "Test",
-      harnessArgs: [],
-      harnessName: "copilot",
-      contextFiles: [],
-      beforeCommands: [],
-      afterCommands: ["pbcopy", "echo done"],
-      templateVars: {},
-    };
-    const output = formatDryRun(info);
-    expect(output).toContain("AFTER COMMANDS");
-    expect(output).toContain("pbcopy");
-    expect(output).toContain("receives copilot output via stdin");
-  });
-
-  test("includes harness command", () => {
-    const info: DryRunInfo = {
-      frontmatter: { model: "gpt-5" },
-      prompt: "Test",
-      harnessArgs: ["--model", "gpt-5", "-p"],
-      harnessName: "copilot",
-      contextFiles: [],
-      beforeCommands: [],
-      afterCommands: [],
-      templateVars: {},
-    };
-    const output = formatDryRun(info);
-    expect(output).toContain("COPILOT COMMAND");
-    expect(output).toContain("copilot --model gpt-5 -p");
+    expect(output).toContain("COMMAND");
+    expect(output).toContain("claude --model opus -p");
   });
 
   test("includes prerequisites", () => {
@@ -142,10 +84,8 @@ describe("formatDryRun", () => {
       },
       prompt: "Test",
       harnessArgs: [],
-      harnessName: "copilot",
+      harnessName: "claude",
       contextFiles: [],
-      beforeCommands: [],
-      afterCommands: [],
       templateVars: {},
     };
     const output = formatDryRun(info);
@@ -158,25 +98,19 @@ describe("formatDryRun", () => {
   test("includes configuration summary", () => {
     const info: DryRunInfo = {
       frontmatter: {
-        model: "gpt-5",
-        extract: "json",
+        model: "opus",
         cache: true,
-        silent: true,
       },
       prompt: "Test",
       harnessArgs: [],
-      harnessName: "copilot",
+      harnessName: "claude",
       contextFiles: [],
-      beforeCommands: [],
-      afterCommands: [],
       templateVars: {},
     };
     const output = formatDryRun(info);
     expect(output).toContain("CONFIGURATION");
-    expect(output).toContain("Model: gpt-5");
-    expect(output).toContain("Extract: json");
+    expect(output).toContain("Command: claude");
     expect(output).toContain("Cache: enabled");
-    expect(output).toContain("Silent: true");
   });
 
   test("truncates long prompts", () => {
@@ -185,10 +119,8 @@ describe("formatDryRun", () => {
       frontmatter: {},
       prompt: longPrompt,
       harnessArgs: [],
-      harnessName: "copilot",
+      harnessName: "claude",
       contextFiles: [],
-      beforeCommands: [],
-      afterCommands: [],
       templateVars: {},
     };
     const output = formatDryRun(info);

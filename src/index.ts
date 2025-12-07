@@ -337,8 +337,6 @@ async function main() {
       harnessArgs: args,
       harnessName: command,
       contextFiles,
-      beforeCommands: [],
-      afterCommands: [],
       templateVars: allTemplateVars,
     };
     console.log(formatDryRun(dryRunInfo));

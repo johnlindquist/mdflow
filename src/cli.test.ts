@@ -1,6 +1,6 @@
 import { expect, test, describe } from "bun:test";
 import { parseCliArgs, mergeFrontmatter } from "./cli";
-import type { CopilotFrontmatter } from "./types";
+import type { AgentFrontmatter } from "./types";
 
 describe("parseCliArgs", () => {
   test("extracts file path", () => {
@@ -26,76 +26,23 @@ describe("parseCliArgs", () => {
     expect(result.appendText).toBe("be concise");
   });
 
-  test("parses --model flag", () => {
-    const result = parseCliArgs(["node", "script", "DEMO.md", "--model", "gpt-5"]);
+  test("parses --command flag", () => {
+    const result = parseCliArgs(["node", "script", "DEMO.md", "--command", "claude"]);
     expect(result.filePath).toBe("DEMO.md");
-    expect(result.overrides.model).toBe("gpt-5");
+    expect(result.command).toBe("claude");
   });
 
-  test("parses -m short flag", () => {
-    const result = parseCliArgs(["node", "script", "DEMO.md", "-m", "claude-opus-4.5"]);
-    expect(result.overrides.model).toBe("claude-opus-4.5");
-  });
-
-  test("parses --silent flag", () => {
-    const result = parseCliArgs(["node", "script", "DEMO.md", "--silent"]);
-    expect(result.overrides.silent).toBe(true);
-  });
-
-  test("parses --no-silent flag", () => {
-    const result = parseCliArgs(["node", "script", "DEMO.md", "--no-silent"]);
-    expect(result.overrides.silent).toBe(false);
-  });
-
-  test("parses --interactive flag", () => {
-    const result = parseCliArgs(["node", "script", "DEMO.md", "--interactive"]);
-    expect(result.overrides.interactive).toBe(true);
-  });
-
-  test("parses --allow-all-tools flag", () => {
-    const result = parseCliArgs(["node", "script", "DEMO.md", "--allow-all-tools"]);
-    expect(result.overrides["allow-all-tools"]).toBe(true);
-  });
-
-  test("parses --allow-tool with value", () => {
-    const result = parseCliArgs(["node", "script", "DEMO.md", "--allow-tool", "shell(git:*)"]);
-    expect(result.overrides["allow-tool"]).toBe("shell(git:*)");
-  });
-
-  test("parses multiple flags", () => {
-    const result = parseCliArgs([
-      "node", "script", "DEMO.md",
-      "--model", "gpt-5",
-      "--silent",
-      "--allow-all-tools"
-    ]);
-    expect(result.filePath).toBe("DEMO.md");
-    expect(result.overrides.model).toBe("gpt-5");
-    expect(result.overrides.silent).toBe(true);
-    expect(result.overrides["allow-all-tools"]).toBe(true);
-  });
-
-  test("handles flags before file path", () => {
-    const result = parseCliArgs(["node", "script", "--model", "gpt-5", "DEMO.md"]);
-    expect(result.filePath).toBe("DEMO.md");
-    expect(result.overrides.model).toBe("gpt-5");
-  });
-
-  test("combines text with flags", () => {
-    const result = parseCliArgs(["node", "script", "DEMO.md", "--model", "gpt-5", "be concise"]);
-    expect(result.filePath).toBe("DEMO.md");
-    expect(result.overrides.model).toBe("gpt-5");
-    expect(result.appendText).toBe("be concise");
+  test("parses -c short flag", () => {
+    const result = parseCliArgs(["node", "script", "DEMO.md", "-c", "gemini"]);
+    expect(result.command).toBe("gemini");
   });
 
   test("extracts template variables from unknown flags", () => {
     const result = parseCliArgs([
       "node", "script", "DEMO.md",
-      "--model", "gpt-5",
       "--target", "src/utils.ts",
       "--reference", "src/main.ts"
     ]);
-    expect(result.overrides.model).toBe("gpt-5");
     expect(result.templateVars).toEqual({
       target: "src/utils.ts",
       reference: "src/main.ts"
@@ -112,30 +59,20 @@ describe("parseCliArgs", () => {
     expect(result.dryRun).toBe(true);
   });
 
-  test("parses --harness flag", () => {
-    const result = parseCliArgs(["node", "script", "DEMO.md", "--harness", "claude"]);
-    expect(result.harness).toBe("claude");
-  });
-
-  test("parses -r short flag", () => {
-    const result = parseCliArgs(["node", "script", "DEMO.md", "-r", "codex"]);
-    expect(result.harness).toBe("codex");
-  });
-
-  test("harness defaults to undefined", () => {
+  test("command defaults to undefined", () => {
     const result = parseCliArgs(["node", "script", "DEMO.md"]);
-    expect(result.harness).toBeUndefined();
+    expect(result.command).toBeUndefined();
   });
 
   test("collects passthrough args after --", () => {
     const result = parseCliArgs([
       "node", "script", "DEMO.md",
-      "--model", "gpt-5",
-      "--", "--verbose", "--debug"
+      "--command", "claude",
+      "--", "--model", "opus"
     ]);
     expect(result.filePath).toBe("DEMO.md");
-    expect(result.overrides.model).toBe("gpt-5");
-    expect(result.passthroughArgs).toEqual(["--verbose", "--debug"]);
+    expect(result.command).toBe("claude");
+    expect(result.passthroughArgs).toEqual(["--model", "opus"]);
   });
 
   test("passthrough args default to empty array", () => {
@@ -146,15 +83,10 @@ describe("parseCliArgs", () => {
   test("all args after -- are passthrough even if they look like known flags", () => {
     const result = parseCliArgs([
       "node", "script", "DEMO.md",
-      "--", "--model", "ignored"
+      "--", "--command", "ignored"
     ]);
-    expect(result.overrides.model).toBeUndefined();
-    expect(result.passthroughArgs).toEqual(["--model", "ignored"]);
-  });
-
-  test("parses --agent into copilot config", () => {
-    const result = parseCliArgs(["node", "script", "DEMO.md", "--agent", "my-agent"]);
-    expect(result.overrides.copilot).toEqual({ agent: "my-agent" });
+    expect(result.command).toBeUndefined();
+    expect(result.passthroughArgs).toEqual(["--command", "ignored"]);
   });
 
   test("parses --verbose flag", () => {
@@ -222,75 +154,34 @@ describe("parseCliArgs", () => {
 });
 
 describe("mergeFrontmatter", () => {
-  test("applies silent: true as default", () => {
-    const frontmatter: CopilotFrontmatter = { model: "claude-haiku-4.5" };
+  test("merges frontmatter with empty overrides", () => {
+    const frontmatter: AgentFrontmatter = { command: "claude" };
     const result = mergeFrontmatter(frontmatter, {});
-    expect(result.model).toBe("claude-haiku-4.5");
-    expect(result.silent).toBe(true);
+    expect(result.command).toBe("claude");
   });
 
-  test("frontmatter can override default silent", () => {
-    const frontmatter: CopilotFrontmatter = { model: "claude-haiku-4.5", silent: false };
-    const result = mergeFrontmatter(frontmatter, {});
-    expect(result.silent).toBe(false);
-  });
-
-  test("overrides model", () => {
-    const frontmatter: CopilotFrontmatter = { model: "claude-haiku-4.5" };
-    const result = mergeFrontmatter(frontmatter, { model: "gpt-5" });
-    expect(result.model).toBe("gpt-5");
-    expect(result.silent).toBe(true);
-  });
-
-  test("CLI overrides silent from frontmatter", () => {
-    const frontmatter: CopilotFrontmatter = { model: "claude-haiku-4.5", silent: true };
-    const result = mergeFrontmatter(frontmatter, { silent: false });
-    expect(result.silent).toBe(false);
+  test("overrides command", () => {
+    const frontmatter: AgentFrontmatter = { command: "claude" };
+    const result = mergeFrontmatter(frontmatter, { command: "gemini" });
+    expect(result.command).toBe("gemini");
   });
 
   test("adds new fields from overrides", () => {
-    const frontmatter: CopilotFrontmatter = { model: "claude-haiku-4.5" };
-    const result = mergeFrontmatter(frontmatter, { "allow-all-tools": true });
-    expect(result.model).toBe("claude-haiku-4.5");
-    expect(result["allow-all-tools"]).toBe(true);
+    const frontmatter: AgentFrontmatter = { command: "claude" };
+    const result = mergeFrontmatter(frontmatter, { model: "opus" } as any);
+    expect(result.command).toBe("claude");
+    expect((result as any).model).toBe("opus");
   });
 
-  test("merges claude config", () => {
-    const frontmatter: CopilotFrontmatter = {
-      model: "sonnet",
-      claude: { "mcp-config": "./mcp.json" }
-    };
-    const result = mergeFrontmatter(frontmatter, {
-      claude: { "dangerously-skip-permissions": true }
-    });
-    expect(result.claude).toEqual({
-      "mcp-config": "./mcp.json",
+  test("preserves all frontmatter keys", () => {
+    const frontmatter: AgentFrontmatter = {
+      command: "claude",
+      model: "opus",
       "dangerously-skip-permissions": true
-    });
-  });
-
-  test("merges codex config", () => {
-    const frontmatter: CopilotFrontmatter = {
-      model: "gpt-5",
-      codex: { sandbox: "workspace-write" }
-    };
-    const result = mergeFrontmatter(frontmatter, {
-      codex: { "full-auto": true }
-    });
-    expect(result.codex).toEqual({
-      sandbox: "workspace-write",
-      "full-auto": true
-    });
-  });
-
-  test("merges copilot config", () => {
-    const frontmatter: CopilotFrontmatter = {
-      model: "gpt-5",
-      copilot: { agent: "my-agent" }
-    };
-    const result = mergeFrontmatter(frontmatter, {
-      copilot: { agent: "new-agent" }
-    });
-    expect(result.copilot?.agent).toBe("new-agent");
+    } as any;
+    const result = mergeFrontmatter(frontmatter, {});
+    expect(result.command).toBe("claude");
+    expect((result as any).model).toBe("opus");
+    expect((result as any)["dangerously-skip-permissions"]).toBe(true);
   });
 });

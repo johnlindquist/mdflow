@@ -3,19 +3,8 @@ import { validateFrontmatter, safeParseFrontmatter } from "./schema";
 
 describe("validateFrontmatter", () => {
   test("validates minimal frontmatter", () => {
-    const result = validateFrontmatter({ model: "gpt-5" });
-    expect(result.model).toBe("gpt-5");
-  });
-
-  test("validates all supported models", () => {
-    const models = [
-      "claude-sonnet-4.5", "claude-haiku-4.5", "claude-opus-4.5",
-      "gpt-5", "gpt-5.1", "gemini-3-pro-preview"
-    ];
-    for (const model of models) {
-      const result = validateFrontmatter({ model });
-      expect(result.model).toBe(model);
-    }
+    const result = validateFrontmatter({ command: "claude" });
+    expect(result.command).toBe("claude");
   });
 
   test("validates inputs array", () => {
@@ -57,30 +46,6 @@ describe("validateFrontmatter", () => {
     expect(result.context).toEqual(["src/**/*.ts", "!**/*.test.ts"]);
   });
 
-  test("validates extract modes", () => {
-    for (const extract of ["json", "code", "markdown", "raw"]) {
-      const result = validateFrontmatter({ extract });
-      expect(result.extract).toBe(extract);
-    }
-  });
-
-  test("rejects invalid extract mode", () => {
-    expect(() => validateFrontmatter({ extract: "invalid" })).toThrow();
-  });
-
-  test("validates boolean flags", () => {
-    const result = validateFrontmatter({
-      silent: true,
-      interactive: false,
-      "allow-all-tools": true,
-      "allow-all-paths": false,
-    });
-    expect(result.silent).toBe(true);
-    expect(result.interactive).toBe(false);
-    expect(result["allow-all-tools"]).toBe(true);
-    expect(result["allow-all-paths"]).toBe(false);
-  });
-
   test("validates requires object", () => {
     const result = validateFrontmatter({
       requires: {
@@ -92,115 +57,30 @@ describe("validateFrontmatter", () => {
     expect(result.requires?.env).toEqual(["GITHUB_TOKEN"]);
   });
 
-  test("allows unknown keys for forward compatibility", () => {
+  test("validates cache flag", () => {
+    const result = validateFrontmatter({ cache: true });
+    expect(result.cache).toBe(true);
+  });
+
+  test("allows unknown keys - they become CLI flags", () => {
     const result = validateFrontmatter({
-      model: "gpt-5",
-      futureFeature: "some value"
+      command: "claude",
+      model: "opus",
+      "dangerously-skip-permissions": true,
+      "mcp-config": "./mcp.json"
     });
-    expect(result.model).toBe("gpt-5");
-    expect((result as any).futureFeature).toBe("some value");
-  });
-});
-
-describe("harness selection", () => {
-  test("validates harness field", () => {
-    for (const harness of ["claude", "codex", "copilot", "auto"]) {
-      const result = validateFrontmatter({ harness });
-      expect(result.harness).toBe(harness);
-    }
-  });
-
-  test("rejects invalid harness", () => {
-    expect(() => validateFrontmatter({ harness: "invalid" })).toThrow();
-  });
-});
-
-describe("backend-specific configs", () => {
-  test("validates claude config", () => {
-    const result = validateFrontmatter({
-      harness: "claude",
-      claude: {
-        "dangerously-skip-permissions": true,
-        "mcp-config": "./mcp.json",
-        "allowed-tools": "Read,Write"
-      }
-    });
-    expect(result.claude?.["dangerously-skip-permissions"]).toBe(true);
-    expect(result.claude?.["mcp-config"]).toBe("./mcp.json");
-    expect(result.claude?.["allowed-tools"]).toBe("Read,Write");
-  });
-
-  test("validates claude mcp-config as array", () => {
-    const result = validateFrontmatter({
-      claude: { "mcp-config": ["./mcp1.json", "./mcp2.json"] }
-    });
-    expect(result.claude?.["mcp-config"]).toEqual(["./mcp1.json", "./mcp2.json"]);
-  });
-
-  test("validates codex config", () => {
-    const result = validateFrontmatter({
-      harness: "codex",
-      codex: {
-        sandbox: "workspace-write",
-        approval: "on-failure",
-        "full-auto": true,
-        oss: false,
-        "local-provider": "ollama",
-        cd: "./src"
-      }
-    });
-    expect(result.codex?.sandbox).toBe("workspace-write");
-    expect(result.codex?.approval).toBe("on-failure");
-    expect(result.codex?.["full-auto"]).toBe(true);
-    expect(result.codex?.oss).toBe(false);
-    expect(result.codex?.["local-provider"]).toBe("ollama");
-    expect(result.codex?.cd).toBe("./src");
-  });
-
-  test("rejects invalid codex sandbox", () => {
-    expect(() => validateFrontmatter({
-      codex: { sandbox: "invalid" }
-    })).toThrow();
-  });
-
-  test("rejects invalid codex approval", () => {
-    expect(() => validateFrontmatter({
-      codex: { approval: "invalid" }
-    })).toThrow();
-  });
-
-  test("validates copilot config", () => {
-    const result = validateFrontmatter({
-      copilot: { agent: "my-agent" }
-    });
-    expect(result.copilot?.agent).toBe("my-agent");
-  });
-
-  test("allows unknown keys in backend configs", () => {
-    const result = validateFrontmatter({
-      claude: { "future-flag": true }
-    });
-    expect((result.claude as any)?.["future-flag"]).toBe(true);
-  });
-});
-
-describe("add-dir as array", () => {
-  test("validates add-dir as string", () => {
-    const result = validateFrontmatter({ "add-dir": "/some/path" });
-    expect(result["add-dir"]).toBe("/some/path");
-  });
-
-  test("validates add-dir as array", () => {
-    const result = validateFrontmatter({ "add-dir": ["/path1", "/path2"] });
-    expect(result["add-dir"]).toEqual(["/path1", "/path2"]);
+    expect(result.command).toBe("claude");
+    expect((result as any).model).toBe("opus");
+    expect((result as any)["dangerously-skip-permissions"]).toBe(true);
+    expect((result as any)["mcp-config"]).toBe("./mcp.json");
   });
 });
 
 describe("safeParseFrontmatter", () => {
   test("returns success with valid data", () => {
-    const result = safeParseFrontmatter({ model: "gpt-5" });
+    const result = safeParseFrontmatter({ command: "gemini" });
     expect(result.success).toBe(true);
-    expect(result.data?.model).toBe("gpt-5");
+    expect(result.data?.command).toBe("gemini");
   });
 
   test("returns errors with invalid data", () => {

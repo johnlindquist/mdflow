@@ -1,20 +1,17 @@
 /**
- * Dry-run / audit mode for inspecting what would be executed
+ * Dry-run mode for inspecting what would be executed
  * Shows commands and prompt without running anything
  */
 
-import type { AgentFrontmatter, CopilotFrontmatter } from "./types";
+import type { AgentFrontmatter } from "./types";
 import type { ContextFile } from "./context";
-import type { HarnessName } from "./harnesses/types";
 
 export interface DryRunInfo {
   frontmatter: AgentFrontmatter;
   prompt: string;
   harnessArgs: string[];
-  harnessName: HarnessName;
+  harnessName: string;
   contextFiles: ContextFile[];
-  beforeCommands: string[];
-  afterCommands: string[];
   templateVars: Record<string, string>;
 }
 
@@ -23,7 +20,7 @@ export interface DryRunInfo {
  */
 export function formatDryRun(info: DryRunInfo): string {
   const sections: string[] = [];
-  const harnessName = info.harnessName;
+  const command = info.harnessName;
   const args = info.harnessArgs;
 
   // Header
@@ -66,20 +63,10 @@ export function formatDryRun(info: DryRunInfo): string {
     sections.push("");
   }
 
-  // Before commands
-  if (info.beforeCommands.length > 0) {
-    sections.push("⚡ BEFORE COMMANDS (will execute)");
-    sections.push("───────────────────────────────────────────────────────────────");
-    for (let i = 0; i < info.beforeCommands.length; i++) {
-      sections.push(`  ${i + 1}. ${info.beforeCommands[i]}`);
-    }
-    sections.push("");
-  }
-
-  // Harness command
-  sections.push(`🤖 ${harnessName.toUpperCase()} COMMAND`);
+  // Command
+  sections.push(`🤖 COMMAND`);
   sections.push("───────────────────────────────────────────────────────────────");
-  sections.push(`  ${harnessName} ${args.join(" ")} <prompt>`);
+  sections.push(`  ${command} ${args.join(" ")} <prompt>`);
   sections.push("");
 
   // Prompt preview
@@ -96,39 +83,19 @@ export function formatDryRun(info: DryRunInfo): string {
   }
   sections.push("");
 
-  // After commands
-  if (info.afterCommands.length > 0) {
-    sections.push("⚡ AFTER COMMANDS (will execute)");
-    sections.push("───────────────────────────────────────────────────────────────");
-    for (let i = 0; i < info.afterCommands.length; i++) {
-      const note = i === 0 ? ` (receives ${harnessName} output via stdin)` : "";
-      sections.push(`  ${i + 1}. ${info.afterCommands[i]}${note}`);
-    }
-    sections.push("");
-  }
-
   // Configuration summary
   sections.push("⚙️  CONFIGURATION");
   sections.push("───────────────────────────────────────────────────────────────");
-  sections.push(`  Harness: ${harnessName}`);
-  if (info.frontmatter.model) {
-    sections.push(`  Model: ${info.frontmatter.model}`);
-  }
-  const agent = info.frontmatter.copilot?.agent;
-  if (agent) {
-    sections.push(`  Agent: ${agent}`);
-  }
-  if (info.frontmatter.extract) {
-    sections.push(`  Extract: ${info.frontmatter.extract}`);
+  sections.push(`  Command: ${command}`);
+  // Show all frontmatter keys that aren't system keys
+  const systemKeys = new Set(["command", "inputs", "context", "requires", "cache"]);
+  for (const [key, value] of Object.entries(info.frontmatter)) {
+    if (systemKeys.has(key)) continue;
+    if (value === undefined || value === null) continue;
+    sections.push(`  ${key}: ${JSON.stringify(value)}`);
   }
   if (info.frontmatter.cache) {
     sections.push(`  Cache: enabled`);
-  }
-  if (info.frontmatter.silent) {
-    sections.push(`  Silent: true`);
-  }
-  if (info.frontmatter.interactive) {
-    sections.push(`  Interactive: true`);
   }
   sections.push("");
 
@@ -138,12 +105,4 @@ export function formatDryRun(info: DryRunInfo): string {
   sections.push("═══════════════════════════════════════════════════════════════");
 
   return sections.join("\n");
-}
-
-/**
- * Extract command list from string or array
- */
-export function toCommandList(commands: string | string[] | undefined): string[] {
-  if (!commands) return [];
-  return Array.isArray(commands) ? commands : [commands];
 }
