@@ -37,6 +37,22 @@ async function readStdin(): Promise<string> {
 }
 
 async function main() {
+  // Handle EPIPE gracefully when downstream closes the pipe early
+  // (e.g., `ma task.md | head -n 5`)
+  process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE") {
+      process.exit(0);
+    }
+    throw err;
+  });
+
+  process.stderr.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE") {
+      process.exit(0);
+    }
+    throw err;
+  });
+
   let logPath: string | null = null;
 
   try {
