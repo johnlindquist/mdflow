@@ -1,6 +1,6 @@
 /**
  * Zod schemas for frontmatter validation
- * Provides type safety and helpful error messages
+ * Minimal validation - most keys pass through to the command
  */
 
 import { z } from "zod";
@@ -25,81 +25,22 @@ export const inputFieldSchema = z.object({
   { message: "Select inputs require a non-empty choices array" }
 );
 
-/** Harness selection */
-const harnessSchema = z.enum(["claude", "codex", "copilot", "gemini", "auto"]).optional();
-
-/** Supported AI models (flexible string to support all backends) */
-const modelSchema = z.string().optional();
-
-/** Output extraction modes */
-const extractModeSchema = z.enum(["json", "code", "markdown", "raw"]).optional();
-
 /** String or array of strings */
 const stringOrArraySchema = z.union([
   z.string(),
   z.array(z.string()),
 ]).optional();
 
-/** Claude-specific config */
-const claudeConfigSchema = z.object({
-  "dangerously-skip-permissions": z.boolean().optional(),
-  "mcp-config": stringOrArraySchema,
-  "allowed-tools": z.string().optional(),
-}).passthrough().optional();
-
-/** Codex-specific config */
-const codexConfigSchema = z.object({
-  sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
-  approval: z.enum(["untrusted", "on-failure", "on-request", "never"]).optional(),
-  "full-auto": z.boolean().optional(),
-  oss: z.boolean().optional(),
-  "local-provider": z.string().optional(),
-  cd: z.string().optional(),
-}).passthrough().optional();
-
-/** Copilot-specific config (legacy) */
-const copilotConfigSchema = z.object({
-  agent: z.string().optional(),
-}).passthrough().optional();
-
-/** Gemini-specific config */
-const geminiConfigSchema = z.object({
-  sandbox: z.boolean().optional(),
-  yolo: z.boolean().optional(),
-  "approval-mode": z.enum(["default", "auto_edit", "yolo"]).optional(),
-  "allowed-tools": stringOrArraySchema,
-  extensions: stringOrArraySchema,
-  resume: z.string().optional(),
-  "allowed-mcp-server-names": stringOrArraySchema,
-}).passthrough().optional();
-
-/** Main frontmatter schema */
+/** Main frontmatter schema - minimal, passthrough everything else */
 export const frontmatterSchema = z.object({
-  // Harness selection
-  harness: harnessSchema,
+  // Command to execute
+  command: z.string().optional(),
 
   // Wizard mode inputs
   inputs: z.array(inputFieldSchema).optional(),
 
   // Context globs
   context: stringOrArraySchema,
-
-  // Output extraction
-  extract: extractModeSchema,
-
-  // Model configuration
-  model: modelSchema,
-
-  // Behavior flags
-  silent: z.boolean().optional(),
-  interactive: z.boolean().optional(),
-
-  // Permission flags
-  "allow-all-tools": z.boolean().optional(),
-  "allow-all-paths": z.boolean().optional(),
-  "allow-tool": z.string().optional(),
-  "deny-tool": z.string().optional(),
-  "add-dir": stringOrArraySchema,
 
   // Caching
   cache: z.boolean().optional(),
@@ -109,13 +50,7 @@ export const frontmatterSchema = z.object({
     bin: z.array(z.string()).optional(),
     env: z.array(z.string()).optional(),
   }).optional(),
-
-  // Backend-specific configs
-  claude: claudeConfigSchema,
-  codex: codexConfigSchema,
-  copilot: copilotConfigSchema,
-  gemini: geminiConfigSchema,
-}).passthrough(); // Allow unknown keys for forward compatibility
+}).passthrough(); // Allow all other keys - they become CLI flags
 
 /** Type inferred from schema */
 export type FrontmatterSchema = z.infer<typeof frontmatterSchema>;
@@ -132,7 +67,6 @@ function formatZodIssues(issues: Array<{ path: (string | number)[]; message: str
 
 /**
  * Validate parsed YAML against frontmatter schema
- * Returns validated data or throws with helpful error messages
  */
 export function validateFrontmatter(data: unknown): FrontmatterSchema {
   const result = frontmatterSchema.safeParse(data);
