@@ -173,6 +173,15 @@ export interface RunResult {
 export async function runCommand(ctx: RunContext): Promise<RunResult> {
   const { command, args, positionals, positionalMappings, captureOutput, env } = ctx;
 
+  // Pre-flight check: verify the command exists
+  const binaryPath = Bun.which(command);
+  if (!binaryPath) {
+    console.error(`Command not found: '${command}'`);
+    console.error(`This agent requires '${command}' to be installed and available in your PATH.`);
+    console.error(`Please install it and try again.`);
+    return { exitCode: 127, output: "" };  // 127 = command not found
+  }
+
   // Build final command args
   const finalArgs = [...args];
 
