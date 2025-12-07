@@ -1,6 +1,6 @@
 import { expect, test, describe } from "bun:test";
-import { buildCopilotArgs, buildPrompt, slugify } from "./run";
-import type { CopilotFrontmatter, CommandResult } from "./types";
+import { buildCopilotArgs, slugify } from "./run";
+import type { CopilotFrontmatter } from "./types";
 
 describe("slugify", () => {
   test("converts command to lowercase kebab-case", () => {
@@ -65,44 +65,3 @@ describe("buildCopilotArgs", () => {
   });
 });
 
-describe("buildPrompt", () => {
-  test("returns body when no before results", () => {
-    const prompt = buildPrompt([], "Do something");
-    expect(prompt).toBe("Do something");
-  });
-
-  test("wraps before output in XML tags", () => {
-    const beforeResults: CommandResult[] = [
-      { command: "echo hello", output: "hello", exitCode: 0 },
-    ];
-    const prompt = buildPrompt(beforeResults, "Analyze this");
-    expect(prompt).toContain("<echo-hello>");
-    expect(prompt).toContain("hello");
-    expect(prompt).toContain("</echo-hello>");
-    expect(prompt).toContain("Analyze this");
-  });
-
-  test("wraps multiple before commands in separate XML tags", () => {
-    const beforeResults: CommandResult[] = [
-      { command: "gh run list", output: "run1\nrun2", exitCode: 0 },
-      { command: "git status", output: "clean", exitCode: 0 },
-    ];
-    const prompt = buildPrompt(beforeResults, "Body");
-    expect(prompt).toContain("<gh-run-list>");
-    expect(prompt).toContain("run1\nrun2");
-    expect(prompt).toContain("</gh-run-list>");
-    expect(prompt).toContain("<git-status>");
-    expect(prompt).toContain("clean");
-    expect(prompt).toContain("</git-status>");
-  });
-
-  test("places body after XML tags", () => {
-    const beforeResults: CommandResult[] = [
-      { command: "cmd", output: "out", exitCode: 0 },
-    ];
-    const prompt = buildPrompt(beforeResults, "Instructions here");
-    const tagEnd = prompt.indexOf("</cmd>");
-    const bodyStart = prompt.indexOf("Instructions here");
-    expect(bodyStart).toBeGreaterThan(tagEnd);
-  });
-});

@@ -84,15 +84,8 @@ export const frontmatterSchema = z.object({
   // Context globs
   context: stringOrArraySchema,
 
-  // External documentation URLs (into.md)
-  docs: stringOrArraySchema,
-
   // Output extraction
   extract: extractModeSchema,
-
-  // Command hooks
-  before: stringOrArraySchema,
-  after: stringOrArraySchema,
 
   // Model configuration
   model: modelSchema,

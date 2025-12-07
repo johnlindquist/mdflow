@@ -2,15 +2,13 @@
 import { parseFrontmatter, parseRawFrontmatter } from "./parse";
 import { parseCliArgs, mergeFrontmatter } from "./cli";
 import { safeParseFrontmatter } from "./schema";
-import { runBeforeCommands, runAfterCommands, buildPrompt, slugify } from "./run";
 import { substituteTemplateVars, extractTemplateVars } from "./template";
 import { promptInputs, validateInputField } from "./inputs";
 import { resolveContextGlobs, formatContextAsXml, getContextStats, type ContextFile } from "./context";
-import { fetchDocs, getDocsStats, type DocsFetchResult } from "./docs";
 import { extractOutput, isValidExtractMode, type ExtractMode } from "./extract";
 import { generateCacheKey, readCache, writeCache } from "./cache";
 import { validatePrerequisites, handlePrerequisiteFailure } from "./prerequisites";
-import { formatDryRun, toCommandList, type DryRunInfo } from "./dryrun";
+import { formatDryRun, type DryRunInfo } from "./dryrun";
 import { isRemoteUrl, fetchRemote, cleanupRemote, printRemoteWarning } from "./remote";
 import { resolveHarnessSync, type RunContext } from "./harnesses";
 import { runBatch, formatBatchResults, parseBatchManifest } from "./batch";
@@ -292,31 +290,8 @@ async function main() {
     }
   }
 
-  // Fetch external documentation via into.md
-  let docsXml = "";
-  let docsResults: DocsFetchResult[] = [];
-  if (frontmatter.docs) {
-    const docsContext = await fetchDocs(frontmatter.docs, verbose);
-    docsResults = docsContext.results;
-    docsXml = docsContext.xml;
-
-    if (docsResults.length > 0) {
-      const stats = getDocsStats(docsResults);
-      console.error(`Docs: ${stats.successful}/${stats.total} fetched, ${Math.round(stats.totalChars / 1000)}k chars`);
-      if (stats.failed > 0) {
-        const failed = docsResults.filter(r => !r.success);
-        for (const f of failed) {
-          console.error(`  ⚠ Failed: ${f.url} - ${f.error}`);
-        }
-      }
-    }
-  }
-
-  // Build final body with docs, context, stdin, and appended text
+  // Build final body with context, stdin, and appended text
   let finalBody = body;
-  if (docsXml) {
-    finalBody = `${docsXml}\n\n${finalBody}`;
-  }
   if (contextXml) {
     finalBody = `${contextXml}\n\n${finalBody}`;
   }
@@ -337,9 +312,6 @@ async function main() {
     if (contextFiles.length > 0) {
       console.error(`[verbose] Context files: ${contextFiles.length}`);
     }
-    if (docsResults.length > 0) {
-      console.error(`[verbose] Docs URLs: ${docsResults.length}`);
-    }
     if (passthroughArgs.length > 0) {
       console.error(`[verbose] Passthrough args: ${passthroughArgs.join(" ")}`);
     }
@@ -359,8 +331,8 @@ async function main() {
       harnessArgs,
       harnessName: harness.name,
       contextFiles,
-      beforeCommands: toCommandList(frontmatter.before),
-      afterCommands: toCommandList(frontmatter.after),
+      beforeCommands: [],
+      afterCommands: [],
       templateVars: allTemplateVars,
     };
     console.log(formatDryRun(dryRunInfo));
@@ -372,21 +344,14 @@ async function main() {
     process.exit(0);
   }
 
-  // Run before-commands
-  const beforeResults = await runBeforeCommands(frontmatter.before);
-
-  // Build prompt with before-command results
-  const prompt = buildPrompt(beforeResults, finalBody);
-
-  // Capture output if we have extract mode, after commands, or caching
-  const hasAfterCommands = frontmatter.after !== undefined;
+  // Capture output if we have extract mode or caching
   const hasExtract = frontmatter.extract && isValidExtractMode(frontmatter.extract);
   const useCache = frontmatter.cache === true && !noCache;
-  const captureOutput = hasAfterCommands || hasExtract || useCache;
+  const captureOutput = hasExtract || useCache;
 
   // Build run context
   const runContext: RunContext = {
-    prompt,
+    prompt: finalBody,
     frontmatter,
     passthroughArgs,
     captureOutput,
@@ -425,27 +390,21 @@ async function main() {
   }
 
   // Apply output extraction if specified
-  let outputForPipe = runResult.output;
   if (hasExtract && runResult.output) {
-    outputForPipe = extractOutput(runResult.output, frontmatter.extract as ExtractMode);
+    const extracted = extractOutput(runResult.output, frontmatter.extract as ExtractMode);
     // Print extracted output (different from full output already shown by runner)
-    if (outputForPipe !== runResult.output) {
+    if (extracted !== runResult.output) {
       console.log("\n--- Extracted output ---");
-      console.log(outputForPipe);
+      console.log(extracted);
     }
   }
-
-  // Run after-commands with (possibly extracted) output piped to first command
-  const afterResults = await runAfterCommands(frontmatter.after, outputForPipe);
 
   // Cleanup remote temporary file
   if (isRemote) {
     await cleanupRemote(localFilePath);
   }
 
-  // Exit with harness's exit code (or first failed after command)
-  const failedAfter = afterResults.find(r => r.exitCode !== 0);
-  process.exit(failedAfter ? failedAfter.exitCode : runResult.exitCode);
+  process.exit(runResult.exitCode);
 }
 
 main();

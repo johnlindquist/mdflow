@@ -106,3 +106,54 @@ test("expandImports handles ~ expansion", async () => {
   const result = await expandImports(content, testDir);
   expect(result).toBe("Some text with email@example.com is not an import");
 });
+
+// URL import tests
+test("hasImports detects @https:// URL syntax", () => {
+  expect(hasImports("@https://example.com/docs")).toBe(true);
+  expect(hasImports("@https://github.com/user/repo/blob/main/README.md")).toBe(true);
+});
+
+test("hasImports detects @http:// URL syntax", () => {
+  expect(hasImports("@http://example.com/api")).toBe(true);
+  expect(hasImports("@http://localhost:3000/data.json")).toBe(true);
+});
+
+test("hasImports does NOT match emails", () => {
+  expect(hasImports("contact@example.com")).toBe(false);
+  expect(hasImports("foo@bar.org")).toBe(false);
+  expect(hasImports("user.name@company.io")).toBe(false);
+  expect(hasImports("Send email to admin@test.com please")).toBe(false);
+});
+
+test("hasImports distinguishes emails from URL imports", () => {
+  // Email should not match
+  expect(hasImports("foo@example.com")).toBe(false);
+  // URL import should match
+  expect(hasImports("@https://example.com")).toBe(true);
+  // Mixed content - URL should be detected
+  expect(hasImports("Email: foo@bar.com and docs: @https://docs.com")).toBe(true);
+});
+
+test("expandImports fetches markdown URL", async () => {
+  // Use httpbin.org for testing - returns whatever we send
+  const content = "Docs: @https://httpbin.org/robots.txt";
+  const result = await expandImports(content, testDir);
+  // httpbin.org/robots.txt returns a simple text file
+  expect(result).toContain("Docs:");
+  expect(result).not.toContain("@https://");
+});
+
+test("expandImports fetches JSON URL", async () => {
+  const content = "Data: @https://httpbin.org/json";
+  const result = await expandImports(content, testDir);
+  expect(result).toContain("Data:");
+  expect(result).toContain("slideshow"); // httpbin /json returns slideshow data
+  expect(result).not.toContain("@https://");
+});
+
+test("expandImports preserves emails while expanding URLs", async () => {
+  const content = "Contact: admin@example.com\nDocs: @https://httpbin.org/robots.txt";
+  const result = await expandImports(content, testDir);
+  expect(result).toContain("admin@example.com"); // Email preserved
+  expect(result).not.toContain("@https://"); // URL expanded
+});

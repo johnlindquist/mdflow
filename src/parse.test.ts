@@ -34,34 +34,24 @@ Body`;
 
   test("parses inline array", () => {
     const content = `---
-before: [command1, command2]
+context: ["src/**/*.ts", "tests/**/*.ts"]
 ---
 Body`;
     const result = parseFrontmatter(content);
-    expect(result.frontmatter.before).toEqual(["command1", "command2"]);
+    expect(result.frontmatter.context).toEqual(["src/**/*.ts", "tests/**/*.ts"]);
   });
 
   test("parses multiline array", () => {
     const content = `---
-before:
-  - gh run list
-  - git status
+context:
+  - src/**/*.ts
+  - lib/**/*.ts
 model: gpt-5
 ---
 Body`;
     const result = parseFrontmatter(content);
-    expect(result.frontmatter.before).toEqual(["gh run list", "git status"]);
+    expect(result.frontmatter.context).toEqual(["src/**/*.ts", "lib/**/*.ts"]);
     expect(result.frontmatter.model).toBe("gpt-5");
-  });
-
-  test("parses single before value as string", () => {
-    const content = `---
-before: gh run list --limit 5
-model: claude-haiku-4.5
----
-Body`;
-    const result = parseFrontmatter(content);
-    expect(result.frontmatter.before).toBe("gh run list --limit 5");
   });
 
   test("handles kebab-case keys", () => {

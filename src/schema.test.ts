@@ -68,15 +68,6 @@ describe("validateFrontmatter", () => {
     expect(() => validateFrontmatter({ extract: "invalid" })).toThrow();
   });
 
-  test("validates before/after commands", () => {
-    const result = validateFrontmatter({
-      before: "echo hello",
-      after: ["pbcopy", "echo done"]
-    });
-    expect(result.before).toBe("echo hello");
-    expect(result.after).toEqual(["pbcopy", "echo done"]);
-  });
-
   test("validates boolean flags", () => {
     const result = validateFrontmatter({
       silent: true,

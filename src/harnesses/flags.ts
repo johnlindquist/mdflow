@@ -15,7 +15,7 @@ const SYSTEM_KEYS = new Set([
   // Harness-specific configs (handled separately)
   "claude", "codex", "copilot", "gemini",
   // markdown-agent specific features
-  "inputs", "context", "extract", "cache", "requires", "before", "after",
+  "inputs", "context", "extract", "cache", "requires",
 ]);
 
 /**

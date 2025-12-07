@@ -180,14 +180,6 @@ export interface AgentFrontmatter {
   // --- Context ---
   context?: string | string[];  // Glob patterns for files to include
 
-  // --- External Documentation ---
-  /**
-   * URLs to fetch as documentation context via into.md
-   * Content is converted to markdown and injected with safety warnings
-   * @example docs: "https://docs.example.com/api"
-   * @example docs: ["https://react.dev/reference", "https://nextjs.org/docs"]
-   */
-  docs?: string | string[];
 
   // --- Output Extraction ---
   extract?: "json" | "code" | "markdown" | "raw";  // Output extraction mode
@@ -198,9 +190,6 @@ export interface AgentFrontmatter {
   // --- Prerequisites ---
   requires?: Prerequisites;
 
-  // --- Hooks ---
-  before?: string | string[];
-  after?: string | string[];
 
   // --- Backend Specific Config (Escape Hatches) ---
   claude?: ClaudeConfig;

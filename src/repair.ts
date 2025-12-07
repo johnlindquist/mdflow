@@ -211,8 +211,6 @@ VALID FRONTMATTER FIELDS:
 - allow-tool: string (single tool pattern)
 - deny-tool: string
 - add-dir: string | string[]
-- before: string | string[]
-- after: string | string[]
 - context: string | string[]
 - extract: "json" | "code" | "markdown" | "raw"
 - cache: boolean
