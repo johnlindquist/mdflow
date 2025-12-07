@@ -121,13 +121,13 @@ describe("integration with extractTemplateVars", () => {
     expect(vars).toContain("camelCase");
   });
 
-  test("variables with filters are not extracted (have defaults)", () => {
-    // Variables with filter expressions like defaults are NOT extracted
-    // because they have fallback values and don't need user input
+  test("variables with filters are extracted", () => {
+    // Variables with filter expressions are extracted because they may still
+    // need user input even if they have a default filter
     const body = '{{ name | default: "World" }}';
     const vars = extractTemplateVars(body);
-    // The regex only matches simple {{ name }} patterns
-    expect(vars).toEqual([]);
+    // The variable is extracted even with a filter
+    expect(vars).toEqual(["name"]);
   });
 
   test("deduplicates repeated variables for prompting", () => {

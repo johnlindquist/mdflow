@@ -6,6 +6,7 @@ import {
 } from "./template";
 
 describe("extractTemplateVars", () => {
+  // Output tag tests ({{ variable }})
   test("extracts single variable", () => {
     const vars = extractTemplateVars("Hello {{ name }}!");
     expect(vars).toEqual(["name"]);
@@ -34,6 +35,92 @@ describe("extractTemplateVars", () => {
   test("returns empty array when no variables", () => {
     const vars = extractTemplateVars("No variables here");
     expect(vars).toEqual([]);
+  });
+
+  test("extracts variable from filter expression", () => {
+    const vars = extractTemplateVars("{{ name | upcase }}");
+    expect(vars).toEqual(["name"]);
+  });
+
+  // Logic tag tests ({% if/unless/elsif variable %})
+  test("extracts variable from if tag", () => {
+    const vars = extractTemplateVars("{% if debug %}DEBUG{% endif %}");
+    expect(vars).toEqual(["debug"]);
+  });
+
+  test("extracts variable from unless tag", () => {
+    const vars = extractTemplateVars("{% unless silent %}Loud{% endunless %}");
+    expect(vars).toEqual(["silent"]);
+  });
+
+  test("extracts variable from elsif tag", () => {
+    const vars = extractTemplateVars("{% if a %}A{% elsif b %}B{% endif %}");
+    expect(vars).toContain("a");
+    expect(vars).toContain("b");
+  });
+
+  test("extracts variables from comparison operators", () => {
+    const vars = extractTemplateVars('{% if mode == "debug" %}DEBUG{% endif %}');
+    expect(vars).toEqual(["mode"]);
+  });
+
+  test("extracts variables from and/or conditions", () => {
+    const vars = extractTemplateVars("{% if debug and verbose %}VERBOSE DEBUG{% endif %}");
+    expect(vars).toContain("debug");
+    expect(vars).toContain("verbose");
+  });
+
+  test("excludes Liquid operators and keywords", () => {
+    const vars = extractTemplateVars("{% if debug and not silent or verbose %}test{% endif %}");
+    expect(vars).toContain("debug");
+    expect(vars).toContain("silent");
+    expect(vars).toContain("verbose");
+    expect(vars).not.toContain("and");
+    expect(vars).not.toContain("not");
+    expect(vars).not.toContain("or");
+  });
+
+  test("excludes true/false/nil keywords", () => {
+    const vars = extractTemplateVars("{% if enabled == true %}yes{% endif %}");
+    expect(vars).toEqual(["enabled"]);
+    expect(vars).not.toContain("true");
+  });
+
+  test("excludes numeric values", () => {
+    const vars = extractTemplateVars("{% if count > 10 %}many{% endif %}");
+    expect(vars).toEqual(["count"]);
+    expect(vars).not.toContain("10");
+  });
+
+  // Combined cases
+  test("extracts variables from both output and logic tags", () => {
+    const content = `{% if debug %}
+      Debug: {{ message }}
+    {% endif %}`;
+    const vars = extractTemplateVars(content);
+    expect(vars).toContain("debug");
+    expect(vars).toContain("message");
+  });
+
+  test("deduplicates variables across output and logic tags", () => {
+    const content = "{% if name %}Hello {{ name }}!{% endif %}";
+    const vars = extractTemplateVars(content);
+    expect(vars).toEqual(["name"]);
+  });
+
+  test("handles complex template with multiple logic tags", () => {
+    const content = `
+      {% if force %}--force{% endif %}
+      {% unless quiet %}echo "Processing {{ file }}"{% endunless %}
+      {% if verbose and debug %}--verbose --debug{% elsif trace %}--trace{% endif %}
+    `;
+    const vars = extractTemplateVars(content);
+    expect(vars).toContain("force");
+    expect(vars).toContain("quiet");
+    expect(vars).toContain("file");
+    expect(vars).toContain("verbose");
+    expect(vars).toContain("debug");
+    expect(vars).toContain("trace");
   });
 });
 
@@ -72,6 +159,21 @@ describe("substituteTemplateVars", () => {
     expect(() =>
       substituteTemplateVars("{{ missing }}", {}, { strict: true })
     ).toThrow("Missing required template variable: missing");
+  });
+
+  test("throws in strict mode for missing variables in logic tags", () => {
+    expect(() =>
+      substituteTemplateVars("{% if debug %}DEBUG{% endif %}", {}, { strict: true })
+    ).toThrow("Missing required template variable: debug");
+  });
+
+  test("strict mode passes when logic tag variables are provided", () => {
+    const result = substituteTemplateVars(
+      "{% if debug %}DEBUG{% endif %}",
+      { debug: "true" },
+      { strict: true }
+    );
+    expect(result).toBe("DEBUG");
   });
 
   test("supports conditionals", () => {
