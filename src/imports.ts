@@ -2,6 +2,7 @@ import { resolve, dirname, relative, basename } from "path";
 import { homedir } from "os";
 import { Glob } from "bun";
 import ignore from "ignore";
+import { MAX_INPUT_SIZE, FileSizeLimitError, exceedsLimit } from "./limits";
 
 /**
  * Expand markdown imports, URL imports, and command inlines
@@ -408,6 +409,12 @@ async function processGlobImport(
     }
 
     const bunFile = Bun.file(file);
+
+    // Check individual file size before reading
+    if (exceedsLimit(bunFile.size)) {
+      throw new FileSizeLimitError(file, bunFile.size);
+    }
+
     const content = await bunFile.text();
     totalChars += content.length;
 
@@ -458,6 +465,11 @@ async function processFileImport(
       throw new Error(`Import not found: ${symbolParsed.path} (resolved to ${resolvedPath})`);
     }
 
+    // Check file size before reading
+    if (exceedsLimit(file.size)) {
+      throw new FileSizeLimitError(resolvedPath, file.size);
+    }
+
     if (verbose) {
       console.error(`[imports] Extracting symbol "${symbolParsed.symbol}" from: ${symbolParsed.path}`);
     }
@@ -474,6 +486,11 @@ async function processFileImport(
     const file = Bun.file(resolvedPath);
     if (!await file.exists()) {
       throw new Error(`Import not found: ${rangeParsed.path} (resolved to ${resolvedPath})`);
+    }
+
+    // Check file size before reading
+    if (exceedsLimit(file.size)) {
+      throw new FileSizeLimitError(resolvedPath, file.size);
     }
 
     if (verbose) {
@@ -497,6 +514,11 @@ async function processFileImport(
   const file = Bun.file(resolvedPath);
   if (!await file.exists()) {
     throw new Error(`Import not found: ${importPath} (resolved to ${resolvedPath})`);
+  }
+
+  // Check file size before reading
+  if (exceedsLimit(file.size)) {
+    throw new FileSizeLimitError(resolvedPath, file.size);
   }
 
   if (verbose) {
