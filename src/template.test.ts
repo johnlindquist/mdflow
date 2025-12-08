@@ -122,6 +122,96 @@ describe("extractTemplateVars", () => {
     expect(vars).toContain("debug");
     expect(vars).toContain("trace");
   });
+
+  // AST-specific tests (features that regex couldn't handle well)
+  describe("AST-based extraction", () => {
+    test("extracts root from nested variable access", () => {
+      const vars = extractTemplateVars("{{ user.name }}");
+      expect(vars).toEqual(["user"]);
+    });
+
+    test("extracts root from deeply nested access", () => {
+      const vars = extractTemplateVars("{{ config.database.host }}");
+      expect(vars).toEqual(["config"]);
+    });
+
+    test("handles chained filters", () => {
+      const vars = extractTemplateVars("{{ name | upcase | truncate: 10 }}");
+      expect(vars).toEqual(["name"]);
+    });
+
+    test("extracts collection variable from for loop", () => {
+      const vars = extractTemplateVars("{% for item in items %}{{ item.name }}{% endfor %}");
+      // 'item' is in local scope from the for loop, so only 'items' is a global
+      expect(vars).toEqual(["items"]);
+    });
+
+    test("ignores variables inside comment blocks", () => {
+      const vars = extractTemplateVars("{% comment %}{{ hidden }}{% endcomment %}{{ visible }}");
+      expect(vars).toEqual(["visible"]);
+    });
+
+    test("ignores variables inside raw blocks", () => {
+      const vars = extractTemplateVars("{% raw %}{{ template_syntax }}{% endraw %}{{ actual }}");
+      expect(vars).toEqual(["actual"]);
+    });
+
+    test("handles variables with array index access", () => {
+      const vars = extractTemplateVars("{{ items[0].name }}");
+      expect(vars).toEqual(["items"]);
+    });
+
+    test("handles case/when statements", () => {
+      const vars = extractTemplateVars(`
+        {% case status %}
+          {% when 'active' %}{{ active_message }}
+          {% when 'pending' %}{{ pending_message }}
+        {% endcase %}
+      `);
+      expect(vars).toContain("status");
+      expect(vars).toContain("active_message");
+      expect(vars).toContain("pending_message");
+    });
+
+    test("excludes locally assigned variables", () => {
+      const vars = extractTemplateVars("{% assign local = 'value' %}{{ local }}{{ external }}");
+      // 'local' is assigned in template scope, only 'external' is a global
+      expect(vars).toEqual(["external"]);
+    });
+
+    test("excludes captured variables", () => {
+      const vars = extractTemplateVars("{% capture greeting %}Hello{% endcapture %}{{ greeting }}{{ name }}");
+      // 'greeting' is captured locally, only 'name' is a global
+      expect(vars).toEqual(["name"]);
+    });
+
+    test("handles contains operator with variable", () => {
+      const vars = extractTemplateVars('{% if haystack contains needle %}found{% endif %}');
+      expect(vars).toContain("haystack");
+      expect(vars).toContain("needle");
+    });
+
+    test("handles increment/decrement tags (exclude local counter)", () => {
+      const vars = extractTemplateVars("{% increment counter %}{{ external }}");
+      // 'counter' becomes a local, only 'external' is global
+      expect(vars).toEqual(["external"]);
+    });
+
+    test("returns empty array for malformed template", () => {
+      const vars = extractTemplateVars("{{ unclosed");
+      expect(vars).toEqual([]);
+    });
+
+    test("handles empty template", () => {
+      const vars = extractTemplateVars("");
+      expect(vars).toEqual([]);
+    });
+
+    test("handles template with only static content", () => {
+      const vars = extractTemplateVars("Hello, World!");
+      expect(vars).toEqual([]);
+    });
+  });
 });
 
 describe("substituteTemplateVars", () => {

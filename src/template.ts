@@ -3,7 +3,7 @@
  * Uses LiquidJS for full template support including conditionals and loops
  */
 
-import { Liquid } from "liquidjs";
+import { Liquid, analyzeSync } from "liquidjs";
 
 export interface TemplateVars {
   [key: string]: string;
@@ -16,49 +16,30 @@ const engine = new Liquid({
 });
 
 /**
- * Extract template variables from content
- * Returns array of variable names found in:
+ * Extract template variables from content using LiquidJS AST parsing
+ * Returns array of global variable names (root segments) found in:
  * - {{ variable }} output patterns
  * - {% if variable %}, {% unless variable %}, {% elsif variable %} logic tags
- * Note: This only extracts simple variable names, not filter expressions or complex conditions
+ * - {% for item in collection %} loop tags
+ * - Variables with filters: {{ name | upcase }}
+ * - Nested variables: {{ user.name }} (returns "user" as the root)
+ *
+ * Uses LiquidJS's analyzeSync for accurate AST-based extraction,
+ * avoiding regex fragility with complex Liquid syntax.
  */
 export function extractTemplateVars(content: string): string[] {
-  const vars: Set<string> = new Set();
-
-  // Match variables in {{ variable }} output tags
-  // Captures: {{ name }}, {{ name | filter }}, etc.
-  const outputRegex = /\{\{\s*(\w+)\s*(?:\|[^}]*)?\}\}/g;
-  let match;
-  while ((match = outputRegex.exec(content)) !== null) {
-    if (match[1]) vars.add(match[1]);
+  try {
+    // Parse the template into AST
+    const templates = engine.parse(content);
+    // Analyze to find all global variables (undefined in template scope)
+    const analysis = analyzeSync(templates, { partials: false });
+    // Return the root variable names from globals
+    return Object.keys(analysis.globals);
+  } catch {
+    // Fallback: return empty array if template parsing fails
+    // This maintains backward compatibility for malformed templates
+    return [];
   }
-
-  // Match variables in {% if/unless/elsif variable %} logic tags
-  // Handles: {% if var %}, {% unless var %}, {% elsif var %}
-  // Also handles comparisons: {% if var == "value" %}, {% if var != "value" %}
-  // Also handles boolean operators: {% if var and other %}, {% if var or other %}
-  const logicTagRegex = /\{%\s*(?:if|unless|elsif)\s+(.+?)\s*%\}/g;
-  while ((match = logicTagRegex.exec(content)) !== null) {
-    if (match[1]) {
-      // Extract all word tokens from the condition, excluding operators and string literals
-      let condition = match[1];
-      // Remove string literals (both single and double quoted) to avoid extracting their contents
-      condition = condition.replace(/"[^"]*"/g, '').replace(/'[^']*'/g, '');
-      // Match word tokens that are not operators or keywords
-      const tokenRegex = /\b(\w+)\b/g;
-      const operators = new Set(['and', 'or', 'not', 'contains', 'true', 'false', 'nil', 'null', 'empty', 'blank']);
-      let tokenMatch;
-      while ((tokenMatch = tokenRegex.exec(condition)) !== null) {
-        const token = tokenMatch[1];
-        // Skip operators, keywords, and numeric values
-        if (token && !operators.has(token) && !/^\d+$/.test(token)) {
-          vars.add(token);
-        }
-      }
-    }
-  }
-
-  return Array.from(vars);
 }
 
 /**
