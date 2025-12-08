@@ -1,6 +1,7 @@
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { select, confirm } from "@inquirer/prompts";
 
 const SHELL_SNIPPET = `
 # markdown-agent: Treat .md files as executable agents
@@ -25,6 +26,39 @@ _handle_md() {
   fi
 }
 `.trim();
+
+const PATH_SNIPPET = `
+# markdown-agent: Add agent directories to PATH
+# User agents (~/.ma) - run agents by name from anywhere
+export PATH="$HOME/.ma:$PATH"
+
+# Project agents (.ma) - auto-add local .ma/ to PATH when entering directories
+# This function runs on each directory change to update PATH dynamically
+_ma_chpwd() {
+  # Remove any previous .ma paths from PATH
+  PATH=$(echo "$PATH" | tr ':' '\\n' | grep -v '/\\.ma$' | tr '\\n' ':' | sed 's/:$//')
+  # Add current directory's .ma if it exists
+  if [[ -d ".ma" ]]; then
+    export PATH="$PWD/.ma:$PATH"
+  fi
+}
+
+# Hook into directory change (zsh)
+if [[ -n "$ZSH_VERSION" ]]; then
+  autoload -Uz add-zsh-hook
+  add-zsh-hook chpwd _ma_chpwd
+fi
+
+# Hook into directory change (bash)
+if [[ -n "$BASH_VERSION" ]]; then
+  PROMPT_COMMAND="_ma_chpwd\${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+fi
+
+# Run once on shell start
+_ma_chpwd
+`.trim();
+
+type SetupFeature = "alias" | "path" | "both";
 
 interface ShellConfig {
   name: string;
@@ -53,9 +87,9 @@ function findShellConfigs(): ShellConfig[] {
 }
 
 /**
- * Check if snippet is already installed in a config file
+ * Check if alias snippet is already installed in a config file
  */
-async function isAlreadyInstalled(configPath: string): Promise<boolean> {
+async function isAliasInstalled(configPath: string): Promise<boolean> {
   try {
     const content = await Bun.file(configPath).text();
     return content.includes("alias -s md=") || content.includes("_handle_md");
@@ -65,14 +99,26 @@ async function isAlreadyInstalled(configPath: string): Promise<boolean> {
 }
 
 /**
+ * Check if PATH snippet is already installed in a config file
+ */
+async function isPathInstalled(configPath: string): Promise<boolean> {
+  try {
+    const content = await Bun.file(configPath).text();
+    return content.includes("_ma_chpwd") || content.includes('$HOME/.ma:$PATH');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Append snippet to config file
  */
-async function appendToConfig(configPath: string): Promise<void> {
+async function appendToConfig(configPath: string, snippet: string): Promise<void> {
   const file = Bun.file(configPath);
   const existing = (await file.exists()) ? await file.text() : "";
   const newContent = existing.endsWith("\n")
-    ? `${existing}\n${SHELL_SNIPPET}\n`
-    : `${existing}\n\n${SHELL_SNIPPET}\n`;
+    ? `${existing}\n${snippet}\n`
+    : `${existing}\n\n${snippet}\n`;
   await Bun.write(configPath, newContent);
 }
 
@@ -80,95 +126,139 @@ async function appendToConfig(configPath: string): Promise<void> {
  * Interactive setup wizard
  */
 export async function runSetup(): Promise<void> {
-  console.error("\n📝 markdown-agent Shell Setup\n");
-  console.error("This will configure your shell to treat .md files as executable agents.");
-  console.error("After setup, you can run: ./TASK.md instead of: ma TASK.md\n");
+  console.log("\n📝 markdown-agent Shell Setup\n");
 
   const configs = findShellConfigs();
   const existingConfigs = configs.filter((c) => c.exists);
 
   if (existingConfigs.length === 0) {
-    console.error("No shell config files found. Creating ~/.zshrc...\n");
+    console.log("No shell config files found. Will create ~/.zshrc\n");
     existingConfigs.push({ name: ".zshrc", path: join(homedir(), ".zshrc"), exists: false });
   }
 
-  // Show the snippet that will be added
-  console.error("The following will be added to your shell config:\n");
-  console.error("─".repeat(60));
-  console.error(SHELL_SNIPPET);
-  console.error("─".repeat(60));
-  console.error();
+  // Check what's already installed
+  const primaryConfig = existingConfigs[0];
+  const aliasInstalled = await isAliasInstalled(primaryConfig.path);
+  const pathInstalled = await isPathInstalled(primaryConfig.path);
 
-  // Check for existing installations
-  for (const config of existingConfigs) {
-    if (await isAlreadyInstalled(config.path)) {
-      console.error(`✅ Already installed in ${config.name}`);
-      console.error("\nTo apply changes, run: source ~/" + config.name);
-      return;
-    }
+  // Build feature choices based on what's not installed
+  type FeatureChoice = { name: string; value: SetupFeature; description: string };
+  const featureChoices: FeatureChoice[] = [];
+
+  if (!aliasInstalled && !pathInstalled) {
+    featureChoices.push({
+      name: "Both (recommended)",
+      value: "both",
+      description: "Run ./file.md directly + run agents by name",
+    });
   }
 
-  // Show available config files
-  console.error("Available shell config files:");
-  existingConfigs.forEach((c, i) => {
-    console.error(`  ${i + 1}. ${c.name} ${c.exists ? "" : "(will create)"}`);
-  });
-  console.error(`  ${existingConfigs.length + 1}. Copy to clipboard (manual install)`);
-  console.error(`  ${existingConfigs.length + 2}. Cancel`);
-  console.error();
-
-  // Prompt for selection
-  process.stdout.write("Select option [1]: ");
-
-  const input = await new Promise<string>((resolve) => {
-    let data = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.once("data", (chunk) => {
-      data = chunk.toString().trim();
-      resolve(data);
+  if (!pathInstalled) {
+    featureChoices.push({
+      name: "PATH setup only",
+      value: "path",
+      description: "Add ~/.ma and .ma/ to PATH - run agents by name",
     });
-    // Handle if stdin is not interactive
-    if (!process.stdin.isTTY) {
-      resolve("1");
-    }
-  });
+  }
 
-  const choice = parseInt(input) || 1;
+  if (!aliasInstalled) {
+    featureChoices.push({
+      name: "Alias setup only",
+      value: "alias",
+      description: "Run ./file.md instead of ma file.md",
+    });
+  }
 
-  if (choice === existingConfigs.length + 2) {
-    console.error("Setup cancelled.");
+  if (featureChoices.length === 0) {
+    console.log("✅ Both features are already installed in " + primaryConfig.name);
+    console.log("\nTo apply changes, run: source ~/" + primaryConfig.name);
     return;
   }
 
-  if (choice === existingConfigs.length + 1) {
-    // Copy to clipboard
-    const proc = Bun.spawn(["pbcopy"], {
-      stdin: "pipe",
-    });
-    proc.stdin.write(SHELL_SNIPPET);
+  // Let user choose what to install
+  const feature = await select<SetupFeature>({
+    message: "What would you like to set up?",
+    choices: featureChoices,
+  });
+
+  // Build the snippet based on selection
+  let snippet = "";
+  if (feature === "alias" || feature === "both") {
+    snippet += SHELL_SNIPPET;
+  }
+  if (feature === "path" || feature === "both") {
+    if (snippet) snippet += "\n\n";
+    snippet += PATH_SNIPPET;
+  }
+
+  // Show what will be added
+  console.log("\nThe following will be added to your shell config:\n");
+  console.log("─".repeat(60));
+  console.log(snippet);
+  console.log("─".repeat(60));
+  console.log();
+
+  // Let user choose config file
+  const configChoices = [
+    ...existingConfigs.map((c) => ({
+      name: c.name + (c.exists ? "" : " (will create)"),
+      value: c.path,
+    })),
+    { name: "Copy to clipboard (manual install)", value: "clipboard" },
+  ];
+
+  const selectedPath = await select({
+    message: "Where should we add this?",
+    choices: configChoices,
+  });
+
+  if (selectedPath === "clipboard") {
+    const proc = Bun.spawn(["pbcopy"], { stdin: "pipe" });
+    proc.stdin.write(snippet);
     proc.stdin.end();
     await proc.exited;
-    console.error("\n✅ Copied to clipboard!");
-    console.error("Paste into your shell config file and run: source ~/.zshrc");
+    console.log("\n✅ Copied to clipboard!");
+    console.log("Paste into your shell config file and run: source ~/.zshrc");
     return;
   }
 
-  const selectedConfig = existingConfigs[choice - 1];
-  if (!selectedConfig) {
-    console.error("Invalid selection.");
+  // Confirm before writing
+  const proceed = await confirm({
+    message: `Add to ${selectedPath}?`,
+    default: true,
+  });
+
+  if (!proceed) {
+    console.log("Setup cancelled.");
     return;
   }
 
   // Append to selected config
-  await appendToConfig(selectedConfig.path);
-  console.error(`\n✅ Added to ${selectedConfig.name}`);
-  console.error(`\nTo apply changes now, run:\n  source ${selectedConfig.path}`);
-  console.error("\nThen try:\n  ./examples/auto-detect.md --dry-run");
+  await appendToConfig(selectedPath, snippet);
+  const configName = existingConfigs.find((c) => c.path === selectedPath)?.name || selectedPath;
+  console.log(`\n✅ Added to ${configName}`);
+  console.log(`\nTo apply changes now, run:\n  source ${selectedPath}`);
+
+  if (feature === "path" || feature === "both") {
+    console.log("\nNow you can:");
+    console.log("  • Run agents from ~/.ma/ by name: my-agent.claude.md");
+    console.log("  • Run project agents from .ma/: task.claude.md");
+  }
+  if (feature === "alias" || feature === "both") {
+    console.log("\nTry: ./examples/auto-detect.md --dry-run");
+  }
 }
 
 /**
- * Get the shell snippet for display or manual copy
+ * Get the alias shell snippet for display or manual copy
  */
 export function getShellSnippet(): string {
   return SHELL_SNIPPET;
+}
+
+/**
+ * Get the PATH shell snippet for display or manual copy
+ */
+export function getPathSnippet(): string {
+  return PATH_SNIPPET;
 }
