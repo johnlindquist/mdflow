@@ -311,7 +311,7 @@ After import`;
 
     expect(config.commands?.claude?.model).toBe("project-model");
     // Built-in default for copilot should still be there
-    expect(config.commands?.copilot?.$1).toBe("prompt");
+    expect(config.commands?.copilot?.$1).toBe("interactive");
   });
 
   it("getCommandDefaultsFromConfig is pure function", () => {

@@ -29,7 +29,8 @@ const PROJECT_CONFIG_NAMES = ["ma.config.yaml", ".markdown-agent.yaml", ".markdo
 export const BUILTIN_DEFAULTS: GlobalConfig = {
   commands: {
     copilot: {
-      $1: "prompt",  // Map body to --prompt for copilot
+      $1: "interactive",  // Map body to --interactive for copilot
+      silent: true,       // Output only the agent response (no stats)
     },
   },
 };
