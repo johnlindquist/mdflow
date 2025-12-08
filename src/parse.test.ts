@@ -122,79 +122,32 @@ rest of content`;
   });
 });
 
-describe("parseFrontmatter inputs (wizard mode)", () => {
-  test("parses inputs array with objects", () => {
+describe("parseFrontmatter passthrough", () => {
+  test("passes through arbitrary nested objects", () => {
     const content = `---
-inputs:
-  - name: branch
-    type: text
-    message: Which branch?
-  - name: force
-    type: confirm
-    message: Force push?
+custom:
+  nested:
+    value: 42
 model: gpt-5
 ---
 Body`;
     const result = parseFrontmatter(content);
-    expect(result.frontmatter.inputs).toHaveLength(2);
-    expect(result.frontmatter.inputs![0]).toEqual({
-      name: "branch",
-      type: "text",
-      message: "Which branch?",
-    });
-    expect(result.frontmatter.inputs![1]).toEqual({
-      name: "force",
-      type: "confirm",
-      message: "Force push?",
-    });
+    expect(result.frontmatter.custom).toEqual({ nested: { value: 42 } });
     expect(result.frontmatter.model).toBe("gpt-5");
   });
 
-  test("parses select input with choices array", () => {
+  test("passes through arrays of objects", () => {
     const content = `---
-inputs:
-  - name: env
-    type: select
-    message: Which environment?
-    choices:
-      - dev
-      - staging
-      - prod
+items:
+  - name: first
+    value: 1
+  - name: second
+    value: 2
 ---
 Body`;
     const result = parseFrontmatter(content);
-    expect(result.frontmatter.inputs).toHaveLength(1);
-    expect(result.frontmatter.inputs![0]).toEqual({
-      name: "env",
-      type: "select",
-      message: "Which environment?",
-      choices: ["dev", "staging", "prod"],
-    });
-  });
-
-  test("parses input with default value", () => {
-    const content = `---
-inputs:
-  - name: branch
-    type: text
-    message: Branch name?
-    default: main
----
-Body`;
-    const result = parseFrontmatter(content);
-    expect(result.frontmatter.inputs![0]!.default).toBe("main");
-  });
-
-  test("parses input with boolean default", () => {
-    const content = `---
-inputs:
-  - name: force
-    type: confirm
-    message: Force?
-    default: false
----
-Body`;
-    const result = parseFrontmatter(content);
-    expect(result.frontmatter.inputs![0]!.default).toBe(false);
+    expect(result.frontmatter.items).toHaveLength(2);
+    expect(result.frontmatter.items[0]).toEqual({ name: "first", value: 1 });
+    expect(result.frontmatter.items[1]).toEqual({ name: "second", value: 2 });
   });
 });
