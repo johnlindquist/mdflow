@@ -177,7 +177,9 @@ Test prompt for generic file.`
 
   test("dry-run shows estimated token count", async () => {
     // Create a prompt with known length
-    const promptText = "A".repeat(400); // 400 chars = ~100 tokens
+    // With real tokenization, repeated "A" characters get tokenized efficiently
+    // 400 "A"s = ~50 tokens (not 100 as with old length/4 heuristic)
+    const promptText = "A".repeat(400);
     const testFile = join(tempDir, "tokens.claude.md");
     await writeFile(
       testFile,
@@ -197,7 +199,8 @@ ${promptText}`
     const exitCode = await proc.exited;
 
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("Estimated tokens: ~100");
+    // Check that token count is shown (exact count depends on tokenizer)
+    expect(stdout).toMatch(/Estimated tokens: ~\d+/);
   });
 
   test("dry-run does NOT execute the command", async () => {

@@ -5,6 +5,7 @@ import { Glob } from "bun";
 import ignore from "ignore";
 import { resilientFetch } from "./fetch";
 import { MAX_INPUT_SIZE, FileSizeLimitError, exceedsLimit } from "./limits";
+import { countTokens, getContextLimit } from "./tokenizer";
 
 /**
  * Expand markdown imports, URL imports, and command inlines
@@ -542,24 +543,36 @@ async function processGlobImport(
   // Sort by path for consistent ordering
   files.sort((a, b) => a.path.localeCompare(b.path));
 
-  // Check token limit
-  const estimatedTokens = Math.ceil(totalChars / CHARS_PER_TOKEN);
+  // Count tokens using real tokenizer
+  const allContent = files.map((f) => f.content).join("\n");
+  const actualTokens = countTokens(allContent);
+
+  // Get context limit (use env vars for model/limit override)
+  const contextLimit = getContextLimit(
+    process.env.MA_MODEL,
+    Number(process.env.MA_CONTEXT_WINDOW) || undefined
+  );
 
   // Always log glob expansion to stderr for visibility
-  console.error(`[imports] Expanding ${pattern}: ${files.length} files (~${estimatedTokens.toLocaleString()} tokens)`);
+  console.error(
+    `[imports] Expanding ${pattern}: ${files.length} files (~${actualTokens.toLocaleString()} tokens)`
+  );
 
-  // Error threshold (100k tokens)
-  if (totalChars > MAX_CHARS && !process.env.MA_FORCE_CONTEXT) {
+  // Error threshold - use dynamic context limit
+  if (actualTokens > contextLimit && !process.env.MA_FORCE_CONTEXT) {
     throw new Error(
-      `Glob import "${pattern}" would include ~${estimatedTokens.toLocaleString()} tokens (${files.length} files), ` +
-      `which exceeds the ${MAX_TOKENS.toLocaleString()} token limit.\n` +
-      `To override this limit, set the MA_FORCE_CONTEXT=1 environment variable.`
+      `Glob import "${pattern}" would include ~${actualTokens.toLocaleString()} tokens (${files.length} files), ` +
+        `which exceeds the ${contextLimit.toLocaleString()} token limit.\n` +
+        `To override this limit, set the MA_FORCE_CONTEXT=1 environment variable.`
     );
   }
 
-  // Warning threshold (50k tokens) - warn but don't error
-  if (estimatedTokens > WARN_TOKENS && estimatedTokens <= MAX_TOKENS) {
-    console.error(`[imports] Warning: High token count (~${estimatedTokens.toLocaleString()}). This may be expensive.`);
+  // Warning threshold (50% of limit) - warn but don't error
+  const warnThreshold = Math.floor(contextLimit * 0.5);
+  if (actualTokens > warnThreshold && actualTokens <= contextLimit) {
+    console.error(
+      `[imports] Warning: High token count (~${actualTokens.toLocaleString()}). This may be expensive.`
+    );
   }
 
   return formatFilesAsXml(files);

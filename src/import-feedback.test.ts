@@ -92,15 +92,16 @@ describe("token thresholds", () => {
     expect(CHARS_PER_TOKEN).toBe(4);
   });
 
-  test("warns when token count exceeds 50k but not 100k", async () => {
-    // Create a directory with files totaling > 50k tokens but < 100k tokens
-    // 50k tokens * 4 chars/token = 200k chars
-    // 100k tokens * 4 chars/token = 400k chars
-    // We need content between 200k and 400k chars
+  test("warns when token count exceeds 50% of limit but not 100%", async () => {
+    // Create a directory with files that exceed 50% of context limit (50k tokens)
+    // but not 100% (100k tokens) - warning threshold is dynamic now
+    // Using natural language text which tokenizes closer to 1 token per 4 chars
     const warnDir = join(testDir, "warn-threshold");
 
-    // Create files totaling ~250k chars (62.5k tokens)
-    const fileContent = "x".repeat(50_000); // 50k chars = 12.5k tokens
+    // Create files with natural language content that tokenizes more predictably
+    // "word " = 5 chars, roughly 1-2 tokens per word
+    // 15k repetitions per file * 5 files = ~75k tokens (above 50k warning, below 100k limit)
+    const fileContent = "word ".repeat(15_000);
     for (let i = 0; i < 5; i++) {
       await Bun.write(join(warnDir, `file${i}.txt`), fileContent);
     }
@@ -111,12 +112,13 @@ describe("token thresholds", () => {
     expect(stderrOutput.some(line => line.includes("This may be expensive"))).toBe(true);
   });
 
-  test("does not warn when token count is below 50k", async () => {
+  test("does not warn when token count is below 50% of limit", async () => {
     const smallDir = join(testDir, "small-threshold");
 
-    // Create small files totaling ~40k chars (10k tokens)
-    const fileContent = "x".repeat(10_000);
-    for (let i = 0; i < 4; i++) {
+    // Create small files with content that stays well below 50k token warning threshold
+    // Using repeated "word " (5 chars, ~1-2 tokens per word)
+    const fileContent = "word ".repeat(5_000); // ~5k tokens per file
+    for (let i = 0; i < 4; i++) { // 4 files = ~20k tokens total (well under 50k warning)
       await Bun.write(join(smallDir, `file${i}.txt`), fileContent);
     }
 
@@ -125,7 +127,7 @@ describe("token thresholds", () => {
     expect(stderrOutput.some(line => line.includes("Warning: High token count"))).toBe(false);
   });
 
-  test("errors when token count exceeds 100k (without MA_FORCE_CONTEXT)", async () => {
+  test("errors when token count exceeds context limit (without MA_FORCE_CONTEXT)", async () => {
     // Ensure MA_FORCE_CONTEXT is not set
     const originalEnv = process.env.MA_FORCE_CONTEXT;
     delete process.env.MA_FORCE_CONTEXT;
@@ -133,14 +135,16 @@ describe("token thresholds", () => {
     try {
       const largeDir = join(testDir, "large-threshold");
 
-      // Create files totaling ~500k chars (125k tokens) - exceeds 100k limit
-      const fileContent = "x".repeat(100_000);
+      // Create files that exceed the default 100k token limit
+      // Using "word " (5 chars) which tokenizes to ~1-2 tokens
+      // 60k words per file * 5 files = 300k words = ~150k+ tokens (exceeds 100k default)
+      const fileContent = "word ".repeat(60_000);
       for (let i = 0; i < 5; i++) {
         await Bun.write(join(largeDir, `file${i}.txt`), fileContent);
       }
 
       await expect(expandImports("@./large-threshold/*.txt", testDir)).rejects.toThrow(
-        /exceeds the 100,000 token limit/
+        /exceeds the \d[\d,]* token limit/
       );
     } finally {
       if (originalEnv !== undefined) {
@@ -156,8 +160,9 @@ describe("token thresholds", () => {
     try {
       const forceDir = join(testDir, "force-context");
 
-      // Create files totaling ~500k chars (125k tokens) - exceeds 100k limit
-      const fileContent = "x".repeat(100_000);
+      // Create files that would exceed the default 100k token limit
+      // Using "word " which tokenizes predictably
+      const fileContent = "word ".repeat(60_000);
       for (let i = 0; i < 5; i++) {
         await Bun.write(join(forceDir, `file${i}.txt`), fileContent);
       }

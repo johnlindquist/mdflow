@@ -11,6 +11,13 @@ export interface AgentFrontmatter {
   env?: Record<string, string> | string[] | string;
 
   /**
+   * Context window limit override (in tokens)
+   * If set, overrides the model-based default context limit
+   * Useful for custom models or when you want to enforce a specific limit
+   */
+  context_window?: number;
+
+  /**
    * Positional argument mapping ($1, $2, etc.)
    * Maps positional arguments to CLI flags
    * Example: $1: prompt → body becomes --prompt <body>
