@@ -173,6 +173,8 @@ The `--feature_name` and `--target_dir` flags are consumed by markdown-agent for
 | `env` | object | Set process environment variables |
 | `env` | string[] | Pass as `--env` flags to command |
 | `$1`, `$2`... | string | Map positional args to flags (e.g., `$1: prompt`) |
+| `_interactive` | boolean | Enable interactive mode (overrides print-mode defaults) |
+| `_subcommand` | string/string[] | Prepend subcommand(s) to CLI args |
 
 ### All Other Keys → CLI Flags
 
