@@ -8,9 +8,11 @@ import { expandImports, hasImports } from "./imports";
 import { loadEnvFiles } from "./env";
 import { loadGlobalConfig, getCommandDefaults, applyDefaults } from "./config";
 import { initLogger, getParseLogger, getTemplateLogger, getCommandLogger, getImportLogger, getCurrentLogPath } from "./logger";
+import { isDomainTrusted, promptForTrust, addTrustedDomain, extractDomain } from "./trust";
 import { dirname, resolve } from "path";
 import { input } from "@inquirer/prompts";
 import { MAX_INPUT_SIZE, StdinSizeLimitError, exceedsLimit } from "./limits";
+import { countTokens } from "./tokenizer";
 
 /**
  * Print error message with log path pointer to stderr
@@ -159,6 +161,14 @@ async function main() {
     if (dryRunIndex !== -1) {
       dryRun = true;
       remainingArgs.splice(dryRunIndex, 1); // Consume it
+    }
+
+    // Check for --trust flag (consumed by ma, bypasses TOFU prompts for remote URLs)
+    let trustFlag = false;
+    const trustIndex = remainingArgs.indexOf("--trust");
+    if (trustIndex !== -1) {
+      trustFlag = true;
+      remainingArgs.splice(trustIndex, 1); // Consume it
     }
 
     // Resolve command: CLI --command > MA_COMMAND env > filename
@@ -327,7 +337,7 @@ async function main() {
       console.log(finalBody);
       console.log("───────────────────────────────────────────────────────────\n");
 
-      const estimatedTokens = Math.ceil(finalBody.length / 4);
+      const estimatedTokens = countTokens(finalBody);
       console.log(`Estimated tokens: ~${estimatedTokens.toLocaleString()}`);
 
       // Cleanup remote temporary file if needed
@@ -337,6 +347,39 @@ async function main() {
 
       logger.info({ dryRun: true }, "Dry run completed");
       process.exit(0);
+    }
+
+    // TOFU (Trust on First Use) check for remote URLs
+    if (isRemote && !trustFlag) {
+      const domain = extractDomain(filePath);
+      const trusted = await isDomainTrusted(filePath);
+
+      if (!trusted) {
+        // Check if we're in a TTY for interactive prompt
+        if (!process.stdin.isTTY) {
+          console.error(`\nUntrusted remote domain: ${domain}`);
+          console.error(`Use --trust flag to bypass this check in non-interactive mode.`);
+          console.error(`Or run interactively to add the domain to known_hosts.\n`);
+          await cleanupRemote(localFilePath);
+          process.exit(1);
+        }
+
+        // Interactive prompt for trust
+        const trustResult = await promptForTrust(filePath, command, baseFrontmatter, rawBody);
+
+        if (!trustResult.approved) {
+          console.error("\nExecution cancelled by user.\n");
+          await cleanupRemote(localFilePath);
+          process.exit(1);
+        }
+
+        if (trustResult.rememberDomain) {
+          await addTrustedDomain(filePath);
+          console.error(`\nDomain ${domain} added to known_hosts.\n`);
+        }
+      } else {
+        getCommandLogger().debug({ domain }, "Domain already trusted");
+      }
     }
 
     getCommandLogger().info({ command, argsCount: args.length, promptLength: finalBody.length }, "Executing command");

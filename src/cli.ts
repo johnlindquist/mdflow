@@ -78,6 +78,7 @@ function printHelp() {
 Usage: ma <file.md> [any flags for the command]
        ma <file.md> --command <cmd>
        ma <file.md> --dry-run
+       ma <url> [--trust]
        ma --setup
        ma --logs
        ma --help
@@ -89,6 +90,11 @@ Command resolution:
 All frontmatter keys are passed as CLI flags to the command.
 Global defaults can be set in ~/.markdown-agent/config.yaml
 
+Remote execution:
+  ma supports running agents from URLs (npx-style).
+  On first use, you'll be prompted to trust the domain.
+  Trusted domains are stored in ~/.markdown-agent/known_hosts
+
 Examples:
   ma task.claude.md -p "print mode"
   ma task.claude.md --model opus --verbose
@@ -96,6 +102,8 @@ Examples:
   ma task.md --command claude
   ma task.md -c gemini
   ma task.claude.md --dry-run    # Preview without executing
+  ma https://example.com/agent.claude.md          # Remote execution
+  ma https://example.com/agent.claude.md --trust  # Skip trust prompt
 
 Config file example (~/.markdown-agent/config.yaml):
   commands:
@@ -105,6 +113,7 @@ Config file example (~/.markdown-agent/config.yaml):
 ma-specific flags (consumed, not passed to command):
   --command, -c   Specify command to run
   --dry-run       Show resolved command and prompt without executing
+  --trust         Skip trust prompt for remote URLs (TOFU bypass)
 
 Without a file:
   ma --setup    Configure shell to run .md files directly
