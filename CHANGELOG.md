@@ -1,3 +1,10 @@
+## [2.17.1](https://github.com/johnlindquist/mdflow/compare/v2.17.0...v2.17.1) (2025-12-09)
+
+
+### Bug Fixes
+
+* **setup:** improve md alias detection with interactive shell ([03353bb](https://github.com/johnlindquist/mdflow/commit/03353bbd512f667b768d423d5c6dabe41ebd1d58))
+
 # [2.17.0](https://github.com/johnlindquist/mdflow/compare/v2.16.2...v2.17.0) (2025-12-09)
 
 
