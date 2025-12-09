@@ -1,3 +1,10 @@
+## [2.15.1](https://github.com/johnlindquist/markdown-agent/compare/v2.15.0...v2.15.1) (2025-12-09)
+
+
+### Bug Fixes
+
+* wrap command output in {% raw %} to prevent template interpretation ([37a584a](https://github.com/johnlindquist/markdown-agent/commit/37a584a38b9d1bee45d30e9efb8314239c0108b8))
+
 # [2.15.0](https://github.com/johnlindquist/markdown-agent/compare/v2.14.1...v2.15.0) (2025-12-08)
 
 
