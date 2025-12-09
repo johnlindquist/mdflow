@@ -7,12 +7,27 @@ import { mkdtemp, rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { resilientFetch } from "./fetch";
+import {
+  getCachedContent,
+  setCachedContent,
+  DEFAULT_CACHE_TTL_MS,
+  type CacheOptions,
+} from "./cache";
 
 export interface RemoteResult {
   success: boolean;
   localPath?: string;
   error?: string;
   isRemote: boolean;
+  /** Whether the content was served from cache */
+  fromCache?: boolean;
+}
+
+export interface FetchRemoteOptions {
+  /** Skip cache and fetch fresh content */
+  noCache?: boolean;
+  /** Custom TTL for cache (default: 1 hour) */
+  cacheTtlMs?: number;
 }
 
 /**
@@ -54,34 +69,66 @@ export function toRawUrl(url: string): string {
 /**
  * Fetch remote content and save to temporary file
  * Returns the local path to the temporary file
+ *
+ * Uses persistent cache at ~/.mdflow/cache/ to avoid repeated fetches.
+ * Cache uses SHA-256 hash of URL as filename with configurable TTL.
  */
-export async function fetchRemote(url: string): Promise<RemoteResult> {
+export async function fetchRemote(
+  url: string,
+  options: FetchRemoteOptions = {}
+): Promise<RemoteResult> {
   if (!isRemoteUrl(url)) {
     return { success: true, localPath: url, isRemote: false };
   }
 
-  try {
-    const rawUrl = toRawUrl(url);
-    console.error(`Fetching: ${rawUrl}`);
+  const { noCache = false, cacheTtlMs = DEFAULT_CACHE_TTL_MS } = options;
+  const rawUrl = toRawUrl(url);
 
-    const response = await resilientFetch(rawUrl, {
-      headers: {
-        "User-Agent": "mdflow/1.0",
-        "Accept": "text/plain, text/markdown, */*",
-      },
+  try {
+    // Check cache first (unless noCache is set)
+    const cacheResult = await getCachedContent(rawUrl, {
+      noCache,
+      ttlMs: cacheTtlMs,
     });
 
-    if (!response.ok) {
-      return {
-        success: false,
-        error: `HTTP ${response.status}: ${response.statusText}`,
-        isRemote: true,
-      };
+    let content: string;
+    let fromCache = false;
+
+    if (cacheResult.hit && cacheResult.content) {
+      // Cache hit - use cached content
+      console.error(`Cache hit: ${rawUrl}`);
+      content = cacheResult.content;
+      fromCache = true;
+    } else {
+      // Cache miss or expired - fetch fresh content
+      if (cacheResult.expired) {
+        console.error(`Cache expired, refetching: ${rawUrl}`);
+      } else {
+        console.error(`Fetching: ${rawUrl}`);
+      }
+
+      const response = await resilientFetch(rawUrl, {
+        headers: {
+          "User-Agent": "mdflow/1.0",
+          Accept: "text/plain, text/markdown, */*",
+        },
+      });
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: `HTTP ${response.status}: ${response.statusText}`,
+          isRemote: true,
+        };
+      }
+
+      content = await response.text();
+
+      // Store in cache for future use
+      await setCachedContent(rawUrl, content, { ttlMs: cacheTtlMs });
     }
 
-    const content = await response.text();
-
-    // Create temp directory
+    // Create temp directory for the execution
     const tempDir = await mkdtemp(join(tmpdir(), "mdflow-"));
     const fileName = extractFileName(url) || "remote.md";
     const localPath = join(tempDir, fileName);
@@ -89,9 +136,11 @@ export async function fetchRemote(url: string): Promise<RemoteResult> {
     // Write content to temp file
     await Bun.write(localPath, content);
 
-    console.error(`Saved to: ${localPath}`);
+    if (!fromCache) {
+      console.error(`Saved to: ${localPath}`);
+    }
 
-    return { success: true, localPath, isRemote: true };
+    return { success: true, localPath, isRemote: true, fromCache };
   } catch (err) {
     return {
       success: false,

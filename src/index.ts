@@ -132,14 +132,23 @@ async function main() {
       }
     }
 
-    const { passthroughArgs } = cliArgs;
+    let { passthroughArgs } = cliArgs;
+
+    // Check for --no-cache flag early (needed before fetchRemote call)
+    // This flag forces a fresh fetch for remote URLs, bypassing the cache
+    let noCacheFlag = false;
+    const noCacheIndex = passthroughArgs.indexOf("--no-cache");
+    if (noCacheIndex !== -1) {
+      noCacheFlag = true;
+      passthroughArgs = [...passthroughArgs.slice(0, noCacheIndex), ...passthroughArgs.slice(noCacheIndex + 1)];
+    }
 
     // Handle remote URLs
     let localFilePath = filePath;
     let isRemote = false;
 
     if (isRemoteUrl(filePath)) {
-      const remoteResult = await fetchRemote(filePath);
+      const remoteResult = await fetchRemote(filePath, { noCache: noCacheFlag });
       if (!remoteResult.success) {
         throw new NetworkError(`Failed to fetch remote file: ${remoteResult.error}`);
       }
