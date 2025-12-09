@@ -6,17 +6,11 @@
  */
 
 import type { RunContext, RunContextOptions, Logger, GlobalConfig } from "./types";
+import { BUILTIN_DEFAULTS, mergeConfigs as mergeConfigsImpl } from "./config";
 
-/**
- * Built-in defaults for configuration (used when no config file exists)
- */
-export const BUILTIN_DEFAULTS: GlobalConfig = {
-  commands: {
-    copilot: {
-      $1: "prompt", // Map body to --prompt for copilot
-    },
-  },
-};
+// Re-export for backward compatibility
+export { BUILTIN_DEFAULTS };
+export const mergeConfigs = mergeConfigsImpl;
 
 /**
  * Create a silent logger that discards all output
@@ -179,6 +173,14 @@ export function createTestLogger(): TestLogger {
 }
 
 /**
+ * Create a fresh copy of BUILTIN_DEFAULTS
+ * This ensures each context gets an independent configuration object.
+ */
+function cloneBuiltinDefaults(): GlobalConfig {
+  return mergeConfigs(BUILTIN_DEFAULTS, {});
+}
+
+/**
  * Create a RunContext with the specified options
  *
  * @param options - Options for creating the context
@@ -187,7 +189,8 @@ export function createTestLogger(): TestLogger {
 export function createRunContext(options: RunContextOptions = {}): RunContext {
   return {
     logger: options.logger ?? createSilentLogger(),
-    config: options.config ?? BUILTIN_DEFAULTS,
+    // Clone BUILTIN_DEFAULTS to ensure isolation between contexts
+    config: options.config ?? cloneBuiltinDefaults(),
     env: options.env ?? { ...process.env },
     cwd: options.cwd ?? process.cwd(),
   };
@@ -206,29 +209,11 @@ export function createTestRunContext(
   const logger = options.logger ?? createTestLogger();
   return {
     logger,
-    config: options.config ?? BUILTIN_DEFAULTS,
+    // Clone BUILTIN_DEFAULTS to ensure isolation between contexts
+    config: options.config ?? cloneBuiltinDefaults(),
     env: options.env ?? {},
     cwd: options.cwd ?? "/tmp/test",
   };
-}
-
-/**
- * Merge two configurations (second takes priority)
- */
-export function mergeConfigs(base: GlobalConfig, override: GlobalConfig): GlobalConfig {
-  const result: GlobalConfig = { ...base };
-
-  if (override.commands) {
-    result.commands = result.commands ? { ...result.commands } : {};
-    for (const [cmd, defaults] of Object.entries(override.commands)) {
-      result.commands[cmd] = {
-        ...(result.commands[cmd] || {}),
-        ...defaults,
-      };
-    }
-  }
-
-  return result;
 }
 
 /**

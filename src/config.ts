@@ -3,9 +3,8 @@
  * Loads defaults from ~/.mdflow/config.yaml
  * Cascades with project configs: global → git root → CWD (later overrides earlier)
  *
- * This module provides both:
- * 1. Legacy cached config functions (for backward compatibility)
- * 2. RunContext-aware config loading (no global state)
+ * This module uses pure functions without module-level state.
+ * Configuration is explicitly passed through the call chain via RunContext.
  */
 
 import { homedir } from "os";
@@ -108,8 +107,10 @@ export function applyInteractiveMode(
   return result;
 }
 
-let cachedGlobalConfig: GlobalConfig | null = null;
-let cachedProjectConfig: { cwd: string; config: GlobalConfig } | null = null;
+// NOTE: Module-level caching has been removed to enable parallel testing.
+// Use loadGlobalConfig(), loadProjectConfig(), and loadFullConfig() which
+// are now pure functions that return fresh config instances each call.
+// For performance-sensitive code paths, cache the result in a RunContext.
 
 /**
  * Find the git root directory starting from a given path
@@ -180,15 +181,12 @@ async function loadConfigFile(filePath: string): Promise<GlobalConfig | null> {
 /**
  * Load project-level config with cascade: git root → CWD
  * Returns merged config from both locations (CWD takes priority)
+ *
+ * This is a pure function - no caching. For performance-sensitive code,
+ * store the result in RunContext.config.
  */
 export async function loadProjectConfig(cwd: string): Promise<GlobalConfig> {
   const resolvedCwd = resolve(cwd);
-
-  // Check cache
-  if (cachedProjectConfig && cachedProjectConfig.cwd === resolvedCwd) {
-    return cachedProjectConfig.config;
-  }
-
   let projectConfig: GlobalConfig = {};
 
   // 1. Load from git root (if different from CWD)
@@ -212,37 +210,32 @@ export async function loadProjectConfig(cwd: string): Promise<GlobalConfig> {
     }
   }
 
-  // Cache the result
-  cachedProjectConfig = { cwd: resolvedCwd, config: projectConfig };
-
   return projectConfig;
 }
 
 /**
  * Load global config from ~/.mdflow/config.yaml
  * Falls back to built-in defaults if file doesn't exist
+ *
+ * This is a pure function - no caching. For performance-sensitive code,
+ * store the result in RunContext.config.
+ *
+ * Always returns a fresh copy to ensure isolation between callers.
  */
 export async function loadGlobalConfig(): Promise<GlobalConfig> {
-  if (cachedGlobalConfig) {
-    return cachedGlobalConfig;
-  }
-
   try {
     const file = Bun.file(CONFIG_FILE);
     if (await file.exists()) {
       const content = await file.text();
       const parsed = yaml.load(content) as GlobalConfig;
       // Merge with built-in defaults (user config takes priority)
-      cachedGlobalConfig = mergeConfigs(BUILTIN_DEFAULTS, parsed);
-    } else {
-      cachedGlobalConfig = BUILTIN_DEFAULTS;
+      return mergeConfigs(BUILTIN_DEFAULTS, parsed);
     }
   } catch {
     // Fall back to built-in defaults on parse error
-    cachedGlobalConfig = BUILTIN_DEFAULTS;
   }
-
-  return cachedGlobalConfig;
+  // Return a deep clone to ensure callers get an independent copy
+  return mergeConfigs(BUILTIN_DEFAULTS, {});
 }
 
 /**
@@ -258,10 +251,29 @@ export async function loadFullConfig(cwd: string = process.cwd()): Promise<Globa
 }
 
 /**
- * Deep merge two configs (second takes priority)
+ * Deep clone a GlobalConfig object
+ * This ensures modifications to the returned config don't affect the source.
  */
-function mergeConfigs(base: GlobalConfig, override: GlobalConfig): GlobalConfig {
-  const result: GlobalConfig = { ...base };
+function deepCloneConfig(config: GlobalConfig): GlobalConfig {
+  const result: GlobalConfig = {};
+
+  if (config.commands) {
+    result.commands = {};
+    for (const [cmd, defaults] of Object.entries(config.commands)) {
+      result.commands[cmd] = { ...defaults };
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Deep merge two configs (second takes priority)
+ * Returns a new object - does not modify either input.
+ */
+export function mergeConfigs(base: GlobalConfig, override: GlobalConfig): GlobalConfig {
+  // Start with a deep clone of base
+  const result = deepCloneConfig(base);
 
   if (override.commands) {
     result.commands = result.commands ? { ...result.commands } : {};
@@ -322,105 +334,44 @@ export function getConfigFile(): string {
 
 /**
  * Clear the cached config (for testing)
+ * @deprecated No-op function kept for backward compatibility.
+ * Module-level caching has been removed - config functions are now pure.
  */
 export function clearConfigCache(): void {
-  cachedGlobalConfig = null;
-  cachedProjectConfig = null;
+  // No-op: caching has been removed from this module
 }
 
 /**
  * Clear only the project config cache (for testing)
+ * @deprecated No-op function kept for backward compatibility.
+ * Module-level caching has been removed - config functions are now pure.
  */
 export function clearProjectConfigCache(): void {
-  cachedProjectConfig = null;
+  // No-op: caching has been removed from this module
 }
 
 // ============================================================================
-// RunContext-aware config functions (no global state)
+// Aliases for backward compatibility
+// All config functions are now pure (no caching), so these are simple aliases.
 // ============================================================================
-
-/**
- * Deep merge two configs (second takes priority)
- * Exported for use with RunContext
- */
-export function mergeConfigs(base: GlobalConfig, override: GlobalConfig): GlobalConfig {
-  const result: GlobalConfig = { ...base };
-
-  if (override.commands) {
-    result.commands = result.commands ? { ...result.commands } : {};
-    for (const [cmd, defaults] of Object.entries(override.commands)) {
-      result.commands[cmd] = {
-        ...(result.commands[cmd] || {}),
-        ...defaults,
-      };
-    }
-  }
-
-  return result;
-}
 
 /**
  * Load global config from ~/.mdflow/config.yaml (no caching)
- * This is the RunContext-compatible version that doesn't use global state
+ * @deprecated Use loadGlobalConfig() instead - all functions are now pure.
  */
-export async function loadGlobalConfigFresh(): Promise<GlobalConfig> {
-  try {
-    const file = Bun.file(CONFIG_FILE);
-    if (await file.exists()) {
-      const content = await file.text();
-      const parsed = yaml.load(content) as GlobalConfig;
-      // Merge with built-in defaults (user config takes priority)
-      return mergeConfigs(BUILTIN_DEFAULTS, parsed);
-    }
-  } catch {
-    // Fall back to built-in defaults on parse error
-  }
-  return BUILTIN_DEFAULTS;
-}
+export const loadGlobalConfigFresh = loadGlobalConfig;
 
 /**
  * Load project-level config with cascade: git root → CWD (no caching)
- * This is the RunContext-compatible version that doesn't use global state
+ * @deprecated Use loadProjectConfig() instead - all functions are now pure.
  */
-export async function loadProjectConfigFresh(cwd: string): Promise<GlobalConfig> {
-  const resolvedCwd = resolve(cwd);
-  let projectConfig: GlobalConfig = {};
-
-  // 1. Load from git root (if different from CWD)
-  const gitRoot = findGitRoot(resolvedCwd);
-  if (gitRoot && gitRoot !== resolvedCwd) {
-    const gitRootConfigFile = findProjectConfigFile(gitRoot);
-    if (gitRootConfigFile) {
-      const gitRootConfig = await loadConfigFile(gitRootConfigFile);
-      if (gitRootConfig) {
-        projectConfig = gitRootConfig;
-      }
-    }
-  }
-
-  // 2. Load from CWD (overrides git root)
-  const cwdConfigFile = findProjectConfigFile(resolvedCwd);
-  if (cwdConfigFile) {
-    const cwdConfig = await loadConfigFile(cwdConfigFile);
-    if (cwdConfig) {
-      projectConfig = mergeConfigs(projectConfig, cwdConfig);
-    }
-  }
-
-  return projectConfig;
-}
+export const loadProjectConfigFresh = loadProjectConfig;
 
 /**
  * Load fully merged config: built-in defaults → global → git root → CWD (no caching)
- * This is the RunContext-compatible version that doesn't use global state
+ * @deprecated Use loadFullConfig() instead - all functions are now pure.
  */
-export async function loadFullConfigFresh(cwd: string): Promise<GlobalConfig> {
-  const globalConfig = await loadGlobalConfigFresh();
-  const projectConfig = await loadProjectConfigFresh(cwd);
-
-  // Merge: global → project (project takes priority)
-  return mergeConfigs(globalConfig, projectConfig);
-}
+export const loadFullConfigFresh = loadFullConfig;
 
 /**
  * Get defaults for a specific command from a config object
