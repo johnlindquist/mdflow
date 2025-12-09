@@ -1,3 +1,15 @@
+# [2.17.0](https://github.com/johnlindquist/mdflow/compare/v2.16.2...v2.17.0) (2025-12-09)
+
+
+### Bug Fixes
+
+* use mdflow binary instead of md for inline command auto-run ([5f6360d](https://github.com/johnlindquist/mdflow/commit/5f6360dd91a89e0fb8a3545cc1cd2f59792b11b8))
+
+
+### Features
+
+* **setup:** use mdflow binary and handle md alias conflicts ([0cfd8a2](https://github.com/johnlindquist/mdflow/commit/0cfd8a2151d678dfdc7e6b8de9773b94e8567bde))
+
 ## [2.16.2](https://github.com/johnlindquist/mdflow/compare/v2.16.1...v2.16.2) (2025-12-09)
 
 
