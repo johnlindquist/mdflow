@@ -1,3 +1,11 @@
+# [2.19.0](https://github.com/johnlindquist/mdflow/compare/v2.18.1...v2.19.0) (2025-12-09)
+
+
+### Features
+
+* **cache:** add persistent remote URL caching with TTL support ([d731cfc](https://github.com/johnlindquist/mdflow/commit/d731cfcc630b1dfd0660c6b74f749f295f1d7ad7))
+* **imports:** parallelize import resolution with concurrency limiting ([9831e97](https://github.com/johnlindquist/mdflow/commit/9831e970428c94beac9416834011bcb94c5aad47))
+
 ## [2.18.1](https://github.com/johnlindquist/mdflow/compare/v2.18.0...v2.18.1) (2025-12-09)
 
 
