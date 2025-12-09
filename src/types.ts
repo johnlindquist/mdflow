@@ -113,7 +113,7 @@ export interface Logger {
 }
 
 /**
- * Global configuration structure for markdown-agent
+ * Global configuration structure for mdflow
  */
 export interface GlobalConfig {
   /** Default settings per command */

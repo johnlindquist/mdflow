@@ -253,14 +253,14 @@ describe("fetch utilities", () => {
     });
   });
 
-  describeNetwork("integration with markdown-agent use cases", () => {
+  describeNetwork("integration with mdflow use cases", () => {
     it("fetches GitHub raw content", async () => {
       // Test fetching a well-known, stable GitHub file
       const response = await resilientFetch(
         "https://raw.githubusercontent.com/github/gitignore/main/Node.gitignore",
         {
           headers: {
-            "User-Agent": "markdown-agent/1.0",
+            "User-Agent": "mdflow/1.0",
             "Accept": "text/plain, text/markdown, */*",
           },
         }

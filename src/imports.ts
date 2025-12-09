@@ -464,7 +464,7 @@ async function processUrlImport(
     const response = await resilientFetch(url, {
       headers: {
         "Accept": "text/markdown, application/json, text/plain, */*",
-        "User-Agent": "markdown-agent/1.0",
+        "User-Agent": "mdflow/1.0",
       },
     });
 

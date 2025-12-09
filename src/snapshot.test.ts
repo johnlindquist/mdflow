@@ -1,5 +1,5 @@
 /**
- * Snapshot Testing for markdown-agent Prompts
+ * Snapshot Testing for mdflow Prompts
  *
  * This file tests the full prompt expansion pipeline using Bun's built-in
  * snapshot testing. Snapshots are stored in __snapshots__/snapshot.test.ts.snap

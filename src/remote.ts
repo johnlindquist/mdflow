@@ -66,7 +66,7 @@ export async function fetchRemote(url: string): Promise<RemoteResult> {
 
     const response = await resilientFetch(rawUrl, {
       headers: {
-        "User-Agent": "markdown-agent/1.0",
+        "User-Agent": "mdflow/1.0",
         "Accept": "text/plain, text/markdown, */*",
       },
     });
@@ -82,7 +82,7 @@ export async function fetchRemote(url: string): Promise<RemoteResult> {
     const content = await response.text();
 
     // Create temp directory
-    const tempDir = await mkdtemp(join(tmpdir(), "markdown-agent-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "mdflow-"));
     const fileName = extractFileName(url) || "remote.md";
     const localPath = join(tempDir, fileName);
 

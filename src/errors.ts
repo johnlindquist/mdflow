@@ -1,5 +1,5 @@
 /**
- * Typed error classes for markdown-agent
+ * Typed error classes for mdflow
  *
  * These errors allow library code to signal failures without calling process.exit(),
  * enabling proper error handling in tests and when used as a library.
@@ -8,7 +8,7 @@
  */
 
 /**
- * Base error class for all markdown-agent errors
+ * Base error class for all mdflow errors
  */
 export class MarkdownAgentError extends Error {
   constructor(message: string, public code: number = 1) {

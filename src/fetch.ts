@@ -231,7 +231,7 @@ export async function fetchWithRetry(
 /**
  * Resilient fetch with both timeout and retry support
  *
- * This is the recommended function for network requests in markdown-agent.
+ * This is the recommended function for network requests in mdflow.
  * It combines timeout protection (to prevent hanging on tarpits) with
  * exponential backoff retry (to handle transient failures).
  *
