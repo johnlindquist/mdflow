@@ -226,6 +226,14 @@ async function main() {
       remainingArgs.splice(interactiveIndex, 1); // Consume it
     }
 
+    // Check for --_cwd flag (consumed by ma, overrides working directory for !`cmd` inlines)
+    let cwdFromCli: string | undefined;
+    const cwdFlagIndex = remainingArgs.findIndex(arg => arg === "--_cwd");
+    if (cwdFlagIndex !== -1 && cwdFlagIndex + 1 < remainingArgs.length) {
+      cwdFromCli = remainingArgs[cwdFlagIndex + 1];
+      remainingArgs.splice(cwdFlagIndex, 2); // Consume --_cwd and its value
+    }
+
     // Resolve command: CLI --command > MA_COMMAND env > filename
     let command: string;
     try {
@@ -319,8 +327,16 @@ async function main() {
 
     if (hasImports(rawBody)) {
       try {
-        getImportLogger().debug({ fileDir }, "Expanding imports");
-        expandedBody = await expandImports(rawBody, fileDir, new Set());
+        // Determine working directory for !`cmd` inlines:
+        // Priority: CLI --_cwd > frontmatter _cwd > process.cwd()
+        const commandCwd = cwdFromCli
+          ?? (frontmatter._cwd as string | undefined)
+          ?? process.cwd();
+
+        getImportLogger().debug({ fileDir, commandCwd }, "Expanding imports");
+        expandedBody = await expandImports(rawBody, fileDir, new Set(), false, {
+          invocationCwd: commandCwd,
+        });
         getImportLogger().debug({ originalLength: rawBody.length, expandedLength: expandedBody.length }, "Imports expanded");
       } catch (err) {
         getImportLogger().error({ error: (err as Error).message }, "Import expansion failed");

@@ -354,3 +354,71 @@ test("expandImports allows same content via different files (not symlinks)", asy
   // Should work fine - not a cycle
   expect(result).toBe("Same content Same content");
 });
+
+// Command cwd tests
+test("expandImports runs commands in invocationCwd, not file directory", async () => {
+  // Create a separate directory to simulate the agent file location
+  const agentDir = join(testDir, "agent-dir");
+  await Bun.write(join(agentDir, "dummy.md"), ""); // ensure dir exists
+
+  // Create another directory to simulate the invocation directory
+  const invocationDir = join(testDir, "invocation-dir");
+  await Bun.write(join(invocationDir, "dummy.md"), ""); // ensure dir exists
+
+  // Command that outputs the current working directory
+  const content = "!`pwd`";
+
+  // When invocationCwd is set, commands should run in that directory
+  const result = await expandImports(content, agentDir, new Set(), false, {
+    invocationCwd: invocationDir,
+  });
+
+  // The pwd output should be the invocation directory, not the agent directory
+  expect(result).toContain(invocationDir);
+  expect(result).not.toContain("agent-dir");
+});
+
+test("expandImports uses file directory for commands when invocationCwd not set", async () => {
+  // This tests backward compatibility - when invocationCwd is not provided,
+  // commands should still run in the file's directory (current behavior)
+  const content = "!`pwd`";
+  const result = await expandImports(content, testDir);
+
+  // Should contain the testDir path
+  expect(result).toContain(testDir.split("/").pop());
+});
+
+test("expandImports allows _cwd override via ImportContext", async () => {
+  // Test that invocationCwd can be explicitly set to override where commands run
+  const customDir = join(testDir, "custom-cwd");
+  await Bun.write(join(customDir, "dummy.md"), ""); // ensure dir exists
+
+  const content = "!`pwd`";
+  const result = await expandImports(content, testDir, new Set(), false, {
+    invocationCwd: customDir,
+  });
+
+  // The command should run in customDir, not testDir
+  expect(result).toContain("custom-cwd");
+});
+
+test("expandImports runs bun commands in invocationCwd", async () => {
+  // Test using bun's process.cwd() to verify the working directory
+  // This ensures the cwd is properly passed to spawned processes
+  const agentDir = join(testDir, "bun-agent-dir");
+  await Bun.write(join(agentDir, "dummy.md"), ""); // ensure dir exists
+
+  const invocationDir = join(testDir, "bun-invocation-dir");
+  await Bun.write(join(invocationDir, "dummy.md"), ""); // ensure dir exists
+
+  // Use bun to check process.cwd()
+  const content = '!`bun -e "console.log(process.cwd())"`';
+
+  const result = await expandImports(content, agentDir, new Set(), false, {
+    invocationCwd: invocationDir,
+  });
+
+  // The bun process should report the invocation directory as cwd
+  expect(result).toContain("bun-invocation-dir");
+  expect(result).not.toContain("bun-agent-dir");
+});

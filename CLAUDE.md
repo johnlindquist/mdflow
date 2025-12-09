@@ -96,6 +96,7 @@ Commands are resolved in priority order:
 - `$1`, `$2`, etc.: Map positional args to flags
 - `_interactive`: Enable interactive mode (overrides print-mode defaults)
 - `_subcommand`: Prepend subcommand(s) to CLI args (e.g., `_subcommand: exec`)
+- `_cwd`: Override working directory for inline commands (`` !`cmd` ``)
 
 **All other keys** are passed directly as CLI flags:
 

@@ -52,6 +52,12 @@ export interface ImportContext {
   env?: Record<string, string | undefined>;
   /** Track resolved imports for ExecutionPlan */
   resolvedImports?: ResolvedImportsTracker;
+  /**
+   * Working directory for command execution (!`cmd` inlines).
+   * When set, commands run in this directory instead of the agent file's directory.
+   * This allows agents in ~/.ma to execute commands in the user's invocation directory.
+   */
+  invocationCwd?: string;
 }
 
 /**
@@ -749,9 +755,13 @@ async function processCommandInline(
   // Use importCtx.env if provided, otherwise fall back to process.env
   const env = importCtx?.env ?? process.env;
 
+  // Use invocationCwd for command execution if provided (allows agents in ~/.ma
+  // to run commands in the user's current directory), fall back to file directory
+  const commandCwd = importCtx?.invocationCwd ?? currentFileDir;
+
   try {
     const result = Bun.spawnSync(["sh", "-c", command], {
-      cwd: currentFileDir,
+      cwd: commandCwd,
       stdout: "pipe",
       stderr: "pipe",
       env: env as Record<string, string>,
