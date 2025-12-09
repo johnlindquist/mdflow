@@ -3,6 +3,9 @@
  *
  * This module separates command construction (pure) from execution (side effects).
  * All functions here are deterministic and testable without mocking process spawning.
+ *
+ * IMPORTANT: This is the single source of truth for building command arguments.
+ * Both execution and dry-run paths MUST use these functions to ensure consistency.
  */
 
 import type { AgentFrontmatter } from "./types";
@@ -15,12 +18,24 @@ import type { GlobalConfig } from "./config";
 export interface CommandSpec {
   /** The executable to run (e.g., "claude", "gemini") */
   executable: string;
-  /** Command line arguments */
+  /** Subcommands to prepend (e.g., ["exec"] for codex exec) */
+  subcommands: string[];
+  /** Command line arguments (flags and values) */
   args: string[];
+  /** Positional arguments (body and extra CLI args) */
+  positionals: string[];
   /** Environment variables to set (merged with process.env at execution time) */
   env: Record<string, string>;
   /** Working directory for the command */
   cwd: string;
+}
+
+/**
+ * Get the complete argument array for spawning
+ * Combines subcommands, args, and positionals in the correct order
+ */
+export function getSpawnArgs(spec: CommandSpec): string[] {
+  return [...spec.subcommands, ...spec.args, ...spec.positionals];
 }
 
 /**
@@ -82,6 +97,9 @@ export function buildArgsFromFrontmatter(
 
     // Skip named template variable fields ($varname) - consumed for template substitution
     if (key.startsWith("$")) continue;
+
+    // Skip internal md keys (_interactive, _subcommand, _cwd, etc.)
+    if (key.startsWith("_")) continue;
 
     // Skip template variables (used for substitution, not passed to command)
     if (templateVars.has(key)) continue;
@@ -190,6 +208,19 @@ function getCommandDefaultsFromConfig(
 }
 
 /**
+ * Extract subcommands from frontmatter (_subcommand key)
+ * Returns an array of subcommand strings
+ */
+export function extractSubcommands(frontmatter: AgentFrontmatter): string[] {
+  const subcommand = frontmatter._subcommand;
+  if (!subcommand) return [];
+  if (Array.isArray(subcommand)) {
+    return subcommand.map(String);
+  }
+  return [String(subcommand)];
+}
+
+/**
  * Build a complete CommandSpec from frontmatter, body, and configuration
  *
  * This is a pure function that returns a specification object.
@@ -224,17 +255,22 @@ export function buildCommand(
   const positionalMappings = extractPositionalMappings(mergedFrontmatter);
 
   // Build positionals array: body is $1, additional args are $2+
-  const positionals = [body, ...positionalArgs];
+  const rawPositionals = [body, ...positionalArgs];
 
-  // Apply positional arguments
-  const finalArgs = applyPositionalArgs(baseArgs, positionals, positionalMappings);
+  // Apply positional arguments (transforms based on mappings)
+  const processedPositionals = applyPositionalArgs([], rawPositionals, positionalMappings);
+
+  // Extract subcommands
+  const subcommands = extractSubcommands(mergedFrontmatter);
 
   // Extract environment variables
   const env = extractEnvVars(mergedFrontmatter);
 
   return {
     executable: command,
-    args: finalArgs,
+    subcommands,
+    args: baseArgs,
+    positionals: processedPositionals,
     env,
     cwd,
   };
@@ -249,7 +285,7 @@ export function buildCommand(
  * @param templateVars - Set of template variable names
  * @param config - Global configuration
  * @param cwd - Working directory
- * @returns Partial CommandSpec (args don't include positionals)
+ * @returns Partial CommandSpec (positionals array is empty)
  */
 export function buildCommandBase(
   command: string,
@@ -265,13 +301,42 @@ export function buildCommandBase(
   // Build base args from frontmatter
   const args = buildArgsFromFrontmatter(mergedFrontmatter, templateVars);
 
+  // Extract subcommands
+  const subcommands = extractSubcommands(mergedFrontmatter);
+
   // Extract environment variables
   const env = extractEnvVars(mergedFrontmatter);
 
   return {
     executable: command,
+    subcommands,
     args,
+    positionals: [],
     env,
     cwd,
   };
+}
+
+/**
+ * Format a CommandSpec for display (dry-run output)
+ * Escapes values properly for shell display
+ *
+ * @param spec - The command specification
+ * @returns A string representation of the command
+ */
+export function formatCommandForDisplay(spec: CommandSpec): string {
+  const allArgs = getSpawnArgs(spec);
+
+  // Escape each argument for display
+  const escapedArgs = allArgs.map(arg => {
+    // If arg contains spaces, newlines, or special chars, quote it
+    if (/[\s"'\\$`!]/.test(arg) || arg.includes("\n")) {
+      // Escape backslashes and double quotes, then wrap in double quotes
+      const escaped = arg.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      return `"${escaped}"`;
+    }
+    return arg;
+  });
+
+  return `${spec.executable} ${escapedArgs.join(" ")}`;
 }

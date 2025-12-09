@@ -13,6 +13,9 @@ import {
   applyPositionalArgs,
   buildCommand,
   buildCommandBase,
+  extractSubcommands,
+  getSpawnArgs,
+  formatCommandForDisplay,
   type CommandSpec,
 } from "./command-builder";
 import type { AgentFrontmatter } from "./types";
@@ -162,6 +165,44 @@ describe("buildArgsFromFrontmatter", () => {
       );
       expect(result).toEqual(["--model", "opus"]);
       expect(result).not.toContain("--context_window");
+    });
+
+    it("skips _interactive key", () => {
+      const result = buildArgsFromFrontmatter(
+        { _interactive: true, model: "opus" },
+        new Set()
+      );
+      expect(result).toEqual(["--model", "opus"]);
+      expect(result).not.toContain("--_interactive");
+    });
+
+    it("skips _subcommand key", () => {
+      const result = buildArgsFromFrontmatter(
+        { _subcommand: "exec", model: "opus" },
+        new Set()
+      );
+      expect(result).toEqual(["--model", "opus"]);
+      expect(result).not.toContain("--_subcommand");
+      expect(result).not.toContain("exec");
+    });
+
+    it("skips _cwd key", () => {
+      const result = buildArgsFromFrontmatter(
+        { _cwd: "/some/path", model: "opus" },
+        new Set()
+      );
+      expect(result).toEqual(["--model", "opus"]);
+      expect(result).not.toContain("--_cwd");
+    });
+
+    it("skips all underscore-prefixed keys", () => {
+      const result = buildArgsFromFrontmatter(
+        { _custom: "value", _another: true, model: "opus" },
+        new Set()
+      );
+      expect(result).toEqual(["--model", "opus"]);
+      expect(result).not.toContain("--_custom");
+      expect(result).not.toContain("--_another");
     });
   });
 
@@ -459,9 +500,16 @@ describe("buildCommand", () => {
     expect(result.executable).toBe("claude");
     expect(result.args).toContain("--model");
     expect(result.args).toContain("opus");
-    expect(result.args).toContain("Hello world");
+    expect(result.positionals).toContain("Hello world");
+    expect(result.subcommands).toEqual([]);
     expect(result.cwd).toBe(cwd);
     expect(result.env).toEqual({});
+
+    // getSpawnArgs should combine them correctly
+    const spawnArgs = getSpawnArgs(result);
+    expect(spawnArgs).toContain("--model");
+    expect(spawnArgs).toContain("opus");
+    expect(spawnArgs).toContain("Hello world");
   });
 
   it("applies $1 mapping to body", () => {
@@ -475,13 +523,13 @@ describe("buildCommand", () => {
       cwd
     );
 
-    expect(result.args).toContain("--prompt");
-    expect(result.args).toContain("Hello world");
     expect(result.args).toContain("--model");
     expect(result.args).toContain("gpt-4");
-    // Body should be passed as --prompt, not raw
-    const promptIndex = result.args.indexOf("--prompt");
-    expect(result.args[promptIndex + 1]).toBe("Hello world");
+    // Body should be passed as --prompt in positionals
+    expect(result.positionals).toContain("--prompt");
+    expect(result.positionals).toContain("Hello world");
+    const promptIndex = result.positionals.indexOf("--prompt");
+    expect(result.positionals[promptIndex + 1]).toBe("Hello world");
   });
 
   it("includes additional positional args", () => {
@@ -495,9 +543,10 @@ describe("buildCommand", () => {
       cwd
     );
 
-    expect(result.args).toContain("body");
-    expect(result.args).toContain("extra1");
-    expect(result.args).toContain("extra2");
+    const spawnArgs = getSpawnArgs(result);
+    expect(spawnArgs).toContain("body");
+    expect(spawnArgs).toContain("extra1");
+    expect(spawnArgs).toContain("extra2");
   });
 
   it("maps additional positional args with $2, $3", () => {
@@ -511,10 +560,11 @@ describe("buildCommand", () => {
       cwd
     );
 
-    expect(result.args).toContain("--prompt");
-    expect(result.args).toContain("body");
-    expect(result.args).toContain("--context");
-    expect(result.args).toContain("extra context");
+    const spawnArgs = getSpawnArgs(result);
+    expect(spawnArgs).toContain("--prompt");
+    expect(spawnArgs).toContain("body");
+    expect(spawnArgs).toContain("--context");
+    expect(spawnArgs).toContain("extra context");
   });
 
   it("extracts env vars from frontmatter", () => {
@@ -551,8 +601,9 @@ describe("buildCommand", () => {
     );
 
     // Default $1: prompt should be applied
-    expect(result.args).toContain("--prompt");
-    expect(result.args).toContain("Hello");
+    const spawnArgs = getSpawnArgs(result);
+    expect(spawnArgs).toContain("--prompt");
+    expect(spawnArgs).toContain("Hello");
   });
 
   it("frontmatter overrides config defaults", () => {
@@ -625,8 +676,11 @@ describe("buildCommand", () => {
     expect(result.args).toContain("--add-dir");
     expect(result.args).toContain("./src");
     expect(result.args).toContain("./tests");
-    expect(result.args).toContain("--prompt");
-    expect(result.args).toContain("Do the thing");
+
+    // Positional with mapping goes to positionals
+    expect(result.positionals).toContain("--prompt");
+    expect(result.positionals).toContain("Do the thing");
+
     expect(result.env).toEqual({ NODE_ENV: "test" });
     // System keys should not appear
     expect(result.args).not.toContain("--args");
@@ -645,6 +699,39 @@ describe("buildCommand", () => {
 
     expect(result.cwd).toBe(process.cwd());
   });
+
+  it("handles _subcommand as string", () => {
+    const result = buildCommand(
+      "codex",
+      { _subcommand: "exec" },
+      "body",
+      [],
+      new Set(),
+      emptyConfig,
+      cwd
+    );
+
+    expect(result.subcommands).toEqual(["exec"]);
+    const spawnArgs = getSpawnArgs(result);
+    expect(spawnArgs[0]).toBe("exec");
+  });
+
+  it("handles _subcommand as array", () => {
+    const result = buildCommand(
+      "codex",
+      { _subcommand: ["sub1", "sub2"] },
+      "body",
+      [],
+      new Set(),
+      emptyConfig,
+      cwd
+    );
+
+    expect(result.subcommands).toEqual(["sub1", "sub2"]);
+    const spawnArgs = getSpawnArgs(result);
+    expect(spawnArgs[0]).toBe("sub1");
+    expect(spawnArgs[1]).toBe("sub2");
+  });
 });
 
 describe("buildCommandBase", () => {
@@ -662,6 +749,8 @@ describe("buildCommandBase", () => {
 
     expect(result.executable).toBe("claude");
     expect(result.args).toEqual(["--model", "opus", "--verbose"]);
+    expect(result.positionals).toEqual([]);
+    expect(result.subcommands).toEqual([]);
     expect(result.env).toEqual({});
     expect(result.cwd).toBe(cwd);
   });
@@ -698,19 +787,35 @@ describe("buildCommandBase", () => {
 
     expect(result.env).toEqual({ KEY: "value" });
   });
+
+  it("extracts subcommands", () => {
+    const result = buildCommandBase(
+      "codex",
+      { _subcommand: "exec" },
+      new Set(),
+      emptyConfig,
+      cwd
+    );
+
+    expect(result.subcommands).toEqual(["exec"]);
+  });
 });
 
 describe("CommandSpec interface contract", () => {
   it("spec contains all required fields", () => {
     const spec: CommandSpec = {
       executable: "claude",
+      subcommands: [],
       args: ["--model", "opus"],
+      positionals: ["body text"],
       env: { KEY: "value" },
       cwd: "/test/dir",
     };
 
     expect(spec).toHaveProperty("executable");
+    expect(spec).toHaveProperty("subcommands");
     expect(spec).toHaveProperty("args");
+    expect(spec).toHaveProperty("positionals");
     expect(spec).toHaveProperty("env");
     expect(spec).toHaveProperty("cwd");
   });
@@ -718,7 +823,9 @@ describe("CommandSpec interface contract", () => {
   it("args can be empty array", () => {
     const spec: CommandSpec = {
       executable: "echo",
+      subcommands: [],
       args: [],
+      positionals: [],
       env: {},
       cwd: "/",
     };
@@ -729,12 +836,152 @@ describe("CommandSpec interface contract", () => {
   it("env can be empty object", () => {
     const spec: CommandSpec = {
       executable: "echo",
+      subcommands: [],
       args: [],
+      positionals: [],
       env: {},
       cwd: "/",
     };
 
     expect(spec.env).toEqual({});
+  });
+});
+
+describe("extractSubcommands", () => {
+  it("returns empty array when no _subcommand", () => {
+    const result = extractSubcommands({ model: "opus" });
+    expect(result).toEqual([]);
+  });
+
+  it("returns array with single subcommand string", () => {
+    const result = extractSubcommands({ _subcommand: "exec" });
+    expect(result).toEqual(["exec"]);
+  });
+
+  it("returns array with multiple subcommands", () => {
+    const result = extractSubcommands({ _subcommand: ["sub1", "sub2"] });
+    expect(result).toEqual(["sub1", "sub2"]);
+  });
+
+  it("converts non-string values to strings", () => {
+    const result = extractSubcommands({ _subcommand: 123 as unknown as string });
+    expect(result).toEqual(["123"]);
+  });
+});
+
+describe("getSpawnArgs", () => {
+  it("combines subcommands, args, and positionals in order", () => {
+    const spec: CommandSpec = {
+      executable: "codex",
+      subcommands: ["exec"],
+      args: ["--model", "opus"],
+      positionals: ["prompt text"],
+      env: {},
+      cwd: "/",
+    };
+
+    const result = getSpawnArgs(spec);
+    expect(result).toEqual(["exec", "--model", "opus", "prompt text"]);
+  });
+
+  it("handles empty subcommands", () => {
+    const spec: CommandSpec = {
+      executable: "claude",
+      subcommands: [],
+      args: ["--model", "opus"],
+      positionals: ["prompt text"],
+      env: {},
+      cwd: "/",
+    };
+
+    const result = getSpawnArgs(spec);
+    expect(result).toEqual(["--model", "opus", "prompt text"]);
+  });
+
+  it("handles multiple subcommands", () => {
+    const spec: CommandSpec = {
+      executable: "custom",
+      subcommands: ["sub1", "sub2"],
+      args: ["--flag"],
+      positionals: [],
+      env: {},
+      cwd: "/",
+    };
+
+    const result = getSpawnArgs(spec);
+    expect(result).toEqual(["sub1", "sub2", "--flag"]);
+  });
+});
+
+describe("formatCommandForDisplay", () => {
+  it("formats simple command", () => {
+    const spec: CommandSpec = {
+      executable: "claude",
+      subcommands: [],
+      args: ["--model", "opus"],
+      positionals: [],
+      env: {},
+      cwd: "/",
+    };
+
+    const result = formatCommandForDisplay(spec);
+    expect(result).toBe("claude --model opus");
+  });
+
+  it("quotes args with spaces", () => {
+    const spec: CommandSpec = {
+      executable: "claude",
+      subcommands: [],
+      args: [],
+      positionals: ["hello world"],
+      env: {},
+      cwd: "/",
+    };
+
+    const result = formatCommandForDisplay(spec);
+    expect(result).toBe('claude "hello world"');
+  });
+
+  it("escapes double quotes in args", () => {
+    const spec: CommandSpec = {
+      executable: "claude",
+      subcommands: [],
+      args: [],
+      positionals: ['say "hello"'],
+      env: {},
+      cwd: "/",
+    };
+
+    const result = formatCommandForDisplay(spec);
+    expect(result).toBe('claude "say \\"hello\\""');
+  });
+
+  it("includes subcommands in output", () => {
+    const spec: CommandSpec = {
+      executable: "codex",
+      subcommands: ["exec"],
+      args: ["--model", "opus"],
+      positionals: ["prompt"],
+      env: {},
+      cwd: "/",
+    };
+
+    const result = formatCommandForDisplay(spec);
+    expect(result).toBe("codex exec --model opus prompt");
+  });
+
+  it("handles complex prompt with newlines", () => {
+    const spec: CommandSpec = {
+      executable: "claude",
+      subcommands: [],
+      args: [],
+      positionals: ["line1\nline2"],
+      env: {},
+      cwd: "/",
+    };
+
+    const result = formatCommandForDisplay(spec);
+    expect(result).toBe('claude "line1\nline2"');
   });
 });
 
@@ -759,10 +1006,11 @@ describe("integration scenarios", () => {
     );
 
     expect(result.executable).toBe("copilot");
-    expect(result.args).toContain("--prompt");
-    expect(result.args).toContain("Explain this code");
-    expect(result.args).toContain("--model");
-    expect(result.args).toContain("gpt-4");
+    const spawnArgs = getSpawnArgs(result);
+    expect(spawnArgs).toContain("--prompt");
+    expect(spawnArgs).toContain("Explain this code");
+    expect(spawnArgs).toContain("--model");
+    expect(spawnArgs).toContain("gpt-4");
   });
 
   it("claude with multiple add-dir flags", () => {
@@ -808,8 +1056,9 @@ describe("integration scenarios", () => {
       ANTHROPIC_API_KEY: "sk-test",
       DEBUG: "1",
     });
-    expect(result.args).not.toContain("ANTHROPIC_API_KEY");
-    expect(result.args).not.toContain("sk-test");
+    const spawnArgs = getSpawnArgs(result);
+    expect(spawnArgs).not.toContain("ANTHROPIC_API_KEY");
+    expect(spawnArgs).not.toContain("sk-test");
   });
 
   it("template variable substitution workflow", () => {
@@ -831,12 +1080,151 @@ describe("integration scenarios", () => {
     );
 
     // target should not appear as a flag
-    expect(result.args).not.toContain("--target");
-    expect(result.args).not.toContain("src/app.ts");
+    const spawnArgs = getSpawnArgs(result);
+    expect(spawnArgs).not.toContain("--target");
+    expect(spawnArgs).not.toContain("src/app.ts");
     // args system key should not appear
-    expect(result.args).not.toContain("--args");
+    expect(spawnArgs).not.toContain("--args");
     // model should appear
-    expect(result.args).toContain("--model");
-    expect(result.args).toContain("opus");
+    expect(spawnArgs).toContain("--model");
+    expect(spawnArgs).toContain("opus");
+  });
+
+  it("codex with _subcommand default from config", () => {
+    const config: GlobalConfig = {
+      commands: {
+        codex: {
+          _subcommand: "exec",
+        },
+      },
+    };
+
+    const result = buildCommand(
+      "codex",
+      {},
+      "Run this code",
+      [],
+      new Set(),
+      config,
+      "/project"
+    );
+
+    expect(result.subcommands).toEqual(["exec"]);
+    const spawnArgs = getSpawnArgs(result);
+    expect(spawnArgs[0]).toBe("exec");
+  });
+});
+
+describe("dry-run consistency guarantee", () => {
+  /**
+   * These tests verify that the same CommandSpec is used for both
+   * dry-run display and actual execution, ensuring they never drift.
+   */
+
+  it("formatCommandForDisplay uses same args as getSpawnArgs", () => {
+    const spec: CommandSpec = {
+      executable: "claude",
+      subcommands: ["exec"],
+      args: ["--model", "opus", "--verbose"],
+      positionals: ["Hello world prompt"],
+      env: { KEY: "value" },
+      cwd: "/test",
+    };
+
+    // Both dry-run display and execution should use the same args
+    const spawnArgs = getSpawnArgs(spec);
+    const displayCmd = formatCommandForDisplay(spec);
+
+    // spawnArgs is what would be passed to spawn
+    expect(spawnArgs).toEqual(["exec", "--model", "opus", "--verbose", "Hello world prompt"]);
+
+    // displayCmd should represent the same command (with escaping)
+    expect(displayCmd).toContain("claude");
+    expect(displayCmd).toContain("exec");
+    expect(displayCmd).toContain("--model");
+    expect(displayCmd).toContain("opus");
+    expect(displayCmd).toContain("--verbose");
+    expect(displayCmd).toContain("Hello world prompt");
+  });
+
+  it("buildCommand produces consistent spec for both paths", () => {
+    const config: GlobalConfig = {
+      commands: {
+        codex: {
+          _subcommand: "exec",
+        },
+      },
+    };
+
+    // Build once - used for both dry-run and execution
+    const spec = buildCommand(
+      "codex",
+      { model: "gpt-4" },
+      "Run this task",
+      [],
+      new Set(),
+      config,
+      "/project"
+    );
+
+    // Dry-run would use formatCommandForDisplay(spec)
+    const dryRunOutput = formatCommandForDisplay(spec);
+
+    // Execution would use getSpawnArgs(spec)
+    const executionArgs = getSpawnArgs(spec);
+
+    // Both should represent the same command
+    expect(dryRunOutput).toContain("codex");
+    expect(dryRunOutput).toContain("exec");
+    expect(executionArgs[0]).toBe("exec");
+
+    // The display should contain all the execution args
+    for (const arg of executionArgs) {
+      // Args with spaces get quoted in display
+      const expectedInDisplay = arg.includes(" ") ? `"${arg}"` : arg;
+      expect(dryRunOutput).toContain(expectedInDisplay.replace(/\n/g, "\\n"));
+    }
+  });
+
+  it("handles complex frontmatter identically in both paths", () => {
+    const frontmatter: AgentFrontmatter = {
+      model: "opus",
+      "dangerously-skip-permissions": true,
+      "add-dir": ["./src", "./tests"],
+      $1: "prompt",
+      _subcommand: "chat",
+      env: { API_KEY: "secret" },
+    };
+
+    const spec = buildCommand(
+      "custom-cli",
+      frontmatter,
+      "Complex prompt with\nnewlines",
+      [],
+      new Set(),
+      {},
+      "/workspace"
+    );
+
+    const spawnArgs = getSpawnArgs(spec);
+    const display = formatCommandForDisplay(spec);
+
+    // Verify subcommand handling is consistent
+    expect(spawnArgs[0]).toBe("chat");
+    expect(display).toContain("chat");
+
+    // Verify positional mapping ($1: prompt) is consistent
+    expect(spawnArgs).toContain("--prompt");
+    expect(display).toContain("--prompt");
+
+    // Verify array flags are handled consistently
+    const addDirCount = spawnArgs.filter(a => a === "--add-dir").length;
+    expect(addDirCount).toBe(2);
+    expect(display.split("--add-dir").length - 1).toBe(2);
+
+    // Verify env is separate (not in args)
+    expect(spawnArgs).not.toContain("API_KEY");
+    expect(display).not.toContain("API_KEY");
+    expect(spec.env).toEqual({ API_KEY: "secret" });
   });
 });
