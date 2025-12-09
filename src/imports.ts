@@ -748,7 +748,7 @@ async function processFileImport(
 const MD_FILE_COMMAND_PATTERN = /^(~?\.?\.?\/)?[^\s]+\.md(\s|$)/;
 
 /**
- * Check if a command looks like a markdown file that should be run with `md`
+ * Check if a command looks like a markdown file that should be run with `mdflow`
  */
 export function isMarkdownFileCommand(command: string): boolean {
   return MD_FILE_COMMAND_PATTERN.test(command.trim());
@@ -763,11 +763,11 @@ async function processCommandInline(
   verbose: boolean,
   importCtx?: ImportContext
 ): Promise<string> {
-  // Auto-prefix markdown files with `md` to run them as agents
+  // Auto-prefix markdown files with `mdflow` to run them as agents
   let actualCommand = command;
   if (isMarkdownFileCommand(command)) {
-    actualCommand = `md ${command}`;
-    console.error(`[imports] Auto-running .md file with md: ${actualCommand}`);
+    actualCommand = `mdflow ${command}`;
+    console.error(`[imports] Auto-running .md file with mdflow: ${actualCommand}`);
   } else {
     // Always log command execution to stderr for visibility
     console.error(`[imports] Executing: ${command}`);
