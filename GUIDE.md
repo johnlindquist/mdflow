@@ -1,6 +1,6 @@
-# The `markdown-agent` Examples Tour
+# The `mdflow` Examples Tour
 
-This guide demonstrates 10 progressively more impressive ways to use `markdown-agent` (`ma`). We start with basic scripts and end with a self-orchestrating swarm that works in parallel across multiple git worktrees.
+This guide demonstrates 10 progressively more impressive ways to use `mdflow` (`md`). We start with basic scripts and end with a self-orchestrating swarm that works in parallel across multiple git worktrees.
 
 ---
 
@@ -21,7 +21,7 @@ Say "Hello! I am an executable markdown file." and nothing else.
 **Run it:**
 
 ```bash
-ma 01-hello.claude.md
+md 01-hello.claude.md
 ```
 
 ---
@@ -51,10 +51,10 @@ Return ONLY the raw JSON.
 
 ```bash
 # Use defaults
-ma 02-config.gemini.md
+md 02-config.gemini.md
 
 # Override with flags
-ma 02-config.gemini.md --env production --port 3000
+md 02-config.gemini.md --env production --port 3000
 ```
 
 ---
@@ -85,7 +85,7 @@ Generate a simple Dockerfile.
 **Run it:**
 
 ```bash
-ma 03-deploy.copilot.md "auth-service" "k8s"
+md 03-deploy.copilot.md "auth-service" "k8s"
 ```
 
 ---
@@ -115,7 +115,7 @@ Based on this, what should I check first?
 **Run it:**
 
 ```bash
-ma 04-debug.claude.md
+md 04-debug.claude.md
 ```
 
 ---
@@ -141,7 +141,7 @@ Output only the JSON.
 **Run it:**
 
 ```bash
-ma 05-mock-gen.claude.md > mock-user.json
+md 05-mock-gen.claude.md > mock-user.json
 ```
 
 ---
@@ -149,7 +149,7 @@ ma 05-mock-gen.claude.md > mock-user.json
 ## 6. The Auditor
 
 **Concept:** *Glob Imports & Environment Config*
-Import entire directory trees. We set `MA_FORCE_CONTEXT` in `env` to override the default token safety limit for large imports.
+Import entire directory trees. We set `MDFLOW_FORCE_CONTEXT` in `env` to override the default token safety limit for large imports.
 
 **File:** `06-audit.gemini.md`
 
@@ -157,7 +157,7 @@ Import entire directory trees. We set `MA_FORCE_CONTEXT` in `env` to override th
 ---
 model: gemini-1.5-pro
 env:
-  MA_FORCE_CONTEXT: "1"
+  MDFLOW_FORCE_CONTEXT: "1"
 ---
 You are a Security Auditor. Scan the following files for hardcoded secrets or unsafe regex:
 
@@ -169,7 +169,7 @@ List any vulnerabilities found.
 **Run it:**
 
 ```bash
-ma 06-audit.gemini.md
+md 06-audit.gemini.md
 ```
 
 ---
@@ -177,7 +177,7 @@ ma 06-audit.gemini.md
 ## 7. The Unix Filter
 
 **Concept:** *Standard Input (Stdin)*
-`ma` automatically wraps piped input in `<stdin>` tags, allowing agents to act as filters in Unix pipes.
+`md` automatically wraps piped input in `<stdin>` tags, allowing agents to act as filters in Unix pipes.
 
 **File:** `07-describe-changes.claude.md`
 
@@ -192,7 +192,7 @@ Include a "Summary" and "Key Changes" section.
 **Run it:**
 
 ```bash
-git diff --staged | ma 07-describe-changes.claude.md
+git diff --staged | md 07-describe-changes.claude.md
 ```
 
 ---
@@ -224,7 +224,7 @@ Identify bottlenecks and suggest scalability improvements.
 **Run it:**
 
 ```bash
-cat src/*.ts | ma 08a-summarize.claude.md | ma 08b-critique.claude.md
+cat src/*.ts | md 08a-summarize.claude.md | md 08b-critique.claude.md
 ```
 
 ---
@@ -237,7 +237,13 @@ Run an agent directly from a URL without downloading it. Perfect for sharing tea
 **Run it:**
 
 ```bash
-ma https://raw.githubusercontent.com/johnlindquist/markdown-agent/main/examples/hello.claude.md
+md https://raw.githubusercontent.com/johnlindquist/mdflow/main/examples/hello.claude.md
+```
+
+Remote URLs are cached locally for 1 hour. Use `--no-cache` to force a fresh fetch:
+
+```bash
+md https://example.com/agent.claude.md --no-cache
 ```
 
 ---
@@ -269,7 +275,7 @@ You are a Fleet Commander. Break down the goal "{{ goal }}" into 2 parallel sub-
 
 Generate a BASH script that:
 1. Creates 2 git worktrees (`wt-frontend` and `wt-backend`) on new branches.
-2. Inside each worktree, runs `ma ../10-worker.claude.md "sub-task description"`.
+2. Inside each worktree, runs `md ../10-worker.claude.md "sub-task description"`.
 3. Runs them in the background (`&`) and `wait`s for them to finish.
 
 Output ONLY the raw bash script.
@@ -280,7 +286,7 @@ Output ONLY the raw bash script.
 ```bash
 # 1. The Architect creates the plan and script
 # 2. We pipe the script to sh to execute the swarm immediately
-ma 10-architect.claude.md "Build a login page with a fastify backend" | sh
+md 10-architect.claude.md "Build a login page with a fastify backend" | sh
 ```
 
 ---
@@ -295,7 +301,7 @@ While Part 1 focused on power and complexity, Part 2 focuses on **User Experienc
 
 **Concept:** *Variable Recovery*
 **UX Problem:** You wrote a prompt with variables, but you don't want to memorize the argument order.
-**Solution:** If you forget to provide variables, `ma` detects them and turns the CLI into an interactive form.
+**Solution:** If you forget to provide variables, `md` detects them and turns the CLI into an interactive form.
 
 **File:** `11-onboarding.claude.md`
 
@@ -312,10 +318,10 @@ Mention that their manager is {{ manager }}.
 **Run it (without arguments):**
 
 ```bash
-ma 11-onboarding.claude.md
+md 11-onboarding.claude.md
 ```
 
-**`ma` responds:**
+**`md` responds:**
 
 ```text
 Missing required variables. Please provide values:
@@ -347,7 +353,7 @@ Refactor every file in this directory:
 **Run it:**
 
 ```bash
-ma 12-refactor.gemini.md --dry-run
+md 12-refactor.gemini.md --dry-run
 ```
 
 **Output:**
@@ -366,13 +372,13 @@ Estimated tokens: ~15,420
 ## 13. The Native Binary
 
 **Concept:** *Shebang Support*
-**UX Problem:** Typing `ma filename.md` feels like running a script. You want it to feel like a native system command.
+**UX Problem:** Typing `md filename.md` feels like running a script. You want it to feel like a native system command.
 **Solution:** Add a standard Unix shebang line.
 
 **File:** `daily-report` (no extension needed)
 
 ```markdown
-#!/usr/bin/env ma
+#!/usr/bin/env md
 ---
 command: claude
 model: haiku
@@ -419,10 +425,10 @@ Translate the following text into {{ lang }}. Keep the tone {{ tone }}.
 
 ```bash
 # Use defaults
-ma 14-translator.gpt.md "Hello World"
+md 14-translator.gpt.md "Hello World"
 
 # Tweak the knobs via flags
-ma 14-translator.gpt.md "Hello World" --lang "Pirate" --tone "Aggressive"
+md 14-translator.gpt.md "Hello World" --lang "Pirate" --tone "Aggressive"
 ```
 
 *UX Benefit: Creates a stable CLI interface for your prompts.*
@@ -460,6 +466,8 @@ Ensure it returns a type matching:
 **UX Problem:** You constantly have to import the same 5 files (auth, database, types) for every task.
 **Solution:** Create a "Context Pack"—a markdown file that just imports other files—and import *that*.
 
+> **Note:** Import statements inside code blocks (``` or \`) are now properly ignored by the parser.
+
 **File:** `_context-auth.md`
 
 ```markdown
@@ -487,7 +495,7 @@ Review the authentication flow for security holes.
 
 **Concept:** *Environment Isolation*
 **UX Problem:** You need API keys in your prompts but can't commit them to Git.
-**Solution:** `ma` automatically loads `.env` files from the markdown file's directory.
+**Solution:** `md` automatically loads `.env` files from the markdown file's directory.
 
 **Structure:**
 
@@ -527,10 +535,10 @@ Write a two-sentence horror story about a compiler.
 
 ```bash
 # Test with Claude
-ma 18-story.md -c claude --model haiku
+md 18-story.md -c claude --model haiku
 
 # Test with Gemini
-ma 18-story.md -c gemini --model gemini-1.5-flash
+md 18-story.md -c gemini --model gemini-1.5-flash
 ```
 
 *UX Benefit: Decouple your prompt logic from specific providers.*
@@ -541,7 +549,7 @@ ma 18-story.md -c gemini --model gemini-1.5-flash
 
 **Concept:** *Structured Logging*
 **UX Problem:** An agent hallucinated or failed, and you need to see exactly what was sent to the API.
-**Solution:** `ma` logs every execution to `~/.markdown-agent/logs/`.
+**Solution:** `md` logs every execution to `~/.mdflow/logs/`.
 
 **File:** `19-mystery.claude.md`
 
@@ -555,15 +563,15 @@ model: opus
 **Run it:**
 
 ```bash
-ma 19-mystery.claude.md
+md 19-mystery.claude.md
 ```
 
 **Debug it:**
 
 ```bash
-ma --logs
+md logs
 # Agent logs:
-#   /Users/me/.markdown-agent/logs/19-mystery-claude/
+#   /Users/me/.mdflow/logs/19-mystery-claude/
 ```
 
 *UX Benefit: Instant forensic debugging without cluttering your terminal.*
@@ -588,7 +596,7 @@ Goal: {{ goal }}
 
 Write the full content of a `.md` file that accomplishes this.
 Include appropriate frontmatter defaults (model, args).
-Use standard `ma` features like `@imports` if the goal implies reading code.
+Use standard `md` features like `@imports` if the goal implies reading code.
 
 Output ONLY the raw markdown code block.
 ```
@@ -596,7 +604,7 @@ Output ONLY the raw markdown code block.
 **Run it:**
 
 ```bash
-ma 20-agent-smith.claude.md "Review my rust code" > review-rust.claude.md
+md 20-agent-smith.claude.md "Review my rust code" > review-rust.claude.md
 ```
 
 *UX Benefit: The tool helps you build the tool.*

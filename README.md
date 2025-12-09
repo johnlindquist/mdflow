@@ -439,6 +439,12 @@ Fetch content from URLs (markdown and JSON only):
 @https://raw.githubusercontent.com/user/repo/main/README.md
 ```
 
+**Caching:** Remote URLs are cached locally at `~/.mdflow/cache/` with a 1-hour TTL. Use `--no-cache` to force a fresh fetch:
+
+```bash
+mdflow agent.claude.md --no-cache
+```
+
 ---
 
 ## Environment Variables
@@ -489,6 +495,8 @@ mdflow-specific flags (consumed, not passed to command):
   --command, -c       Specify command to run
   --dry-run           Preview without executing
   --_interactive, -_i Enable interactive mode
+  --no-cache          Force fresh fetch for remote URLs (bypass cache)
+  --trust             Bypass TOFU prompts for remote URLs
 
 Examples:
   mdflow task.claude.md -p "print mode"
@@ -573,3 +581,5 @@ git diff | review.claude.md      # Review staged changes
 - Logs are always written to `~/.mdflow/logs/<agent-name>/` for debugging
 - Use `--logs` to show the log directory
 - Stdin is wrapped in `<stdin>` tags and prepended to the prompt
+- Remote URLs are cached at `~/.mdflow/cache/` with 1-hour TTL (use `--no-cache` to bypass)
+- Imports inside code blocks (``` or `) are ignored by the parser
