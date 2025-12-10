@@ -231,8 +231,7 @@ export class BunSystemEnvironment implements SystemEnvironment {
     },
 
     async unlink(path: string): Promise<void> {
-      const fs = await import("fs/promises");
-      await fs.unlink(path);
+      await Bun.file(path).nuke();
     },
   };
 
