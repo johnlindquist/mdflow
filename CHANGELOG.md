@@ -1,3 +1,10 @@
+# [2.28.0](https://github.com/johnlindquist/mdflow/compare/v2.27.1...v2.28.0) (2025-12-12)
+
+
+### Features
+
+* add droid and opencode adapters with multi-agent examples ([fa5fe32](https://github.com/johnlindquist/mdflow/commit/fa5fe324e9a72fa9e20cc086de225d763935caaf))
+
 ## [2.27.1](https://github.com/johnlindquist/mdflow/compare/v2.27.0...v2.27.1) (2025-12-12)
 
 
