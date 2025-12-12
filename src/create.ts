@@ -40,7 +40,7 @@ function parseCreateArgs(args: string[]): CreateOptions {
     // Handle known flags
     if (arg === "--name" || arg === "-n") {
       options.name = args[++i];
-    } else if (arg === "--command" || arg === "-c") {
+    } else if (arg === "--_command" || arg === "-_c") {
       options.command = args[++i];
     } else if (arg === "--location" || arg === "-l") {
       const loc = args[++i];
@@ -91,14 +91,14 @@ Usage: md create [name] [flags]
 Create a new markdown agent. Any unknown flags are added to frontmatter.
 
 Options:
-  --name, -n       Agent name (e.g. 'task')
-  --command, -c    Tool to run (claude, gpt, python, etc)
-  --project, -p    Save to project agents (.mdflow/)
-  --global, -g     Save to global agents (~/.mdflow/)
-  --content        Initial prompt content
+  --name, -n         Agent name (e.g. 'task')
+  --_command, -_c    Tool to run (claude, gpt, python, etc)
+  --project, -p      Save to project agents (.mdflow/)
+  --global, -g       Save to global agents (~/.mdflow/)
+  --content          Initial prompt content
 
 Examples:
-  md create task --command claude
+  md create task --_command claude
   md create search -g --model perplexity
 `);
     return;
@@ -233,7 +233,7 @@ Examples:
     !inferredCommand &&
     !options.name.includes(`.${options.command}.`)
   ) {
-    runCmd += ` --command ${options.command}`;
+    runCmd += ` --_command ${options.command}`;
   }
 
   console.log(`\nRun it with:\n  ${runCmd}\n`);

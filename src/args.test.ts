@@ -171,30 +171,30 @@ Build {{ feature_name }}`;
 });
 
 describe("flag hijacking", () => {
-  test("--command flag is consumed and used as command", () => {
-    // Simulate CLI: md generic.md --command claude --model opus
-    const cliArgs = ["--command", "claude", "--model", "opus"];
+  test("--_command flag is consumed and used as command", () => {
+    // Simulate CLI: md generic.md --_command claude --model opus
+    const cliArgs = ["--_command", "claude", "--model", "opus"];
 
-    // Extract --command flag (same logic as index.ts)
+    // Extract --_command flag (same logic as index.ts)
     let commandFromCli: string | undefined;
     const remainingArgs = [...cliArgs];
 
-    const commandFlagIndex = remainingArgs.findIndex(arg => arg === "--command" || arg === "-c");
+    const commandFlagIndex = remainingArgs.findIndex(arg => arg === "--_command" || arg === "-_c");
     if (commandFlagIndex !== -1 && commandFlagIndex + 1 < remainingArgs.length) {
       commandFromCli = remainingArgs[commandFlagIndex + 1];
       remainingArgs.splice(commandFlagIndex, 2);
     }
 
     expect(commandFromCli).toBe("claude");
-    expect(remainingArgs).toEqual(["--model", "opus"]); // --command consumed
+    expect(remainingArgs).toEqual(["--model", "opus"]); // --_command consumed
   });
 
-  test("-c short flag also works for command", () => {
-    const cliArgs = ["-c", "gemini", "--verbose"];
+  test("-_c short flag also works for command", () => {
+    const cliArgs = ["-_c", "gemini", "--verbose"];
     const remainingArgs = [...cliArgs];
 
     let commandFromCli: string | undefined;
-    const commandFlagIndex = remainingArgs.findIndex(arg => arg === "--command" || arg === "-c");
+    const commandFlagIndex = remainingArgs.findIndex(arg => arg === "--_command" || arg === "-_c");
     if (commandFlagIndex !== -1 && commandFlagIndex + 1 < remainingArgs.length) {
       commandFromCli = remainingArgs[commandFlagIndex + 1];
       remainingArgs.splice(commandFlagIndex, 2);
@@ -204,9 +204,9 @@ describe("flag hijacking", () => {
     expect(remainingArgs).toEqual(["--verbose"]);
   });
 
-  test("--command takes priority over filename", () => {
-    // If --command is provided, it takes priority
-    // (filename would give "codex" but --command says "claude")
+  test("--_command takes priority over filename", () => {
+    // If --_command is provided, it takes priority
+    // (filename would give "codex" but --_command says "claude")
     const commandFromCli = "claude";
     const commandFromFilename = "codex"; // from task.codex.md
 

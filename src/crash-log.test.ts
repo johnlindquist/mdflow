@@ -26,7 +26,7 @@ This will run echo (which exists) but we'll check for log path in output
 `);
 
     // Run with a command that doesn't exist to force failure
-    const result = spawnSync("bun", [CLI_PATH, agentFile, "--command", "nonexistent-command-xyz"], {
+    const result = spawnSync("bun", [CLI_PATH, agentFile, "--_command", "nonexistent-command-xyz"], {
       encoding: "utf-8",
       env: { ...process.env, PATH: process.env.PATH },
     });

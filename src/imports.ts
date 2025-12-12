@@ -9,6 +9,83 @@ import { countTokens, getContextLimit } from "./tokenizer";
 import { Semaphore, DEFAULT_CONCURRENCY_LIMIT } from "./concurrency";
 import { substituteTemplateVars } from "./template";
 
+/**
+ * TTY Dashboard for monitoring parallel command execution
+ * Handles rendering stacked spinners and live output previews
+ */
+class ParallelDashboard {
+  private items: Map<string, { command: string; status: string; frame: number }> = new Map();
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private isTTY: boolean;
+  private spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  private linesRendered = 0;
+
+  constructor() {
+    this.isTTY = process.stderr.isTTY ?? false;
+  }
+
+  start() {
+    if (!this.isTTY) return;
+    process.stderr.write('\x1B[?25l'); // Hide cursor
+    this.interval = setInterval(() => this.render(), 80);
+  }
+
+  stop() {
+    if (!this.isTTY) return;
+    if (this.interval) clearInterval(this.interval);
+    this.clear();
+    process.stderr.write('\x1B[?25h'); // Show cursor
+  }
+
+  register(id: string, command: string) {
+    // Truncate command visual if too long
+    const displayCmd = command.length > 40 ? command.slice(0, 37) + '...' : command;
+    this.items.set(id, { command: displayCmd, status: 'Starting...', frame: 0 });
+  }
+
+  update(id: string, chunk: string) {
+    const item = this.items.get(id);
+    if (item) {
+      // Clean newlines and take last 15 chars
+      const clean = chunk.replace(/[\r\n]/g, ' ').trim();
+      const preview = clean.length > 15 ? '...' + clean.slice(-15) : clean;
+      item.status = preview || item.status;
+    }
+  }
+
+  finish(id: string) {
+    this.items.delete(id);
+    this.render(); // Immediate update to remove line
+  }
+
+  private clear() {
+    if (this.linesRendered > 0) {
+      // Move up linesRendered times and clear screen down
+      process.stderr.write(`\x1B[${this.linesRendered}A`);
+      process.stderr.write('\x1B[0J');
+      this.linesRendered = 0;
+    }
+  }
+
+  private render() {
+    this.clear();
+
+    const lines: string[] = [];
+
+    for (const [_, item] of this.items) {
+      item.frame = (item.frame + 1) % this.spinnerFrames.length;
+      const spinner = this.spinnerFrames[item.frame];
+      // Format: ⠋ command : last output
+      lines.push(`${spinner} ${item.command} : \x1B[90m${item.status}\x1B[0m`);
+    }
+
+    if (lines.length > 0) {
+      process.stderr.write(lines.join('\n') + '\n');
+      this.linesRendered = lines.length;
+    }
+  }
+}
+
 // Re-export pipeline components for direct access
 export { parseImports, hasImportsInContent, isGlobPattern, parseLineRange, parseSymbolExtraction } from "./imports-parser";
 export { injectImports, createResolvedImport } from "./imports-injector";
@@ -770,7 +847,9 @@ async function processCommandInline(
   command: string,
   currentFileDir: string,
   verbose: boolean,
-  importCtx?: ImportContext
+  importCtx?: ImportContext,
+  onProgress?: (chunk: string) => void,
+  useDashboard: boolean = false
 ): Promise<string> {
   // Substitute template variables in command string if provided
   // This allows commands like !`echo {{ _name }}` to use frontmatter variables
@@ -788,8 +867,10 @@ async function processCommandInline(
     actualCommand = `mdflow ${processedCommand}`;
     console.error(`[imports] Auto-running .md file with mdflow: ${actualCommand}`);
   } else {
-    // Always log command execution to stderr for visibility
-    console.error(`[imports] Executing: ${processedCommand}`);
+    // Always log command execution unless dashboard is active (it shows progress)
+    if (!useDashboard) {
+      console.error(`[imports] Executing: ${processedCommand}`);
+    }
   }
 
   // Use importCtx.env if provided, otherwise fall back to process.env
@@ -807,15 +888,43 @@ async function processCommandInline(
       env: env as Record<string, string>,
     });
 
-    // Wait for completion and collect output asynchronously
-    const [stdoutBytes, stderrBytes] = await Promise.all([
-      new Response(proc.stdout).arrayBuffer(),
-      new Response(proc.stderr).arrayBuffer(),
+    // Buffers for final output
+    const stdoutChunks: Uint8Array[] = [];
+    const stderrChunks: Uint8Array[] = [];
+
+    // Helper to read a stream and trigger callbacks
+    const readStream = async (
+      stream: ReadableStream<Uint8Array>,
+      chunks: Uint8Array[],
+      isStdout: boolean
+    ) => {
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        chunks.push(value);
+
+        // Update dashboard via callback if provided (only for stdout to reduce noise)
+        if (isStdout && onProgress) {
+          onProgress(decoder.decode(value));
+        }
+      }
+    };
+
+    // Read both streams concurrently
+    await Promise.all([
+      readStream(proc.stdout, stdoutChunks, true),
+      readStream(proc.stderr, stderrChunks, false)
     ]);
+
     await proc.exited;
 
-    const stdout = new TextDecoder().decode(stdoutBytes).trim();
-    const stderr = new TextDecoder().decode(stderrBytes).trim();
+    // Reconstruct full output
+    const stdout = new TextDecoder().decode(Buffer.concat(stdoutChunks)).trim();
+    const stderr = new TextDecoder().decode(Buffer.concat(stderrChunks)).trim();
 
     // Combine stdout and stderr (stderr first if both exist)
     let output: string;
@@ -923,6 +1032,9 @@ function injectResolvedImports(content: string, resolved: ResolvedImportResult[]
  * The parallel resolution uses a semaphore to limit concurrent I/O operations,
  * preventing file descriptor exhaustion when processing many imports.
  *
+ * For TTY environments with multiple commands, a live dashboard shows progress
+ * with spinners and output previews for each running command.
+ *
  * @param content - The markdown content to process
  * @param currentFileDir - Directory of the current file (for relative imports)
  * @param stack - Set of files already being processed (for circular detection)
@@ -956,36 +1068,64 @@ export async function expandImports(
   // Create semaphore for concurrency limiting
   const semaphore = new Semaphore(concurrencyLimit);
 
-  // Phase 2: Resolve all imports in parallel with concurrency limiting
-  const resolvePromises = imports.map(async (imp): Promise<ResolvedImportResult> => {
-    return semaphore.run(async () => {
-      let resolvedContent: string;
+  // Initialize dashboard if we have multiple commands and are in a TTY environment
+  const commandImports = imports.filter(i => i.type === 'command');
+  const useDashboard = commandImports.length > 1 && process.stderr.isTTY && !verbose;
+  const dashboard = useDashboard ? new ParallelDashboard() : null;
 
-      switch (imp.type) {
-        case 'file':
-          resolvedContent = await processFileImport(imp.path, currentFileDir, stack, verbose, importCtx);
-          break;
-        case 'url':
-          resolvedContent = await processUrlImport(imp.url, verbose);
-          // Track URL imports
-          if (resolvedImportsTracker) {
-            resolvedImportsTracker.push(imp.url);
-          }
-          break;
-        case 'command':
-          resolvedContent = await processCommandInline(imp.command, currentFileDir, verbose, importCtx);
-          break;
-      }
+  if (dashboard) dashboard.start();
 
-      return { import: imp, content: resolvedContent };
+  try {
+    // Phase 2: Resolve all imports in parallel with concurrency limiting
+    const resolvePromises = imports.map(async (imp): Promise<ResolvedImportResult> => {
+      return semaphore.run(async () => {
+        let resolvedContent: string;
+
+        switch (imp.type) {
+          case 'file':
+            resolvedContent = await processFileImport(imp.path, currentFileDir, stack, verbose, importCtx);
+            break;
+          case 'url':
+            resolvedContent = await processUrlImport(imp.url, verbose);
+            // Track URL imports
+            if (resolvedImportsTracker) {
+              resolvedImportsTracker.push(imp.url);
+            }
+            break;
+          case 'command':
+            // Register with dashboard if active
+            const cmdId = Math.random().toString(36).substring(7);
+            if (dashboard) dashboard.register(cmdId, imp.command);
+
+            try {
+              resolvedContent = await processCommandInline(
+                imp.command,
+                currentFileDir,
+                verbose,
+                importCtx,
+                (chunk) => {
+                  if (dashboard) dashboard.update(cmdId, chunk);
+                },
+                useDashboard
+              );
+            } finally {
+              if (dashboard) dashboard.finish(cmdId);
+            }
+            break;
+        }
+
+        return { import: imp, content: resolvedContent };
+      });
     });
-  });
 
-  // Wait for all resolutions to complete
-  const resolvedImports = await Promise.all(resolvePromises);
+    // Wait for all resolutions to complete
+    const resolvedImports = await Promise.all(resolvePromises);
 
-  // Phase 3: Inject resolved content back into the original
-  return injectResolvedImports(content, resolvedImports);
+    // Phase 3: Inject resolved content back into the original
+    return injectResolvedImports(content, resolvedImports);
+  } finally {
+    if (dashboard) dashboard.stop();
+  }
 }
 
 /**

@@ -4,53 +4,38 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 /**
- * Tests for the --dry-run flag:
- * - --dry-run is consumed by md (not passed to command)
+ * Tests for the --_dry-run flag:
+ * - --_dry-run is consumed by md (not passed to command)
  * - Prints the resolved command with args
  * - Prints the final rendered prompt/body
  * - Prints estimated token count
  * - Exits with code 0 without running the command
  */
 
-describe("--dry-run flag consumption", () => {
-  test("--dry-run flag is consumed and not passed to command", () => {
-    // Simulate CLI: md file.md --dry-run --model opus
-    const cliArgs = ["--dry-run", "--model", "opus"];
+describe("--_dry-run flag consumption", () => {
+  test("--_dry-run flag is consumed and not passed to command", () => {
+    // Simulate CLI: md file.md --_dry-run --model opus
+    const cliArgs = ["--_dry-run", "--model", "opus"];
     const remainingArgs = [...cliArgs];
 
-    // Extract --dry-run flag (same logic as index.ts)
+    // Extract --_dry-run flag (same logic as index.ts)
     let dryRun = false;
-    const dryRunIndex = remainingArgs.indexOf("--dry-run");
+    const dryRunIndex = remainingArgs.indexOf("--_dry-run");
     if (dryRunIndex !== -1) {
       dryRun = true;
       remainingArgs.splice(dryRunIndex, 1);
     }
 
     expect(dryRun).toBe(true);
-    expect(remainingArgs).toEqual(["--model", "opus"]); // --dry-run consumed
+    expect(remainingArgs).toEqual(["--model", "opus"]); // --_dry-run consumed
   });
 
-  test("--dry-run flag at end of args is consumed", () => {
-    const cliArgs = ["--model", "opus", "--verbose", "--dry-run"];
+  test("--_dry-run flag at end of args is consumed", () => {
+    const cliArgs = ["--model", "opus", "--verbose", "--_dry-run"];
     const remainingArgs = [...cliArgs];
 
     let dryRun = false;
-    const dryRunIndex = remainingArgs.indexOf("--dry-run");
-    if (dryRunIndex !== -1) {
-      dryRun = true;
-      remainingArgs.splice(dryRunIndex, 1);
-    }
-
-    expect(dryRun).toBe(true);
-    expect(remainingArgs).toEqual(["--model", "opus", "--verbose"]);
-  });
-
-  test("--dry-run flag in middle of args is consumed", () => {
-    const cliArgs = ["--model", "opus", "--dry-run", "--verbose"];
-    const remainingArgs = [...cliArgs];
-
-    let dryRun = false;
-    const dryRunIndex = remainingArgs.indexOf("--dry-run");
+    const dryRunIndex = remainingArgs.indexOf("--_dry-run");
     if (dryRunIndex !== -1) {
       dryRun = true;
       remainingArgs.splice(dryRunIndex, 1);
@@ -60,12 +45,27 @@ describe("--dry-run flag consumption", () => {
     expect(remainingArgs).toEqual(["--model", "opus", "--verbose"]);
   });
 
-  test("no --dry-run flag means dryRun is false", () => {
+  test("--_dry-run flag in middle of args is consumed", () => {
+    const cliArgs = ["--model", "opus", "--_dry-run", "--verbose"];
+    const remainingArgs = [...cliArgs];
+
+    let dryRun = false;
+    const dryRunIndex = remainingArgs.indexOf("--_dry-run");
+    if (dryRunIndex !== -1) {
+      dryRun = true;
+      remainingArgs.splice(dryRunIndex, 1);
+    }
+
+    expect(dryRun).toBe(true);
+    expect(remainingArgs).toEqual(["--model", "opus", "--verbose"]);
+  });
+
+  test("no --_dry-run flag means dryRun is false", () => {
     const cliArgs = ["--model", "opus", "--verbose"];
     const remainingArgs = [...cliArgs];
 
     let dryRun = false;
-    const dryRunIndex = remainingArgs.indexOf("--dry-run");
+    const dryRunIndex = remainingArgs.indexOf("--_dry-run");
     if (dryRunIndex !== -1) {
       dryRun = true;
       remainingArgs.splice(dryRunIndex, 1);
@@ -76,7 +76,7 @@ describe("--dry-run flag consumption", () => {
   });
 });
 
-describe("--dry-run integration", () => {
+describe("--_dry-run integration", () => {
   let tempDir: string;
 
   beforeAll(async () => {
@@ -97,7 +97,7 @@ model: opus
 Hello, this is a test prompt.`
     );
 
-    const proc = Bun.spawn(["bun", "run", "src/index.ts", testFile, "--dry-run"], {
+    const proc = Bun.spawn(["bun", "run", "src/index.ts", testFile, "--_dry-run"], {
       cwd: process.cwd(),
       stdout: "pipe",
       stderr: "pipe",
@@ -128,7 +128,7 @@ Hello, {{ _name }}! Welcome.`
     );
 
     const proc = Bun.spawn(
-      ["bun", "run", "src/index.ts", testFile, "--_name", "Alice", "--dry-run"],
+      ["bun", "run", "src/index.ts", testFile, "--_name", "Alice", "--_dry-run"],
       {
         cwd: process.cwd(),
         stdout: "pipe",
@@ -145,7 +145,7 @@ Hello, {{ _name }}! Welcome.`
     expect(stdout).not.toContain("{{ _name }}"); // Template var should be replaced
   });
 
-  test("dry-run with --command flag shows correct command", async () => {
+  test("dry-run with --_command flag shows correct command", async () => {
     const testFile = join(tempDir, "generic.md");
     await writeFile(
       testFile,
@@ -156,7 +156,7 @@ Test prompt for generic file.`
     );
 
     const proc = Bun.spawn(
-      ["bun", "run", "src/index.ts", testFile, "--command", "gemini", "--dry-run"],
+      ["bun", "run", "src/index.ts", testFile, "--_command", "gemini", "--_dry-run"],
       {
         cwd: process.cwd(),
         stdout: "pipe",
@@ -170,7 +170,7 @@ Test prompt for generic file.`
     expect(exitCode).toBe(0);
     expect(stdout).toContain("DRY RUN");
     expect(stdout).toContain("Command:");
-    expect(stdout).toContain("gemini"); // Should use --command value
+    expect(stdout).toContain("gemini"); // Should use --_command value
     expect(stdout).toContain("--model");
     expect(stdout).toContain("gpt-4");
   });
@@ -189,7 +189,7 @@ model: opus
 ${promptText}`
     );
 
-    const proc = Bun.spawn(["bun", "run", "src/index.ts", testFile, "--dry-run"], {
+    const proc = Bun.spawn(["bun", "run", "src/index.ts", testFile, "--_dry-run"], {
       cwd: process.cwd(),
       stdout: "pipe",
       stderr: "pipe",
@@ -213,7 +213,7 @@ ${promptText}`
 This should not run.`
     );
 
-    const proc = Bun.spawn(["bun", "run", "src/index.ts", testFile, "--dry-run"], {
+    const proc = Bun.spawn(["bun", "run", "src/index.ts", testFile, "--_dry-run"], {
       cwd: process.cwd(),
       stdout: "pipe",
       stderr: "pipe",
@@ -239,7 +239,7 @@ Test prompt.`
     );
 
     const proc = Bun.spawn(
-      ["bun", "run", "src/index.ts", testFile, "--dry-run", "--verbose", "--debug"],
+      ["bun", "run", "src/index.ts", testFile, "--_dry-run", "--verbose", "--debug"],
       {
         cwd: process.cwd(),
         stdout: "pipe",
@@ -254,6 +254,6 @@ Test prompt.`
     expect(stdout).toContain("DRY RUN");
     expect(stdout).toContain("--verbose");
     expect(stdout).toContain("--debug");
-    expect(stdout).not.toContain("--dry-run"); // Should be consumed, not shown
+    expect(stdout).not.toContain("--_dry-run"); // Should be consumed, not shown
   });
 });

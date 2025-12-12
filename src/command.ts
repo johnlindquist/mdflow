@@ -81,7 +81,7 @@ export function hasInteractiveMarker(filePath: string): boolean {
 
 /**
  * Resolve command from filename pattern
- * Note: --command flag is handled in index.ts before this is called
+ * Note: --_command flag is handled in index.ts before this is called
  */
 export function resolveCommand(filePath: string): string {
   const fromFilename = parseCommandFromFilename(filePath);
@@ -90,7 +90,7 @@ export function resolveCommand(filePath: string): string {
   }
 
   throw new Error(
-    "No command specified. Use --command flag, " +
+    "No command specified. Use --_command flag, " +
     "or name your file like 'task.claude.md'"
   );
 }

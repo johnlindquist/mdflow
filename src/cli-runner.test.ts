@@ -67,7 +67,7 @@ Test content from file`);
 
       // This will fail on command execution (echo not in PATH in test),
       // but the file read happens first - we verify the file was read
-      const result = await runner.run(["node", "md", "/test/read.echo.md", "--dry-run"]);
+      const result = await runner.run(["node", "md", "/test/read.echo.md", "--_dry-run"]);
       // Dry run should succeed, proving file was read
       expect(result.exitCode).toBe(0);
     });
@@ -89,7 +89,7 @@ Just some content`);
     });
   });
 
-  describe("--dry-run flag", () => {
+  describe("--_dry-run flag", () => {
     it("exits cleanly without executing command", async () => {
       env.addFile("/test/dryrun.echo.md", `---
 model: opus
@@ -102,7 +102,7 @@ Test prompt for dry run`);
         cwd: "/test",
       });
 
-      const result = await runner.run(["node", "md", "/test/dryrun.echo.md", "--dry-run"]);
+      const result = await runner.run(["node", "md", "/test/dryrun.echo.md", "--_dry-run"]);
       expect(result.exitCode).toBe(0);
     });
 
@@ -120,7 +120,7 @@ Test with frontmatter`);
         cwd: "/test",
       });
 
-      const result = await runner.run(["node", "md", "/test/dryrun-fm.echo.md", "--dry-run"]);
+      const result = await runner.run(["node", "md", "/test/dryrun-fm.echo.md", "--_dry-run"]);
       expect(result.exitCode).toBe(0);
     });
 
@@ -138,13 +138,13 @@ Test with array`);
         cwd: "/test",
       });
 
-      const result = await runner.run(["node", "md", "/test/dryrun-array.echo.md", "--dry-run"]);
+      const result = await runner.run(["node", "md", "/test/dryrun-array.echo.md", "--_dry-run"]);
       expect(result.exitCode).toBe(0);
     });
   });
 
-  describe("--command flag", () => {
-    it("accepts --command flag with dry-run", async () => {
+  describe("--_command flag", () => {
+    it("accepts --_command flag with dry-run", async () => {
       env.addFile("/test/generic.md", `---
 ---
 Test prompt`);
@@ -155,7 +155,7 @@ Test prompt`);
         cwd: "/test",
       });
 
-      const result = await runner.run(["node", "md", "/test/generic.md", "--command", "customcmd", "--dry-run"]);
+      const result = await runner.run(["node", "md", "/test/generic.md", "--_command", "customcmd", "--_dry-run"]);
       expect(result.exitCode).toBe(0);
     });
   });
@@ -173,7 +173,7 @@ Process this input`);
         cwd: "/test",
       });
 
-      const result = await runner.run(["node", "md", "/test/stdin.echo.md", "--dry-run"]);
+      const result = await runner.run(["node", "md", "/test/stdin.echo.md", "--_dry-run"]);
       expect(result.exitCode).toBe(0);
     });
   });
@@ -192,7 +192,7 @@ Hello {{ _name }}`);
       });
 
       // Provide the template variable via CLI flag, verify with dry-run
-      const result = await runner.run(["node", "md", "/test/template.echo.md", "--_name", "World", "--dry-run"]);
+      const result = await runner.run(["node", "md", "/test/template.echo.md", "--_name", "World", "--_dry-run"]);
       expect(result.exitCode).toBe(0);
     });
 
@@ -226,7 +226,7 @@ Implement {{ _feature_name }}`);
       });
 
       // Use default value with dry-run
-      const result = await runner.run(["node", "md", "/test/namedvar.echo.md", "--dry-run"]);
+      const result = await runner.run(["node", "md", "/test/namedvar.echo.md", "--_dry-run"]);
       expect(result.exitCode).toBe(0);
     });
 
@@ -246,7 +246,7 @@ Implement {{ _feature_name }}`);
       const result = await runner.run([
         "node", "md", "/test/override.echo.md",
         "--_feature_name", "custom-value",
-        "--dry-run"
+        "--_dry-run"
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -264,7 +264,7 @@ Interactive task`);
         cwd: "/test",
       });
 
-      const result = await runner.run(["node", "md", "/test/task.i.echo.md", "--dry-run"]);
+      const result = await runner.run(["node", "md", "/test/task.i.echo.md", "--_dry-run"]);
       expect(result.exitCode).toBe(0);
     });
 
@@ -282,7 +282,7 @@ Made interactive via flag`);
       const result = await runner.run([
         "node", "md", "/test/task.echo.md",
         "--_interactive",
-        "--dry-run"
+        "--_dry-run"
       ]);
       expect(result.exitCode).toBe(0);
     });
@@ -299,7 +299,7 @@ Test content`);
         cwd: "/test",
       });
 
-      const result = await runner.run(["node", "md", "/test/helper.echo.md", "--dry-run"]);
+      const result = await runner.run(["node", "md", "/test/helper.echo.md", "--_dry-run"]);
       expect(result.exitCode).toBe(0);
     });
   });

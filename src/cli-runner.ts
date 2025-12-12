@@ -210,9 +210,9 @@ export class CliRunner {
     let localFilePath = filePath;
     let isRemote = false;
 
-    // Check for --no-cache flag early (needed before fetchRemote call)
+    // Check for --_no-cache flag early (needed before fetchRemote call)
     let noCacheFlag = false;
-    const noCacheIdx = passthroughArgs.indexOf("--no-cache");
+    const noCacheIdx = passthroughArgs.indexOf("--_no-cache");
     if (noCacheIdx !== -1) {
       noCacheFlag = true;
       passthroughArgs = [...passthroughArgs.slice(0, noCacheIdx), ...passthroughArgs.slice(noCacheIdx + 1)];
@@ -301,16 +301,16 @@ export class CliRunner {
     let dryRun = false, trustFlag = false, interactiveFromCli = false, noCache = false;
     let cwdFromCli: string | undefined;
 
-    const cmdIdx = remainingArgs.findIndex((a) => a === "--command" || a === "-c");
+    const cmdIdx = remainingArgs.findIndex((a) => a === "--_command" || a === "-_c");
     if (cmdIdx !== -1 && cmdIdx + 1 < remainingArgs.length) {
       commandFromCli = remainingArgs[cmdIdx + 1];
       remainingArgs.splice(cmdIdx, 2);
     }
-    const dryIdx = remainingArgs.indexOf("--dry-run");
+    const dryIdx = remainingArgs.indexOf("--_dry-run");
     if (dryIdx !== -1) { dryRun = true; remainingArgs.splice(dryIdx, 1); }
-    const trustIdx = remainingArgs.indexOf("--trust");
+    const trustIdx = remainingArgs.indexOf("--_trust");
     if (trustIdx !== -1) { trustFlag = true; remainingArgs.splice(trustIdx, 1); }
-    const noCacheIdx = remainingArgs.indexOf("--no-cache");
+    const noCacheIdx = remainingArgs.indexOf("--_no-cache");
     if (noCacheIdx !== -1) { noCache = true; remainingArgs.splice(noCacheIdx, 1); }
     const intIdx = remainingArgs.findIndex((a) => a === "--_interactive" || a === "-_i");
     if (intIdx !== -1) { interactiveFromCli = true; remainingArgs.splice(intIdx, 1); }
@@ -337,7 +337,7 @@ export class CliRunner {
     let command: string;
     if (commandFromCli) {
       command = commandFromCli;
-      getCommandLogger().debug({ command, source: "cli" }, "Command from --command flag");
+      getCommandLogger().debug({ command, source: "cli" }, "Command from --_command flag");
     } else {
       command = resolveCommand(localFilePath);
       getCommandLogger().debug({ command }, "Command resolved");
@@ -529,7 +529,7 @@ export class CliRunner {
     if (!trusted) {
       if (!this.isStdinTTY) {
         await cleanupRemote(localFilePath);
-        throw new SecurityError(`Untrusted remote domain: ${domain}. Use --trust flag to bypass this check in non-interactive mode, or run interactively to add the domain to known_hosts.`);
+        throw new SecurityError(`Untrusted remote domain: ${domain}. Use --_trust flag to bypass this check in non-interactive mode, or run interactively to add the domain to known_hosts.`);
       }
 
       const trustResult = await promptForTrust(filePath, command, baseFrontmatter, rawBody);

@@ -152,7 +152,7 @@ Body content
 
     // Use a wrapper to capture what args echo receives
     const proc = spawn({
-      cmd: ["bash", "-c", `echo "input" | bun run ${indexPath} ${agent} --dry-run 2>&1`],
+      cmd: ["bash", "-c", `echo "input" | bun run ${indexPath} ${agent} --_dry-run 2>&1`],
       stdout: "pipe",
       stderr: "pipe",
       env: { ...process.env },

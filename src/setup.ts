@@ -411,7 +411,7 @@ export async function runSetup(): Promise<void> {
     console.log("  • Run project agents from .mdflow/: task.claude.md");
   }
   if (feature === "alias" || feature === "both") {
-    console.log("\nTry: ./examples/auto-detect.md --dry-run");
+    console.log("\nTry: ./examples/auto-detect.md --_dry-run");
   }
   if (addMdAlias) {
     console.log("\n💡 You can now use 'md' as a shorthand for 'mdflow'");

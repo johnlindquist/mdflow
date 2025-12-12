@@ -122,7 +122,7 @@ export interface ProcessedTemplate {
  * Options for running an agent
  */
 export interface RuntimeOptions {
-  /** Command override (from CLI --command flag) */
+  /** Command override (from CLI --_command flag) */
   command?: string;
   /** Passthrough args for the command */
   passthroughArgs?: string[];

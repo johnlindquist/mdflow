@@ -82,7 +82,7 @@ Create options:
   md create -g --model gpt-4    Create globally with frontmatter
 
 Command resolution:
-  1. --command flag (e.g., md task.md --command claude)
+  1. --_command flag (e.g., md task.md --_command claude)
   2. Filename pattern (e.g., task.claude.md → claude)
 
 Agent file discovery (in priority order):
@@ -104,11 +104,11 @@ Examples:
   md task.claude.md -p "print mode"
   md task.claude.md --model opus --verbose
   md commit.gemini.md
-  md task.md --command claude
-  md task.md -c gemini
-  md task.claude.md --dry-run    # Preview without executing
-  md https://example.com/agent.claude.md          # Remote execution
-  md https://example.com/agent.claude.md --trust  # Skip trust prompt
+  md task.md --_command claude
+  md task.md -_c gemini
+  md task.claude.md --_dry-run    # Preview without executing
+  md https://example.com/agent.claude.md            # Remote execution
+  md https://example.com/agent.claude.md --_trust   # Skip trust prompt
 
 Config file example (~/.mdflow/config.yaml):
   commands:
@@ -116,10 +116,10 @@ Config file example (~/.mdflow/config.yaml):
       $1: prompt    # Map body to --prompt flag
 
 md-specific flags (consumed, not passed to command):
-  --command, -c   Specify command to run
-  --dry-run       Show resolved command and prompt without executing
-  --trust         Skip trust prompt for remote URLs (TOFU bypass)
-  --no-cache      Force fresh fetch for remote URLs (bypass cache)
+  --_command, -_c   Specify command to run
+  --_dry-run        Show resolved command and prompt without executing
+  --_trust          Skip trust prompt for remote URLs (TOFU bypass)
+  --_no-cache       Force fresh fetch for remote URLs (bypass cache)
 
 Without arguments:
   md              Interactive agent picker (from ./.mdflow/, ~/.mdflow/, etc.)
