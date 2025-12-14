@@ -144,7 +144,6 @@ interface MenuOption {
 interface PostRunMenuConfig {
   output: string;
   extractedCommands: ExtractedCommand[];
-  timeoutMs?: number;
 }
 
 /**
@@ -152,14 +151,13 @@ interface PostRunMenuConfig {
  */
 export const postRunMenu = createPrompt<PostRunMenuResult, PostRunMenuConfig>(
   (config, done) => {
-    const { output, extractedCommands, timeoutMs = 10000 } = config;
+    const { output, extractedCommands } = config;
     const prefix = usePrefix({ status: "idle", theme: makeTheme({}) });
 
     const [cursor, setCursor] = useState(0);
     const [inputMode, setInputMode] = useState<"menu" | "filename" | "command-select">("menu");
     const [filename, setFilename] = useState("");
     const [commandCursor, setCommandCursor] = useState(0);
-    const [timeRemaining, setTimeRemaining] = useState(Math.ceil(timeoutMs / 1000));
 
     // Build menu options
     const options: MenuOption[] = [
@@ -177,26 +175,7 @@ export const postRunMenu = createPrompt<PostRunMenuResult, PostRunMenuConfig>(
 
     options.push({ key: "q", label: "Exit", action: "exit" });
 
-    // Auto-exit timer
-    useState(() => {
-      const interval = setInterval(() => {
-        setTimeRemaining((prev) => {
-          if (prev <= 1) {
-            clearInterval(interval);
-            done({ action: "exit" });
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-
-      return () => clearInterval(interval);
-    });
-
     useKeypress((key) => {
-      // Reset timer on any keypress
-      setTimeRemaining(Math.ceil(timeoutMs / 1000));
-
       if (inputMode === "filename") {
         if (isEnterKey(key)) {
           if (filename.trim()) {
@@ -334,7 +313,6 @@ export const postRunMenu = createPrompt<PostRunMenuResult, PostRunMenuConfig>(
     // Menu mode
     lines.push("");
     lines.push(`${prefix} \x1b[1mCommand completed.\x1b[0m What would you like to do?`);
-    lines.push(`  \x1b[90m(auto-exit in ${timeRemaining}s)\x1b[0m`);
     lines.push("");
 
     for (let i = 0; i < options.length; i++) {
@@ -357,12 +335,10 @@ export const postRunMenu = createPrompt<PostRunMenuResult, PostRunMenuConfig>(
  * Show the post-run action menu and handle the selected action
  *
  * @param output - The captured command output
- * @param timeoutMs - Auto-exit timeout in milliseconds (default: 10000)
  * @returns The result of the selected action, or undefined if exited
  */
 export async function showPostRunMenu(
-  output: string,
-  timeoutMs = 10000
+  output: string
 ): Promise<PostRunMenuResult | undefined> {
   // Don't show menu if no output or not a TTY
   if (!output.trim() || !process.stdin.isTTY) {
@@ -375,12 +351,11 @@ export async function showPostRunMenu(
     const result = await postRunMenu({
       output,
       extractedCommands,
-      timeoutMs,
     });
 
     return result;
   } catch {
-    // User cancelled or timeout
+    // User cancelled
     return undefined;
   }
 }
