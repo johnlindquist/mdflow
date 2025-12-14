@@ -3,12 +3,19 @@
  *
  * Logs are always written to ~/.mdflow/logs/<agent-name>/
  * Use `md logs` to show the log directory
+ *
+ * Secret Redaction:
+ * - All log entries are processed to redact sensitive values
+ * - Keys matching patterns like 'key', 'token', 'secret', 'password', etc.
+ *   have their values replaced with '[REDACTED]'
+ * - This prevents accidental exposure of secrets in log files
  */
 
 import pino, { type Logger } from "pino";
 import { homedir } from "os";
 import { mkdirSync, existsSync, readdirSync } from "fs";
-import { join, basename, dirname } from "path";
+import { join, basename } from "path";
+import { isSensitiveKey, redactArgs } from "./secrets";
 
 const LOG_BASE_DIR = join(homedir(), ".mdflow", "logs");
 
@@ -76,11 +83,25 @@ export function initLogger(agentFile: string): Logger {
   currentAgentLogPath = logFile;
 
   // Create logger that writes to file only (no stderr spam)
+  // Uses a custom serializer to redact sensitive values
   currentLogger = pino(
     {
       level: "debug",
       base: { agent: agentName },
       timestamp: pino.stdTimeFunctions.isoTime,
+      // Custom hooks to redact sensitive data before logging
+      hooks: {
+        logMethod(inputArgs, method, level) {
+          // Process each argument to redact sensitive values
+          const redactedArgs = inputArgs.map((arg) => {
+            if (arg && typeof arg === "object" && !Array.isArray(arg)) {
+              return redactArgs(arg as Record<string, unknown>);
+            }
+            return arg;
+          });
+          return method.apply(this, redactedArgs as Parameters<typeof method>);
+        },
+      },
     },
     pino.destination({ dest: logFile, sync: false })
   );

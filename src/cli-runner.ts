@@ -52,6 +52,7 @@ import {
 } from "./errors";
 import type { SystemEnvironment } from "./system-environment";
 import { editPrompt } from "./edit-prompt";
+import { maskArgsArray } from "./secrets";
 
 // Lazy-load @inquirer/prompts input function
 let _input: typeof import("@inquirer/prompts").input | null = null;
@@ -691,7 +692,8 @@ export class CliRunner {
     }
 
     this.writeStdout("Command:");
-    this.writeStdout(`   ${command} ${dryRunArgs.join(" ")}\n`);
+    // Mask sensitive argument values in console output
+    this.writeStdout(`   ${command} ${maskArgsArray(dryRunArgs).join(" ")}\n`);
     this.writeStdout("Final Prompt:");
     this.writeStdout("───────────────────────────────────────────────────────────");
     this.writeStdout(positionals[0] ?? "");
@@ -736,15 +738,19 @@ export class CliRunner {
 /**
  * Format a command preview for the spinner message
  * Shows command + subcommands + key flags in a concise format
+ * Sensitive values are masked to prevent accidental exposure
  */
 function formatCommandPreview(command: string, args: string[], maxLength = 60): string {
+  // Mask sensitive values before building the preview
+  const maskedArgs = maskArgsArray(args);
+
   // Build a representation: command subcommand flag1 flag2 ...
   const parts = [command];
 
   // First, add any leading non-flag args (subcommands like "exec")
   let i = 0;
-  while (i < args.length) {
-    const arg = args[i];
+  while (i < maskedArgs.length) {
+    const arg = maskedArgs[i];
     if (!arg || arg.startsWith("-")) break;
     // Include subcommands (short non-flag args)
     if (arg.length <= 20) {
@@ -754,15 +760,15 @@ function formatCommandPreview(command: string, args: string[], maxLength = 60): 
   }
 
   // Then add flags and their short values
-  for (; i < args.length; i++) {
-    const arg = args[i];
+  for (; i < maskedArgs.length; i++) {
+    const arg = maskedArgs[i];
     if (!arg) continue;
 
     if (arg.startsWith("-")) {
       // It's a flag - add it
       parts.push(arg);
       // Check if next arg is a short value (not another flag)
-      const nextArg = args[i + 1];
+      const nextArg = maskedArgs[i + 1];
       if (nextArg && !nextArg.startsWith("-") && nextArg.length <= 20) {
         parts.push(nextArg);
         i++;

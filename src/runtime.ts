@@ -27,6 +27,7 @@ import {
   TemplateError,
   HookError,
 } from "./errors";
+import { maskArgsArray } from "./secrets";
 
 /**
  * Run a lifecycle hook command and capture its output
@@ -495,7 +496,8 @@ export class AgentRuntime {
           console.log("═══════════════════════════════════════════════════════════\n");
 
           console.log("Command:");
-          console.log(`   ${context.command} ${processed.args.join(" ")}\n`);
+          // Mask sensitive argument values in console output
+          console.log(`   ${context.command} ${maskArgsArray(processed.args).join(" ")}\n`);
 
           console.log("Final Prompt:");
           console.log("───────────────────────────────────────────────────────────");
