@@ -235,6 +235,7 @@ md-specific flags (consumed, not passed to command):
   --raw             Output raw markdown without rendering (for piping)
   --_context        Show context tree and exit (no execution)
   --_quiet          Skip context dashboard display before execution
+  --_no-menu        Disable post-run action menu (for scripting/piping)
 
 Without arguments:
   md              Interactive agent picker (from ./.mdflow/, ~/.mdflow/, etc.)
