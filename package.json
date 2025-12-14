@@ -25,6 +25,7 @@
     "@types/bun": "latest",
     "@types/js-yaml": "^4.0.9",
     "@types/mdast": "^4.0.4",
+    "fast-check": "^4.4.0",
     "semantic-release": "^25.0.2"
   },
   "peerDependencies": {
