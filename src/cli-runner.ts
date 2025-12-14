@@ -9,6 +9,7 @@
 import { parseFrontmatter } from "./parse";
 import { parseCliArgs, handleMaCommands } from "./cli";
 import type { AgentFrontmatter, FormInputs } from "./types";
+import { detectAdhocCommand, createVirtualAgentContent, createVirtualFilename } from "./adhoc-command";
 import {
   isFormInputs,
   isLegacyInputs,
@@ -202,6 +203,12 @@ export class CliRunner {
     argv: string[],
     setLogPath: (lp: string | null) => void
   ): Promise<CliRunResult> {
+    // Check for ad-hoc command invocation (md.claude, md.gemini, etc.)
+    const adhocResult = detectAdhocCommand(argv);
+    if (adhocResult.isAdhoc) {
+      return this.runAdhocCommand(adhocResult, setLogPath);
+    }
+
     const cliArgs = parseCliArgs(argv);
     const subcommand = cliArgs.filePath;
 
@@ -255,6 +262,141 @@ export class CliRunner {
     }
 
     return this.runAgent(filePath, passthroughArgs, setLogPath);
+  }
+
+  /**
+   * Handle ad-hoc command execution (md.claude, md.gemini, etc.)
+   *
+   * Creates a virtual agent from the raw prompt and runs it through the normal flow.
+   */
+  private async runAdhocCommand(
+    adhocResult: ReturnType<typeof detectAdhocCommand>,
+    setLogPath: (lp: string | null) => void
+  ): Promise<CliRunResult> {
+    const { command, body, passthroughArgs = [], interactive = false } = adhocResult;
+
+    if (!command) {
+      throw new ConfigurationError("No command detected in ad-hoc invocation", 1);
+    }
+
+    if (!body) {
+      this.writeStderr(`Usage: md.${command} "your prompt here" [flags]`);
+      this.writeStderr(`       md.i.${command} "prompt" # for interactive mode`);
+      this.writeStderr(`\nExamples:`);
+      this.writeStderr(`  md.${command} "What is 2+2?"`);
+      this.writeStderr(`  md.${command} "Explain this: @error.log" --model opus`);
+      throw new ConfigurationError("No prompt provided", 1);
+    }
+
+    // Create virtual agent content and filename
+    const virtualContent = createVirtualAgentContent(command, body, interactive);
+    const virtualFilename = createVirtualFilename(command, interactive);
+
+    // Add interactive flag to passthrough args if needed
+    const finalPassthroughArgs = interactive && !passthroughArgs.includes("--_interactive")
+      ? ["--_interactive", ...passthroughArgs]
+      : passthroughArgs;
+
+    // Run through the normal agent flow using the virtual filename for command resolution
+    // We need to create a temporary in-memory approach - but since runAgent needs a file path,
+    // we'll use a special virtual file approach
+
+    return this.runVirtualAgent(virtualFilename, virtualContent, finalPassthroughArgs, setLogPath);
+  }
+
+  /**
+   * Run a virtual agent (content provided directly, not from a file)
+   */
+  private async runVirtualAgent(
+    virtualFilename: string,
+    content: string,
+    passthroughArgs: string[],
+    setLogPath: (lp: string | null) => void
+  ): Promise<CliRunResult> {
+    // Initialize ProcessManager for centralized lifecycle management
+    const pm = getProcessManager();
+    pm.initialize();
+
+    const logger = initLogger(virtualFilename);
+    const logPath = getCurrentLogPath();
+    setLogPath(logPath);
+    logger.info({ virtualFilename, adhoc: true }, "Ad-hoc session started");
+
+    const stdinContent = await this.readStdin();
+    const { frontmatter: baseFrontmatter, body: rawBody } = parseFrontmatter(content);
+    getParseLogger().debug({ frontmatter: baseFrontmatter, bodyLength: rawBody.length, adhoc: true }, "Virtual frontmatter parsed");
+
+    // Parse CLI flags
+    const parsed = this.parseFlags(passthroughArgs);
+
+    const { command, frontmatter, templateVars, finalBody, args, positionalMappings } =
+      await this.processAgent(virtualFilename, baseFrontmatter, rawBody, stdinContent, parsed);
+
+    // Dry run
+    if (parsed.dryRun) {
+      return this.handleDryRun(command, frontmatter, args, [finalBody], positionalMappings, logger, false, virtualFilename, logPath);
+    }
+
+    // Edit before execute
+    let promptToRun = finalBody;
+    if (parsed.editFlag) {
+      const editResult = await editPrompt(finalBody);
+      if (!editResult.confirmed || editResult.prompt === null) {
+        logger.info({ editCancelled: true }, "Edit cancelled by user");
+        throw new UserCancelledError("Edit cancelled by user");
+      }
+      promptToRun = editResult.prompt;
+      getCommandLogger().debug({ originalLength: finalBody.length, editedLength: promptToRun.length }, "Prompt edited");
+    }
+
+    // Execute
+    let finalRunArgs = args;
+    if (frontmatter._subcommand) {
+      const subs = Array.isArray(frontmatter._subcommand) ? frontmatter._subcommand : [frontmatter._subcommand];
+      finalRunArgs = [...subs, ...args];
+    }
+
+    getCommandLogger().info({ command, argsCount: finalRunArgs.length, promptLength: promptToRun.length, adhoc: true }, "Executing ad-hoc command");
+
+    // Start spinner with command preview
+    const preview = formatCommandPreview(command, finalRunArgs);
+    startSpinner(preview);
+
+    // Determine if we should capture output for post-run menu
+    const shouldShowMenu = this.isStdinTTY && !parsed.noMenu;
+    const captureMode = shouldShowMenu ? "tee" as const : false;
+
+    const runResult = await runCommand({
+      command,
+      args: finalRunArgs,
+      positionals: [promptToRun],
+      positionalMappings,
+      captureOutput: captureMode,
+      env: extractEnvVars(frontmatter),
+      rawOutput: parsed.rawOutput,
+    });
+
+    getCommandLogger().info({ exitCode: runResult.exitCode, adhoc: true }, "Ad-hoc command completed");
+
+    if (runResult.exitCode !== 0) {
+      this.printErrorWithLogPath(`Agent exited with code ${runResult.exitCode}`, logPath);
+    }
+
+    // Show post-run action menu if enabled and we have output
+    if (shouldShowMenu && runResult.stdout) {
+      try {
+        const { showPostRunMenu, executePostRunAction } = await import("./post-run-menu");
+        const menuResult = await showPostRunMenu(runResult.stdout);
+        if (menuResult && menuResult.action !== "exit") {
+          await executePostRunAction(menuResult, runResult.stdout);
+        }
+      } catch {
+        // Menu cancelled or failed, just continue
+      }
+    }
+
+    logger.info({ exitCode: runResult.exitCode, adhoc: true }, "Ad-hoc session ended");
+    return { exitCode: runResult.exitCode, logPath };
   }
 
   private async runAgent(

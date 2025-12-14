@@ -178,6 +178,7 @@ function printHelp() {
   console.log(`
 Usage: md <file.md> [flags for the command]
        md <command> [options]
+       md.COMMAND "prompt" [flags]      # Ad-hoc execution (no file needed)
 
 Commands:
   md create [name] [flags]      Create a new agent file
@@ -185,6 +186,16 @@ Commands:
   md setup                      Configure shell (PATH, aliases)
   md logs                       Show agent log directory
   md help                       Show this help
+
+Ad-hoc execution (one-shot mode):
+  md.claude "What is 2+2?"                    # Quick prompt to Claude
+  md.gemini "Explain quantum computing"       # Quick prompt to Gemini
+  md.codex "Write a function"                 # Quick prompt to Codex
+  md.copilot "Help me debug"                  # Quick prompt to Copilot
+  md.droid "Build an app"                     # Quick prompt to Droid
+  md.opencode "Refactor this"                 # Quick prompt to OpenCode
+  md.i.claude "Start a chat"                  # Interactive mode
+  md.claude "Explain: @error.log" --model opus  # With @imports and flags
 
 Create options:
   md create                     Interactive agent creator

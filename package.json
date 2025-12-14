@@ -9,7 +9,19 @@
   },
   "bin": {
     "mdflow": "./src/index.ts",
-    "md": "./src/index.ts"
+    "md": "./src/index.ts",
+    "md.claude": "./src/index.ts",
+    "md.codex": "./src/index.ts",
+    "md.gemini": "./src/index.ts",
+    "md.copilot": "./src/index.ts",
+    "md.droid": "./src/index.ts",
+    "md.opencode": "./src/index.ts",
+    "md.i.claude": "./src/index.ts",
+    "md.i.codex": "./src/index.ts",
+    "md.i.gemini": "./src/index.ts",
+    "md.i.copilot": "./src/index.ts",
+    "md.i.droid": "./src/index.ts",
+    "md.i.opencode": "./src/index.ts"
   },
   "scripts": {
     "test": "bun test --bail=1",
