@@ -41,6 +41,7 @@ import {
   NetworkError, SecurityError, ConfigurationError, TemplateError, ImportError,
 } from "./errors";
 import type { SystemEnvironment } from "./system-environment";
+import { editPrompt } from "./edit-prompt";
 
 // Lazy-load @inquirer/prompts input function
 let _input: typeof import("@inquirer/prompts").input | null = null;
@@ -310,6 +311,19 @@ export class CliRunner {
       return this.handleDryRun(command, frontmatter, args, [finalBody], positionalMappings, logger, isRemote, localFilePath, logPath);
     }
 
+    // Edit before execute
+    let promptToRun = finalBody;
+    if (parsed.editFlag) {
+      const editResult = await editPrompt(finalBody);
+      if (!editResult.confirmed || editResult.prompt === null) {
+        if (isRemote) await cleanupRemote(localFilePath);
+        logger.info({ editCancelled: true }, "Edit cancelled by user");
+        throw new UserCancelledError("Edit cancelled by user");
+      }
+      promptToRun = editResult.prompt;
+      getCommandLogger().debug({ originalLength: finalBody.length, editedLength: promptToRun.length }, "Prompt edited");
+    }
+
     // TOFU check
     if (isRemote && !parsed.trustFlag) {
       await this.handleTOFU(filePath, localFilePath, command, baseFrontmatter, rawBody);
@@ -322,14 +336,14 @@ export class CliRunner {
       finalRunArgs = [...subs, ...args];
     }
 
-    getCommandLogger().info({ command, argsCount: finalRunArgs.length, promptLength: finalBody.length }, "Executing command");
+    getCommandLogger().info({ command, argsCount: finalRunArgs.length, promptLength: promptToRun.length }, "Executing command");
 
     // Start spinner with command preview (will be stopped when first output arrives)
     const preview = formatCommandPreview(command, finalRunArgs);
     startSpinner(preview);
 
     const runResult = await runCommand({
-      command, args: finalRunArgs, positionals: [finalBody], positionalMappings, captureOutput: false, env: extractEnvVars(frontmatter),
+      command, args: finalRunArgs, positionals: [promptToRun], positionalMappings, captureOutput: false, env: extractEnvVars(frontmatter),
     });
 
     getCommandLogger().info({ exitCode: runResult.exitCode }, "Command completed");
@@ -352,7 +366,7 @@ export class CliRunner {
   private parseFlags(passthroughArgs: string[]) {
     let remainingArgs = [...passthroughArgs];
     let commandFromCli: string | undefined;
-    let dryRun = false, trustFlag = false, interactiveFromCli = false, noCache = false;
+    let dryRun = false, trustFlag = false, interactiveFromCli = false, noCache = false, editFlag = false;
     let cwdFromCli: string | undefined;
 
     const cmdIdx = remainingArgs.findIndex((a) => a === "--_command" || a === "-_c");
@@ -362,6 +376,8 @@ export class CliRunner {
     }
     const dryIdx = remainingArgs.indexOf("--_dry-run");
     if (dryIdx !== -1) { dryRun = true; remainingArgs.splice(dryIdx, 1); }
+    const editIdx = remainingArgs.indexOf("--_edit");
+    if (editIdx !== -1) { editFlag = true; remainingArgs.splice(editIdx, 1); }
     const trustIdx = remainingArgs.indexOf("--_trust");
     if (trustIdx !== -1) { trustFlag = true; remainingArgs.splice(trustIdx, 1); }
     const noCacheIdx = remainingArgs.indexOf("--_no-cache");
@@ -374,7 +390,7 @@ export class CliRunner {
       remainingArgs.splice(cwdIdx, 2);
     }
 
-    return { remainingArgs, commandFromCli, dryRun, trustFlag, interactiveFromCli, cwdFromCli, noCache };
+    return { remainingArgs, commandFromCli, dryRun, editFlag, trustFlag, interactiveFromCli, cwdFromCli, noCache };
   }
 
   private async processAgent(

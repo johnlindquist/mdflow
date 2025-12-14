@@ -146,6 +146,7 @@ Config file example (~/.mdflow/config.yaml):
 md-specific flags (consumed, not passed to command):
   --_command, -_c   Specify command to run
   --_dry-run        Show resolved command and prompt without executing
+  --_edit           Open resolved prompt in $EDITOR before execution
   --_trust          Skip trust prompt for remote URLs (TOFU bypass)
   --_no-cache       Force fresh fetch for remote URLs (bypass cache)
 
