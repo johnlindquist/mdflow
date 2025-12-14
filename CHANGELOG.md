@@ -1,3 +1,25 @@
+# [2.31.0](https://github.com/johnlindquist/mdflow/compare/v2.30.1...v2.31.0) (2025-12-14)
+
+
+### Bug Fixes
+
+* centralize process lifecycle and cancellation handling ([f5ad522](https://github.com/johnlindquist/mdflow/commit/f5ad5228ad8ebb10d92a6c2ed16abc2349a44d6c))
+* cross-platform PATH delimiter and file resolution ([a3f1b99](https://github.com/johnlindquist/mdflow/commit/a3f1b99d40e5f2f66b771537eba431daab553c56))
+* implement proper LRU cache and HTTP conditional requests ([7249579](https://github.com/johnlindquist/mdflow/commit/7249579ea5d1bc448c82debd70dec686b0506f6c))
+
+
+### Features
+
+* add config validation and md explain command ([1ff8006](https://github.com/johnlindquist/mdflow/commit/1ff80061cdc5b28d9f0296a99c4947d929052b7c))
+* add frecency-based sorting for agent file picker ([5d077e4](https://github.com/johnlindquist/mdflow/commit/5d077e424dd21e5b4662e82bb4ac7557f1f2d207))
+* add loading spinner after interactive file selection ([89ea9c9](https://github.com/johnlindquist/mdflow/commit/89ea9c9ebc7bb2a24bd61ec39022c721ee91f955))
+* improve spinner UX and add dry-run from file selector ([7ca8bc8](https://github.com/johnlindquist/mdflow/commit/7ca8bc89ade47873c325cd9a9cb9e82b8dc7bc5a))
+
+
+### Performance Improvements
+
+* lazy-load heavy dependencies for faster cold start ([54a3563](https://github.com/johnlindquist/mdflow/commit/54a3563c9407f6992a56867d6d53f1af4652cd4f))
+
 ## [2.30.1](https://github.com/johnlindquist/mdflow/compare/v2.30.0...v2.30.1) (2025-12-13)
 
 
