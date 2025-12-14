@@ -3,6 +3,8 @@
  * Enables simultaneous display to console and capture for programmatic use.
  */
 
+import { StreamingMarkdownRenderer } from "./markdown-renderer";
+
 /**
  * Tee a readable stream into two independent streams.
  * Both streams will receive identical data from the source.
@@ -103,6 +105,61 @@ export async function teeToStderrAndCollect(readable: ReadableStream<Uint8Array>
   // Run both operations in parallel
   const [, collected] = await Promise.all([
     pipeToStderr(displayStream),
+    collectStream(collectStream_),
+  ]);
+
+  return collected;
+}
+
+/**
+ * Pipe a readable stream to stdout with markdown rendering.
+ * Renders markdown to terminal-formatted output with syntax highlighting.
+ *
+ * @param readable - Source readable stream
+ * @param renderer - Streaming markdown renderer instance
+ * @returns Promise resolving when the stream is fully piped
+ */
+export async function pipeToStdoutWithMarkdown(
+  readable: ReadableStream<Uint8Array>,
+  renderer: StreamingMarkdownRenderer
+): Promise<void> {
+  const reader = readable.getReader();
+  const decoder = new TextDecoder();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const chunk = decoder.decode(value, { stream: true });
+    const rendered = renderer.processChunk(chunk);
+    if (rendered) {
+      await Bun.write(Bun.stdout, rendered);
+    }
+  }
+
+  // Flush any remaining content
+  const remaining = renderer.flush();
+  if (remaining) {
+    await Bun.write(Bun.stdout, remaining + "\n");
+  }
+}
+
+/**
+ * Tee and process a stream: pipe to stdout with markdown rendering while collecting content.
+ *
+ * @param readable - Source readable stream
+ * @param renderer - Streaming markdown renderer instance
+ * @returns Promise resolving to the collected string content (raw, unrendered)
+ */
+export async function teeToStdoutWithMarkdownAndCollect(
+  readable: ReadableStream<Uint8Array>,
+  renderer: StreamingMarkdownRenderer
+): Promise<string> {
+  const [displayStream, collectStream_] = teeStream(readable);
+
+  // Run both operations in parallel
+  const [, collected] = await Promise.all([
+    pipeToStdoutWithMarkdown(displayStream, renderer),
     collectStream(collectStream_),
   ]);
 

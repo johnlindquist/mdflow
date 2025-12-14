@@ -329,7 +329,7 @@ export class CliRunner {
     startSpinner(preview);
 
     const runResult = await runCommand({
-      command, args: finalRunArgs, positionals: [finalBody], positionalMappings, captureOutput: false, env: extractEnvVars(frontmatter),
+      command, args: finalRunArgs, positionals: [finalBody], positionalMappings, captureOutput: false, env: extractEnvVars(frontmatter), rawOutput: parsed.rawOutput,
     });
 
     getCommandLogger().info({ exitCode: runResult.exitCode }, "Command completed");
@@ -352,7 +352,7 @@ export class CliRunner {
   private parseFlags(passthroughArgs: string[]) {
     let remainingArgs = [...passthroughArgs];
     let commandFromCli: string | undefined;
-    let dryRun = false, trustFlag = false, interactiveFromCli = false, noCache = false;
+    let dryRun = false, trustFlag = false, interactiveFromCli = false, noCache = false, rawOutput = false;
     let cwdFromCli: string | undefined;
 
     const cmdIdx = remainingArgs.findIndex((a) => a === "--_command" || a === "-_c");
@@ -373,8 +373,11 @@ export class CliRunner {
       cwdFromCli = remainingArgs[cwdIdx + 1];
       remainingArgs.splice(cwdIdx, 2);
     }
+    // --raw flag: output raw markdown without rendering (for piping)
+    const rawIdx = remainingArgs.indexOf("--raw");
+    if (rawIdx !== -1) { rawOutput = true; remainingArgs.splice(rawIdx, 1); }
 
-    return { remainingArgs, commandFromCli, dryRun, trustFlag, interactiveFromCli, cwdFromCli, noCache };
+    return { remainingArgs, commandFromCli, dryRun, trustFlag, interactiveFromCli, cwdFromCli, noCache, rawOutput };
   }
 
   private async processAgent(

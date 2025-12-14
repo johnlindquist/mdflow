@@ -7,9 +7,10 @@
 
 import type { AgentFrontmatter } from "./types";
 import { basename } from "path";
-import { teeToStdoutAndCollect, teeToStderrAndCollect } from "./stream";
+import { teeToStdoutAndCollect, teeToStderrAndCollect, teeToStdoutWithMarkdownAndCollect } from "./stream";
 import { stopSpinner, isSpinnerRunning } from "./spinner";
 import { getProcessManager } from "./process-manager";
+import { createStreamingRenderer, type StreamingMarkdownRenderer } from "./markdown-renderer";
 
 /**
  * Module-level reference to the current child process
@@ -259,6 +260,11 @@ export interface RunContext {
    * Default: false (stderr goes to inherit)
    */
   captureStderr?: boolean;
+  /**
+   * Whether to output raw markdown without rendering (--raw flag)
+   * Default: false (render markdown with syntax highlighting)
+   */
+  rawOutput?: boolean;
 }
 
 export interface RunResult {
@@ -292,9 +298,13 @@ function normalizeCaptureMode(mode: boolean | CaptureMode): CaptureMode {
  * - "none": Inherit stdout/stderr (streaming to terminal, no capture)
  * - "capture": Pipe and buffer output, print after completion
  * - "tee": Stream to stdout/stderr while capturing (simultaneous display + capture)
+ *
+ * Markdown rendering:
+ * - By default, stdout is rendered as markdown with syntax highlighting
+ * - Use rawOutput: true (--raw flag) to bypass rendering for piping
  */
 export async function runCommand(ctx: RunContext): Promise<RunResult> {
-  const { command, args, positionals, positionalMappings, captureOutput, env, captureStderr = false } = ctx;
+  const { command, args, positionals, positionalMappings, captureOutput, env, captureStderr = false, rawOutput = false } = ctx;
 
   const mode = normalizeCaptureMode(captureOutput);
 
@@ -355,14 +365,17 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
   let stdout = "";
   let stderr = "";
 
+  // Create markdown renderer for streaming output (respects rawOutput and TTY detection)
+  const markdownRenderer = createStreamingRenderer(rawOutput);
+
   // Handle output based on mode
   if (mode === "tee") {
-    // Tee mode: stream to console while capturing
+    // Tee mode: stream to console while capturing (with markdown rendering)
     const promises: Promise<void>[] = [];
 
     if (proc.stdout) {
       promises.push(
-        teeToStdoutAndCollect(proc.stdout).then((content) => {
+        teeToStdoutWithMarkdownAndCollect(proc.stdout, markdownRenderer).then((content) => {
           stdout = content;
         })
       );
@@ -378,21 +391,24 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
 
     await Promise.all(promises);
   } else if (mode === "capture") {
-    // Capture mode: buffer then print
+    // Capture mode: buffer then print (with markdown rendering)
     if (proc.stdout) {
       stdout = await new Response(proc.stdout).text();
-      // Still print to console so user sees it
-      console.log(stdout);
+      // Render and print to console so user sees it
+      const rendered = markdownRenderer.processChunk(stdout);
+      const final = markdownRenderer.flush();
+      console.log(rendered + final);
     }
 
     if (proc.stderr && shouldPipeStderr) {
       stderr = await new Response(proc.stderr).text();
-      // Print stderr to console
+      // Print stderr to console (no markdown rendering for stderr)
       console.error(stderr);
     }
   } else if (spinnerActive && proc.stdout) {
-    // Spinner mode: stream to stdout, stop spinner on first output
+    // Spinner mode: stream to stdout with markdown rendering, stop spinner on first output
     const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
     let firstChunk = true;
 
     while (true) {
@@ -404,7 +420,18 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
         firstChunk = false;
       }
 
-      process.stdout.write(value);
+      // Process chunk through markdown renderer
+      const chunk = decoder.decode(value, { stream: true });
+      const rendered = markdownRenderer.processChunk(chunk);
+      if (rendered) {
+        process.stdout.write(rendered);
+      }
+    }
+
+    // Flush any remaining content
+    const remaining = markdownRenderer.flush();
+    if (remaining) {
+      process.stdout.write(remaining + "\n");
     }
   }
   // mode === "none" without spinner: stdout/stderr are inherited, nothing to capture
