@@ -71,14 +71,14 @@ test("expandImports throws on missing file", async () => {
 test("expandImports executes command inline", async () => {
   const content = "Output: !`echo hello`";
   const result = await expandImports(content, testDir);
-  // Command output is wrapped in {% raw %} to prevent LiquidJS template interpretation
-  expect(result).toBe("Output: {% raw %}\nhello\n{% endraw %}");
+  // Command output is returned directly (Phase 3 runs after LiquidJS)
+  expect(result).toBe("Output: hello");
 });
 
 test("expandImports handles command with arguments", async () => {
   const content = "!`echo one two three`";
   const result = await expandImports(content, testDir);
-  expect(result).toBe("{% raw %}\none two three\n{% endraw %}")
+  expect(result).toBe("one two three");
 });
 
 test("expandImports handles multiple imports", async () => {
@@ -90,7 +90,7 @@ test("expandImports handles multiple imports", async () => {
 test("expandImports handles mixed file and command", async () => {
   const content = "File: @./simple.md Command: !`echo test`";
   const result = await expandImports(content, testDir);
-  expect(result).toBe("File: Hello from simple.md Command: {% raw %}\ntest\n{% endraw %}");
+  expect(result).toBe("File: Hello from simple.md Command: test");
 });
 
 test("expandImports preserves content without imports", async () => {
@@ -525,15 +525,15 @@ describe("template variables in commands", () => {
     expect(result).toContain("piped-content");
   });
 
-  test("protects command output from template interpretation", async () => {
-    // Command outputs {{ foo }} - should be wrapped in {% raw %} and not interpreted
+  test("command output is returned directly (Phase 3 runs after LiquidJS)", async () => {
+    // Command output containing template-like syntax is returned as-is
+    // (no wrapping needed since commands run after template processing)
     const content = "!`echo '{{ output }}'`";
     const result = await expandImports(content, testDir, new Set(), false, {
       templateVars: {},
     });
-    // Output should be wrapped in {% raw %}...{% endraw %}
-    expect(result).toContain("{% raw %}");
-    expect(result).toContain("{% endraw %}");
+    // Output should contain the literal {{ output }} text
+    expect(result).toContain("{{ output }}");
   });
 });
 
@@ -651,7 +651,6 @@ describe("executable code fences", () => {
     const content = '```sh\n#!/bin/bash\necho "hello from bash"\n```';
     const result = await expandImports(content, testDir);
     expect(result).toContain("hello from bash");
-    expect(result).toContain("{% raw %}");
   });
 
   test("executes bun/typescript code fence with shebang", async () => {
@@ -672,13 +671,12 @@ describe("executable code fences", () => {
     await expect(expandImports(content, testDir)).rejects.toThrow("Code fence failed");
   });
 
-  test("code fence output is wrapped in raw block", async () => {
+  test("code fence output is returned directly (Phase 3 runs after LiquidJS)", async () => {
     const content = '```sh\n#!/bin/bash\necho "{{ template syntax }}"\n```';
     const result = await expandImports(content, testDir);
-    // Output should be protected from LiquidJS interpretation
-    expect(result).toContain("{% raw %}");
-    expect(result).toContain("{% endraw %}");
+    // Output returned as-is (no wrapping needed since code fences run after template processing)
     expect(result).toContain("{{ template syntax }}");
+    expect(result).not.toContain("{% raw %}");
   });
 
   test("respects dry-run mode for code fences", async () => {

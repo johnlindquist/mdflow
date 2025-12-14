@@ -85,9 +85,7 @@ Process these files accordingly."
 exports[`Snapshot Tests Command substitution executes and inlines command output 1`] = `
 "Current date context:
 
-
 Test command output
-
 
 Please proceed with the task."
 `;

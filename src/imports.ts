@@ -952,7 +952,7 @@ async function processCommandInline(
   // Improvement #3: Dry-run safety - skip execution if in dry-run mode
   if (importCtx?.dryRun) {
     console.error(`[imports] Dry-run: Skipping execution of '${actualCommand}'`);
-    return `{% raw %}\n[Dry Run: Command "${actualCommand}" not executed]\n{% endraw %}`;
+    return `[Dry Run: Command "${actualCommand}" not executed]`;
   }
 
   // Use importCtx.env if provided, otherwise fall back to process.env
@@ -1072,12 +1072,7 @@ async function processCommandInline(
         `\n... [Output truncated: ${truncatedChars.toLocaleString()} characters removed]`;
     }
 
-    // Improvement #7: Sanitize LiquidJS tags - escape {% endraw %} in output
-    // to prevent breaking out of the raw block
-    if (output) {
-      const safeOutput = output.replace(/\{% endraw %\}/g, "{% endraw %}{{ '{% endraw %}' }}{% raw %}");
-      return `{% raw %}\n${safeOutput}\n{% endraw %}`;
-    }
+    // Command output is processed after LiquidJS (Phase 3), so no template escaping needed
     return output;
   } catch (err) {
     // Include more context in error messages
@@ -1104,7 +1099,7 @@ async function processExecutableCodeFence(
   console.error(`[imports] Executing code fence (${language}): ${shebang}`);
 
   if (importCtx?.dryRun) {
-    return `{% raw %}\n[Dry Run: Code fence not executed]\n{% endraw %}`;
+    return "[Dry Run: Code fence not executed]";
   }
 
   const ext = { ts: 'ts', js: 'js', py: 'py', sh: 'sh', bash: 'sh' }[language] ?? language;
@@ -1130,12 +1125,8 @@ async function processExecutableCodeFence(
       throw new Error(`Code fence failed (Exit ${proc.exitCode}): ${errorOutput}`);
     }
 
-    const output = (stdout + stderr).trim().replace(ANSI_ESCAPE_REGEX, '');
-    if (output) {
-      const safe = output.replace(/\{% endraw %\}/g, "{% endraw %}{{ '{% endraw %}' }}{% raw %}");
-      return `{% raw %}\n${safe}\n{% endraw %}`;
-    }
-    return output;
+    // Command output is processed after LiquidJS (Phase 3), so no template escaping needed
+    return (stdout + stderr).trim().replace(ANSI_ESCAPE_REGEX, '');
   } finally {
     try { await unlink(tmpFile); } catch {}
   }
