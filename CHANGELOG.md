@@ -1,3 +1,10 @@
+# [2.32.0](https://github.com/johnlindquist/mdflow/compare/v2.31.1...v2.32.0) (2025-12-14)
+
+
+### Features
+
+* open editor after md create, fix TypeScript errors ([c221015](https://github.com/johnlindquist/mdflow/commit/c2210154fd0f8cc64f3c5d8c55e865581313ee92))
+
 ## [2.31.1](https://github.com/johnlindquist/mdflow/compare/v2.31.0...v2.31.1) (2025-12-14)
 
 
