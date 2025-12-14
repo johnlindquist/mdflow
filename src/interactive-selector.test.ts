@@ -1,5 +1,5 @@
 import { expect, test, describe, beforeEach, afterEach } from "bun:test";
-import { findAgentFiles, type AgentFile } from "./cli";
+import { findAgentFiles, clearDescriptionCache, type AgentFile } from "./cli";
 import { mkdirSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -187,5 +187,182 @@ describe("AgentFile interface", () => {
     expect(file.name).toBe("test.md");
     expect(file.path).toBe("/full/path/to/test.md");
     expect(file.source).toBe("cwd");
+  });
+
+  test("includes optional description field", () => {
+    const file: AgentFile = {
+      name: "test.md",
+      path: "/full/path/to/test.md",
+      source: "cwd",
+      description: "Auto-fixes linting errors",
+    };
+
+    expect(file.description).toBe("Auto-fixes linting errors");
+  });
+});
+
+describe("semantic agent picker - description extraction", () => {
+  let testDir: string;
+  let originalCwd: string;
+  let originalPath: string;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `md-desc-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    originalCwd = process.cwd();
+    originalPath = process.env.PATH || "";
+    // Clear description cache before each test
+    clearDescriptionCache();
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    process.env.PATH = originalPath;
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  test("extracts description from frontmatter", async () => {
+    const agentContent = `---
+description: Auto-fixes linting errors in the current file
+model: claude
+---
+
+Fix all linting errors.
+`;
+    writeFileSync(join(testDir, "fix.md"), agentContent);
+    process.chdir(testDir);
+    process.env.PATH = "";
+
+    const files = await findAgentFiles();
+    const cwdFiles = files.filter(f => f.source === "cwd");
+
+    expect(cwdFiles.length).toBe(1);
+    expect(cwdFiles[0]!.name).toBe("fix.md");
+    expect(cwdFiles[0]!.description).toBe("Auto-fixes linting errors in the current file");
+  });
+
+  test("extracts quoted description", async () => {
+    const agentContent = `---
+description: "Deploys the app to production"
+---
+
+Deploy now.
+`;
+    writeFileSync(join(testDir, "deploy.md"), agentContent);
+    process.chdir(testDir);
+    process.env.PATH = "";
+
+    const files = await findAgentFiles();
+    const cwdFiles = files.filter(f => f.source === "cwd");
+
+    expect(cwdFiles[0]!.description).toBe("Deploys the app to production");
+  });
+
+  test("extracts single-quoted description", async () => {
+    const agentContent = `---
+description: 'Reviews code for best practices'
+---
+
+Review this code.
+`;
+    writeFileSync(join(testDir, "review.md"), agentContent);
+    process.chdir(testDir);
+    process.env.PATH = "";
+
+    const files = await findAgentFiles();
+    const cwdFiles = files.filter(f => f.source === "cwd");
+
+    expect(cwdFiles[0]!.description).toBe("Reviews code for best practices");
+  });
+
+  test("returns undefined for files without description", async () => {
+    const agentContent = `---
+model: claude
+---
+
+Do something.
+`;
+    writeFileSync(join(testDir, "nodesc.md"), agentContent);
+    process.chdir(testDir);
+    process.env.PATH = "";
+
+    const files = await findAgentFiles();
+    const cwdFiles = files.filter(f => f.source === "cwd");
+
+    expect(cwdFiles[0]!.description).toBeUndefined();
+  });
+
+  test("returns undefined for files without frontmatter", async () => {
+    const agentContent = `# Just a header
+
+Some content here.
+`;
+    writeFileSync(join(testDir, "nofrontmatter.md"), agentContent);
+    process.chdir(testDir);
+    process.env.PATH = "";
+
+    const files = await findAgentFiles();
+    const cwdFiles = files.filter(f => f.source === "cwd");
+
+    expect(cwdFiles[0]!.description).toBeUndefined();
+  });
+
+  test("handles files with shebang before frontmatter", async () => {
+    const agentContent = `#!/usr/bin/env md
+---
+description: Script with shebang
+---
+
+Content here.
+`;
+    writeFileSync(join(testDir, "shebang.md"), agentContent);
+    process.chdir(testDir);
+    process.env.PATH = "";
+
+    const files = await findAgentFiles();
+    const cwdFiles = files.filter(f => f.source === "cwd");
+
+    expect(cwdFiles[0]!.description).toBe("Script with shebang");
+  });
+
+  test("handles multiple files with different descriptions", async () => {
+    writeFileSync(join(testDir, "fix.md"), `---
+description: Auto-fixes linting errors
+---
+Fix.`);
+    writeFileSync(join(testDir, "deploy.md"), `---
+description: Deploys to production
+---
+Deploy.`);
+    writeFileSync(join(testDir, "review.md"), `---
+description: Reviews code
+---
+Review.`);
+    writeFileSync(join(testDir, "nodesc.md"), `---
+model: claude
+---
+No description.`);
+
+    process.chdir(testDir);
+    process.env.PATH = "";
+
+    const files = await findAgentFiles();
+    const cwdFiles = files.filter(f => f.source === "cwd");
+
+    expect(cwdFiles.length).toBe(4);
+
+    const fix = cwdFiles.find(f => f.name === "fix.md");
+    const deploy = cwdFiles.find(f => f.name === "deploy.md");
+    const review = cwdFiles.find(f => f.name === "review.md");
+    const nodesc = cwdFiles.find(f => f.name === "nodesc.md");
+
+    expect(fix?.description).toBe("Auto-fixes linting errors");
+    expect(deploy?.description).toBe("Deploys to production");
+    expect(review?.description).toBe("Reviews code");
+    expect(nodesc?.description).toBeUndefined();
   });
 });

@@ -1,8 +1,9 @@
 import { Glob } from "bun";
 import { basename, join, delimiter } from "path";
-import { realpathSync } from "fs";
+import { realpathSync, readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { EarlyExitRequest, UserCancelledError } from "./errors";
+import { LRUCache } from "./cache";
 // Lazy-load heavy UI dependencies only when interactive picker is needed
 import type { FileSelectorSelection } from "./file-selector";
 
@@ -10,6 +11,9 @@ import type { FileSelectorSelection } from "./file-selector";
 let _showFileSelectorWithPreview: typeof import("./file-selector").showFileSelectorWithPreview | null = null;
 let _loadHistory: typeof import("./history").loadHistory | null = null;
 let _getFrecencyScore: typeof import("./history").getFrecencyScore | null = null;
+
+// LRU cache for agent descriptions (avoids re-parsing frontmatter on every scan)
+const descriptionCache = new LRUCache<string, string | null>(200);
 
 async function getFileSelector() {
   if (!_showFileSelectorWithPreview) {
@@ -26,6 +30,83 @@ async function getHistory() {
     _getFrecencyScore = mod.getFrecencyScore;
   }
   return { loadHistory: _loadHistory, getFrecencyScore: _getFrecencyScore };
+}
+
+/**
+ * Extract description from markdown frontmatter (cached, synchronous)
+ *
+ * Performs lightweight YAML parsing to extract only the description field.
+ * Returns null if no description is found or file cannot be read.
+ */
+function extractDescription(filePath: string): string | null {
+  // Check cache first
+  const cached = descriptionCache.get(filePath);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  try {
+    if (!existsSync(filePath)) {
+      descriptionCache.set(filePath, null);
+      return null;
+    }
+
+    const content = readFileSync(filePath, "utf8");
+
+    // Fast path: skip files without frontmatter
+    const lines = content.split("\n");
+    let startIdx = 0;
+
+    // Skip shebang if present
+    if (lines[0]?.startsWith("#!")) {
+      startIdx = 1;
+    }
+
+    // Check for frontmatter delimiter
+    if (lines[startIdx]?.trim() !== "---") {
+      descriptionCache.set(filePath, null);
+      return null;
+    }
+
+    // Find end of frontmatter
+    let endIdx = -1;
+    for (let i = startIdx + 1; i < lines.length; i++) {
+      if (lines[i]?.trim() === "---") {
+        endIdx = i;
+        break;
+      }
+    }
+
+    if (endIdx === -1) {
+      descriptionCache.set(filePath, null);
+      return null;
+    }
+
+    // Extract description line from frontmatter (simple regex, avoids full YAML parse)
+    for (let i = startIdx + 1; i < endIdx; i++) {
+      const line = lines[i];
+      // Match: description: "value" or description: 'value' or description: value
+      const match = line?.match(/^description:\s*["']?([^"'\n]+?)["']?\s*$/);
+      if (match && match[1]) {
+        const description = match[1].trim();
+        descriptionCache.set(filePath, description);
+        return description;
+      }
+    }
+
+    descriptionCache.set(filePath, null);
+    return null;
+  } catch {
+    descriptionCache.set(filePath, null);
+    return null;
+  }
+}
+
+/**
+ * Clear the description cache (for testing)
+ */
+export function clearDescriptionCache(): void {
+  descriptionCache.clear();
 }
 
 export interface CliArgs {
@@ -50,6 +131,8 @@ export interface AgentFile {
   source: string;
   /** Frecency score for sorting (higher = more frequently/recently used) */
   frecency?: number;
+  /** Description from frontmatter (for semantic agent picker) */
+  description?: string;
 }
 
 /**
@@ -202,11 +285,13 @@ export async function findAgentFiles(): Promise<AgentFile[]> {
       const normalizedPath = normalizePath(file);
       if (!seenPaths.has(normalizedPath)) {
         seenPaths.add(normalizedPath);
+        const description = extractDescription(normalizedPath);
         files.push({
           name: basename(file),
           path: normalizedPath,
           source: "cwd",
           frecency: getFrecencyScore(normalizedPath),
+          ...(description && { description }),
         });
       }
     }
@@ -221,11 +306,13 @@ export async function findAgentFiles(): Promise<AgentFile[]> {
       const normalizedPath = normalizePath(file);
       if (!seenPaths.has(normalizedPath)) {
         seenPaths.add(normalizedPath);
+        const description = extractDescription(normalizedPath);
         files.push({
           name: basename(file),
           path: normalizedPath,
           source: ".mdflow",
           frecency: getFrecencyScore(normalizedPath),
+          ...(description && { description }),
         });
       }
     }
@@ -239,11 +326,13 @@ export async function findAgentFiles(): Promise<AgentFile[]> {
       const normalizedPath = normalizePath(file);
       if (!seenPaths.has(normalizedPath)) {
         seenPaths.add(normalizedPath);
+        const description = extractDescription(normalizedPath);
         files.push({
           name: basename(file),
           path: normalizedPath,
           source: "~/.mdflow",
           frecency: getFrecencyScore(normalizedPath),
+          ...(description && { description }),
         });
       }
     }
@@ -261,11 +350,13 @@ export async function findAgentFiles(): Promise<AgentFile[]> {
         const normalizedPath = normalizePath(file);
         if (!seenPaths.has(normalizedPath)) {
           seenPaths.add(normalizedPath);
+          const description = extractDescription(normalizedPath);
           files.push({
             name: basename(file),
             path: normalizedPath,
             source: dir,
             frecency: getFrecencyScore(normalizedPath),
+            ...(description && { description }),
           });
         }
       }

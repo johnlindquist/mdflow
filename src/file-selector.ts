@@ -192,7 +192,8 @@ function formatPreviewContent(
 /**
  * Score a file against a filter.
  * Higher = better match. 0 = no match.
- * 100 = Exact name, 80 = Starts with, 60 = Contains name, 40 = Path match
+ * 100 = Exact name, 80 = Starts with, 60 = Contains name,
+ * 50 = Description match, 40 = Path match, 20 = Fuzzy match
  *
  * Frecency is added as a small bonus (capped at 15) to boost frequently/recently
  * used files without overriding better string matches.
@@ -206,6 +207,7 @@ function getMatchScore(filter: string, file: AgentFile): number {
   const search = filter.toLowerCase();
   const name = file.name.toLowerCase();
   const path = file.path.toLowerCase();
+  const description = (file.description ?? "").toLowerCase();
 
   let score = 0;
 
@@ -215,10 +217,14 @@ function getMatchScore(filter: string, file: AgentFile): number {
     score = 80;
   } else if (name.includes(search)) {
     score = 60;
+  } else if (description.includes(search)) {
+    // Semantic search: match against description
+    score = 50;
   } else {
-    // Multi-term path search (e.g. "auth login")
+    // Multi-term search (e.g. "auth login") - check name, description, and path
     const terms = search.split(/\s+/);
-    if (terms.every((t) => path.includes(t))) {
+    const searchText = `${name} ${description} ${path}`;
+    if (terms.every((t) => searchText.includes(t))) {
       score = 40;
     } else {
       // Fuzzy match as fallback (all chars in order)
@@ -431,8 +437,28 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
         const source =
           file.source === "cwd" ? "" : ` (${file.source})`;
 
-        // Build line content
-        const lineContent = ` ${stripAnsi(file.name)}${source}`;
+        // Build line content with description
+        // Format: "filename.md - Description text" or just "filename.md" if no description
+        const nameAndSource = `${stripAnsi(file.name)}${source}`;
+        const descSeparator = " \u2022 "; // bullet point separator
+        const maxDescLen = listWidth - nameAndSource.length - descSeparator.length - 2; // -2 for leading space and padding
+
+        let lineContent: string;
+        let lineWithColors: string;
+
+        if (file.description && maxDescLen > 10) {
+          // Truncate description if needed
+          const desc = file.description.length > maxDescLen
+            ? file.description.slice(0, maxDescLen - 1) + "\u2026" // ellipsis
+            : file.description;
+          lineContent = ` ${nameAndSource}${descSeparator}${desc}`;
+          // For non-selected rows, add dim styling to description
+          lineWithColors = ` ${name}\x1b[90m${source}${descSeparator}${desc}\x1b[0m`;
+        } else {
+          lineContent = ` ${nameAndSource}`;
+          lineWithColors = ` ${name}\x1b[90m${source}\x1b[0m`;
+        }
+
         const rawLen = lineContent.length;
         const padding = " ".repeat(Math.max(0, listWidth - rawLen));
 
@@ -440,7 +466,7 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
           // Use inverse video for selected row (full-width highlight)
           listLines.push(inverse(`${lineContent}${padding}`));
         } else {
-          listLines.push(` ${name}\x1b[90m${source}\x1b[0m`);
+          listLines.push(lineWithColors);
         }
       }
     }
