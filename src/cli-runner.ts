@@ -507,22 +507,76 @@ export class CliRunner {
       finalRunArgs = [...subs, ...args];
     }
 
-    getCommandLogger().info({ command, argsCount: finalRunArgs.length, promptLength: promptToRun.length }, "Executing command");
-
-    // Start spinner with command preview (will be stopped when first output arrives)
-    const preview = formatCommandPreview(command, finalRunArgs);
-    startSpinner(preview);
-
     // Determine if we should capture output for post-run menu
     // Only capture when: TTY, not piped, menu not disabled
     const shouldShowMenu = this.isStdinTTY && !parsed.noMenu;
+    // Always capture stderr when in interactive mode for failure menu
     const captureMode = shouldShowMenu ? "tee" as const : false;
 
-    const runResult = await runCommand({
-      command, args: finalRunArgs, positionals: [promptToRun], positionalMappings, captureOutput: captureMode, env: extractEnvVars(frontmatter), rawOutput: parsed.rawOutput,
-    });
+    // Auto-heal retry loop
+    let currentPrompt = promptToRun;
+    let runResult: Awaited<ReturnType<typeof runCommand>>;
+    let retryCount = 0;
 
-    getCommandLogger().info({ exitCode: runResult.exitCode }, "Command completed");
+    while (true) {
+      getCommandLogger().info({ command, argsCount: finalRunArgs.length, promptLength: currentPrompt.length, retryCount }, "Executing command");
+
+      // Start spinner with command preview (will be stopped when first output arrives)
+      const preview = formatCommandPreview(command, finalRunArgs);
+      startSpinner(preview);
+
+      runResult = await runCommand({
+        command,
+        args: finalRunArgs,
+        positionals: [currentPrompt],
+        positionalMappings,
+        captureOutput: captureMode,
+        captureStderr: shouldShowMenu, // Capture stderr for failure menu
+        env: extractEnvVars(frontmatter),
+        rawOutput: parsed.rawOutput,
+      });
+
+      getCommandLogger().info({ exitCode: runResult.exitCode, retryCount }, "Command completed");
+
+      // If command succeeded or we're not in interactive mode, break out of loop
+      if (runResult.exitCode === 0 || !shouldShowMenu) {
+        break;
+      }
+
+      // Command failed in interactive mode - show failure menu
+      try {
+        const { showFailureMenu, buildFixPrompt } = await import("./failure-menu");
+        const menuResult = await showFailureMenu(
+          runResult.exitCode,
+          runResult.stderr,
+          runResult.stdout
+        );
+
+        if (menuResult.action === "quit") {
+          // Exit with the original error code
+          break;
+        } else if (menuResult.action === "retry") {
+          // Retry with the same prompt
+          retryCount++;
+          getCommandLogger().info({ retryCount }, "Retrying command");
+          continue;
+        } else if (menuResult.action === "fix") {
+          // Build a new prompt with error context
+          currentPrompt = buildFixPrompt(
+            promptToRun, // Use original prompt, not accumulated errors
+            runResult.stderr,
+            runResult.stdout,
+            runResult.exitCode
+          );
+          retryCount++;
+          getCommandLogger().info({ retryCount, fixMode: true }, "Retrying with AI fix");
+          continue;
+        }
+      } catch {
+        // Menu cancelled or failed, exit loop
+        break;
+      }
+    }
 
     // Record usage for frecency tracking (skip for failed runs, lazy-load history)
     if (runResult.exitCode === 0) {
@@ -535,8 +589,8 @@ export class CliRunner {
       this.printErrorWithLogPath(`Agent exited with code ${runResult.exitCode}`, logPath);
     }
 
-    // Show post-run action menu if enabled and we have output
-    if (shouldShowMenu && runResult.stdout) {
+    // Show post-run action menu if enabled and we have output (only on success)
+    if (shouldShowMenu && runResult.stdout && runResult.exitCode === 0) {
       try {
         const { showPostRunMenu, executePostRunAction } = await import("./post-run-menu");
         const menuResult = await showPostRunMenu(runResult.stdout);
@@ -548,7 +602,7 @@ export class CliRunner {
       }
     }
 
-    logger.info({ exitCode: runResult.exitCode }, "Session ended");
+    logger.info({ exitCode: runResult.exitCode, retryCount }, "Session ended");
     return { exitCode: runResult.exitCode, logPath };
   }
 
