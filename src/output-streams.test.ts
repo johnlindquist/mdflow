@@ -1,11 +1,12 @@
 import { expect, test, describe, beforeAll, afterAll } from "bun:test";
-import { spawn } from "bun";
-import { mkdtemp, rm, writeFile } from "fs/promises";
-import { join, resolve } from "path";
-import { tmpdir } from "os";
-
-// Get the project root directory for absolute imports
-const PROJECT_ROOT = resolve(import.meta.dir, "..");
+import {
+  spawnMd,
+  spawnTestScript,
+  createTempDir,
+  createTestAgent,
+  assertCleanStdout,
+  PROJECT_ROOT,
+} from "./test-utils";
 
 /**
  * Tests for sanitized output streams
@@ -17,210 +18,115 @@ const PROJECT_ROOT = resolve(import.meta.dir, "..");
 
 describe("Output Stream Separation", () => {
   let tempDir: string;
+  let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "md-streams-test-"));
+    const temp = await createTempDir("md-streams-test-");
+    tempDir = temp.tempDir;
+    cleanup = temp.cleanup;
   });
 
   afterAll(async () => {
-    await rm(tempDir, { recursive: true, force: true });
+    await cleanup();
   });
 
   describe("remote.ts status messages", () => {
     test("fetchRemote outputs status to stderr, not stdout", async () => {
-      // Create a test script that imports and calls fetchRemote with absolute path
       const testScript = `
         import { fetchRemote } from "${PROJECT_ROOT}/src/remote";
-
-        // Capture and test a valid URL fetch
         const result = await fetchRemote("https://raw.githubusercontent.com/johnlindquist/kit/main/README.md");
-
-        // Output result to stdout so we can verify it
         console.log(JSON.stringify({ success: result.success, isRemote: result.isRemote }));
       `;
 
-      const scriptPath = join(tempDir, "test-remote.ts");
-      await writeFile(scriptPath, testScript);
+      const result = await spawnTestScript(testScript, tempDir);
 
-      const proc = spawn({
-        cmd: ["bun", "run", scriptPath],
-        cwd: PROJECT_ROOT,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      // Stderr should contain status messages
+      expect(result.stderr).toContain("Fetching:");
+      expect(result.stderr).toContain("Saved to:");
 
-      const stdout = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
-      await proc.exited;
+      // Stdout should only contain our JSON result
+      expect(result.stdout).not.toContain("Fetching:");
+      expect(result.stdout).not.toContain("Saved to:");
 
-      // Stderr should contain "Fetching:" and "Saved to:" status messages
-      expect(stderr).toContain("Fetching:");
-      expect(stderr).toContain("Saved to:");
-
-      // Stdout should only contain our JSON result, not status messages
-      expect(stdout).not.toContain("Fetching:");
-      expect(stdout).not.toContain("Saved to:");
-
-      // Verify we got valid JSON output
-      const result = JSON.parse(stdout.trim());
-      expect(result.success).toBe(true);
-      expect(result.isRemote).toBe(true);
+      const parsed = JSON.parse(result.stdout.trim());
+      expect(parsed.success).toBe(true);
+      expect(parsed.isRemote).toBe(true);
     });
 
     test("local files produce no status output", async () => {
       const testScript = `
         import { fetchRemote } from "${PROJECT_ROOT}/src/remote";
-
         const result = await fetchRemote("./src/remote.ts");
         console.log(JSON.stringify({ success: result.success, isRemote: result.isRemote }));
       `;
 
-      const scriptPath = join(tempDir, "test-local.ts");
-      await writeFile(scriptPath, testScript);
-
-      const proc = spawn({
-        cmd: ["bun", "run", scriptPath],
-        cwd: PROJECT_ROOT,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const stdout = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
-      await proc.exited;
+      const result = await spawnTestScript(testScript, tempDir);
 
       // No status messages for local files
-      expect(stderr).not.toContain("Fetching:");
-      expect(stderr).not.toContain("Saved to:");
+      expect(result.stderr).not.toContain("Fetching:");
+      expect(result.stderr).not.toContain("Saved to:");
 
-      const result = JSON.parse(stdout.trim());
-      expect(result.success).toBe(true);
-      expect(result.isRemote).toBe(false);
+      const parsed = JSON.parse(result.stdout.trim());
+      expect(parsed.success).toBe(true);
+      expect(parsed.isRemote).toBe(false);
     });
   });
 
   describe("CLI commands output routing", () => {
     test("--help outputs to stdout (requested data)", async () => {
-      const proc = spawn({
-        cmd: ["bun", "run", `${PROJECT_ROOT}/src/index.ts`, "--help"],
-        cwd: PROJECT_ROOT,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const stdout = await new Response(proc.stdout).text();
-      await proc.exited;
-
-      // Help text should be on stdout since user explicitly requested it
-      expect(stdout).toContain("Usage: md");
-      expect(stdout).toContain("Commands:");
+      const result = await spawnMd(["--help"]);
+      expect(result.stdout).toContain("Usage: md");
+      expect(result.stdout).toContain("Commands:");
     });
 
     test("'logs' subcommand outputs directory info to stdout", async () => {
-      const proc = spawn({
-        cmd: ["bun", "run", `${PROJECT_ROOT}/src/index.ts`, "logs"],
-        cwd: PROJECT_ROOT,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const stdout = await new Response(proc.stdout).text();
-      await proc.exited;
-
-      // Log directory info should be on stdout since user explicitly requested it
-      expect(stdout).toContain("Log directory:");
+      const result = await spawnMd(["logs"]);
+      expect(result.stdout).toContain("Log directory:");
     });
 
     test("missing file error goes to stderr", async () => {
-      const proc = spawn({
-        cmd: ["bun", "run", `${PROJECT_ROOT}/src/index.ts`, "nonexistent-file.md"],
-        cwd: PROJECT_ROOT,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const stdout = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
-      await proc.exited;
-
-      // Error should be on stderr
-      expect(stderr).toContain("File not found");
-      // Stdout should be empty
-      expect(stdout.trim()).toBe("");
+      const result = await spawnMd(["nonexistent-file.md"]);
+      expect(result.stderr).toContain("File not found");
+      expect(result.stdout.trim()).toBe("");
     });
 
     test("usage error goes to stderr", async () => {
-      const proc = spawn({
-        cmd: ["bun", "run", `${PROJECT_ROOT}/src/index.ts`],
-        cwd: PROJECT_ROOT,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const stdout = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
-      await proc.exited;
-
-      // Usage error should be on stderr
-      expect(stderr).toContain("Usage:");
-      // Stdout should be empty for errors
-      expect(stdout.trim()).toBe("");
+      const result = await spawnMd([]);
+      expect(result.stderr).toContain("Usage:");
+      expect(result.stdout.trim()).toBe("");
     });
   });
 
   describe("Plain markdown file output", () => {
     test("plain markdown without command pattern outputs error to stderr", async () => {
-      // Create a plain markdown file without frontmatter and without command pattern in name
-      const mdContent = "# Hello World\n\nThis is plain markdown.";
-      const mdPath = join(tempDir, "plain.md");
-      await writeFile(mdPath, mdContent);
+      const mdPath = await createTestAgent(
+        tempDir,
+        "plain.md",
+        "# Hello World\n\nThis is plain markdown."
+      );
 
-      const proc = spawn({
-        cmd: ["bun", "run", `${PROJECT_ROOT}/src/index.ts`, mdPath],
-        cwd: PROJECT_ROOT,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      const result = await spawnMd([mdPath]);
 
-      const stdout = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
-      await proc.exited;
-
-      // Error should be on stderr (no command could be resolved)
-      expect(stderr).toContain("No command specified");
-      // Stdout should be empty for errors
-      expect(stdout.trim()).toBe("");
+      expect(result.stderr).toContain("No command specified");
+      expect(result.stdout.trim()).toBe("");
     });
   });
 
   describe("Piping scenarios", () => {
     test("output can be cleanly redirected without status noise", async () => {
-      // Create a simple echo agent that just outputs its body
-      const agentContent = `---
+      const agentPath = await createTestAgent(
+        tempDir,
+        "echo.md",
+        `---
 model: test
 ---
-Echo test content`;
-      const agentPath = join(tempDir, "echo.md");
-      await writeFile(agentPath, agentContent);
+Echo test content`
+      );
 
-      // This would fail with an unknown command, but the important thing
-      // is that any status messages before the command runs go to stderr
-      const proc = spawn({
-        cmd: ["bun", "run", `${PROJECT_ROOT}/src/index.ts`, agentPath],
-        cwd: PROJECT_ROOT,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      const result = await spawnMd([agentPath]);
 
-      const stdout = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
-      await proc.exited;
-
-      // Any md-specific status/error messages should be on stderr
-      // stdout should only contain command output (or be empty if command fails early)
-      // The key assertion: no "Fetching:", "Saved to:", "Resolving:", etc on stdout
-      expect(stdout).not.toContain("Fetching:");
-      expect(stdout).not.toContain("Saved to:");
+      // Key assertion: no status messages on stdout
+      assertCleanStdout(result.stdout);
     });
   });
 });

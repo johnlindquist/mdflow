@@ -1,7 +1,13 @@
 import { expect, test, describe, beforeAll, afterAll } from "bun:test";
-import { mkdtemp, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
+import { writeFile } from "fs/promises";
 import { join } from "path";
+import {
+  extractFlag,
+  createFlagExtractionTests,
+  spawnMd,
+  createTempDir,
+  createTestAgent,
+} from "./test-utils";
 
 /**
  * Tests for the --_dry-run flag:
@@ -13,247 +19,165 @@ import { join } from "path";
  */
 
 describe("--_dry-run flag consumption", () => {
+  const FLAG = "--_dry-run";
+  const testCases = createFlagExtractionTests(FLAG);
+
   test("--_dry-run flag is consumed and not passed to command", () => {
-    // Simulate CLI: md file.md --_dry-run --model opus
-    const cliArgs = ["--_dry-run", "--model", "opus"];
-    const remainingArgs = [...cliArgs];
-
-    // Extract --_dry-run flag (same logic as index.ts)
-    let dryRun = false;
-    const dryRunIndex = remainingArgs.indexOf("--_dry-run");
-    if (dryRunIndex !== -1) {
-      dryRun = true;
-      remainingArgs.splice(dryRunIndex, 1);
-    }
-
-    expect(dryRun).toBe(true);
-    expect(remainingArgs).toEqual(["--model", "opus"]); // --_dry-run consumed
+    const args = [...testCases.atStart.input];
+    const found = extractFlag(args, FLAG);
+    expect(found).toBe(testCases.atStart.expected.flagFound);
+    expect(args).toEqual(testCases.atStart.expected.remaining);
   });
 
   test("--_dry-run flag at end of args is consumed", () => {
-    const cliArgs = ["--model", "opus", "--verbose", "--_dry-run"];
-    const remainingArgs = [...cliArgs];
-
-    let dryRun = false;
-    const dryRunIndex = remainingArgs.indexOf("--_dry-run");
-    if (dryRunIndex !== -1) {
-      dryRun = true;
-      remainingArgs.splice(dryRunIndex, 1);
-    }
-
-    expect(dryRun).toBe(true);
-    expect(remainingArgs).toEqual(["--model", "opus", "--verbose"]);
+    const args = [...testCases.atEnd.input];
+    const found = extractFlag(args, FLAG);
+    expect(found).toBe(testCases.atEnd.expected.flagFound);
+    expect(args).toEqual(testCases.atEnd.expected.remaining);
   });
 
   test("--_dry-run flag in middle of args is consumed", () => {
-    const cliArgs = ["--model", "opus", "--_dry-run", "--verbose"];
-    const remainingArgs = [...cliArgs];
-
-    let dryRun = false;
-    const dryRunIndex = remainingArgs.indexOf("--_dry-run");
-    if (dryRunIndex !== -1) {
-      dryRun = true;
-      remainingArgs.splice(dryRunIndex, 1);
-    }
-
-    expect(dryRun).toBe(true);
-    expect(remainingArgs).toEqual(["--model", "opus", "--verbose"]);
+    const args = [...testCases.inMiddle.input];
+    const found = extractFlag(args, FLAG);
+    expect(found).toBe(testCases.inMiddle.expected.flagFound);
+    expect(args).toEqual(testCases.inMiddle.expected.remaining);
   });
 
   test("no --_dry-run flag means dryRun is false", () => {
-    const cliArgs = ["--model", "opus", "--verbose"];
-    const remainingArgs = [...cliArgs];
-
-    let dryRun = false;
-    const dryRunIndex = remainingArgs.indexOf("--_dry-run");
-    if (dryRunIndex !== -1) {
-      dryRun = true;
-      remainingArgs.splice(dryRunIndex, 1);
-    }
-
-    expect(dryRun).toBe(false);
-    expect(remainingArgs).toEqual(["--model", "opus", "--verbose"]);
+    const args = [...testCases.notPresent.input];
+    const found = extractFlag(args, FLAG);
+    expect(found).toBe(testCases.notPresent.expected.flagFound);
+    expect(args).toEqual(testCases.notPresent.expected.remaining);
   });
 });
 
 describe("--_dry-run integration", () => {
   let tempDir: string;
+  let cleanup: () => Promise<void>;
 
   beforeAll(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "md-dry-run-test-"));
+    const temp = await createTempDir("md-dry-run-test-");
+    tempDir = temp.tempDir;
+    cleanup = temp.cleanup;
   });
 
   afterAll(async () => {
-    await rm(tempDir, { recursive: true, force: true });
+    await cleanup();
   });
 
   test("dry-run shows command and prompt without executing", async () => {
-    const testFile = join(tempDir, "test.claude.md");
-    await writeFile(
-      testFile,
+    const testFile = await createTestAgent(
+      tempDir,
+      "test.claude.md",
       `---
 model: opus
 ---
 Hello, this is a test prompt.`
     );
 
-    const proc = Bun.spawn(["bun", "run", "src/index.ts", testFile, "--_dry-run"], {
-      cwd: process.cwd(),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const result = await spawnMd([testFile, "--_dry-run"]);
 
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("DRY RUN");
-    expect(stdout).toContain("Command:");
-    expect(stdout).toContain("claude");
-    expect(stdout).toContain("--model");
-    expect(stdout).toContain("opus");
-    expect(stdout).toContain("Final Prompt:");
-    expect(stdout).toContain("Hello, this is a test prompt.");
-    expect(stdout).toContain("Estimated tokens:");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("DRY RUN");
+    expect(result.stdout).toContain("Command:");
+    expect(result.stdout).toContain("claude");
+    expect(result.stdout).toContain("--model");
+    expect(result.stdout).toContain("opus");
+    expect(result.stdout).toContain("Final Prompt:");
+    expect(result.stdout).toContain("Hello, this is a test prompt.");
+    expect(result.stdout).toContain("Estimated tokens:");
   });
 
   test("dry-run with template variables shows substituted values", async () => {
-    const testFile = join(tempDir, "template.claude.md");
-    await writeFile(
-      testFile,
+    const testFile = await createTestAgent(
+      tempDir,
+      "template.claude.md",
       `---
 _name: ""
 ---
 Hello, {{ _name }}! Welcome.`
     );
 
-    const proc = Bun.spawn(
-      ["bun", "run", "src/index.ts", testFile, "--_name", "Alice", "--_dry-run"],
-      {
-        cwd: process.cwd(),
-        stdout: "pipe",
-        stderr: "pipe",
-      }
-    );
+    const result = await spawnMd([testFile, "--_name", "Alice", "--_dry-run"]);
 
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("DRY RUN");
-    expect(stdout).toContain("Hello, Alice! Welcome.");
-    expect(stdout).not.toContain("{{ _name }}"); // Template var should be replaced
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("DRY RUN");
+    expect(result.stdout).toContain("Hello, Alice! Welcome.");
+    expect(result.stdout).not.toContain("{{ _name }}"); // Template var should be replaced
   });
 
   test("dry-run with --_command flag shows correct command", async () => {
-    const testFile = join(tempDir, "generic.md");
-    await writeFile(
-      testFile,
+    const testFile = await createTestAgent(
+      tempDir,
+      "generic.md",
       `---
 model: gpt-4
 ---
 Test prompt for generic file.`
     );
 
-    const proc = Bun.spawn(
-      ["bun", "run", "src/index.ts", testFile, "--_command", "gemini", "--_dry-run"],
-      {
-        cwd: process.cwd(),
-        stdout: "pipe",
-        stderr: "pipe",
-      }
-    );
+    const result = await spawnMd([testFile, "--_command", "gemini", "--_dry-run"]);
 
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("DRY RUN");
-    expect(stdout).toContain("Command:");
-    expect(stdout).toContain("gemini"); // Should use --_command value
-    expect(stdout).toContain("--model");
-    expect(stdout).toContain("gpt-4");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("DRY RUN");
+    expect(result.stdout).toContain("Command:");
+    expect(result.stdout).toContain("gemini"); // Should use --_command value
+    expect(result.stdout).toContain("--model");
+    expect(result.stdout).toContain("gpt-4");
   });
 
   test("dry-run shows estimated token count", async () => {
-    // Create a prompt with known length
     // With real tokenization, repeated "A" characters get tokenized efficiently
-    // 400 "A"s = ~50 tokens (not 100 as with old length/4 heuristic)
     const promptText = "A".repeat(400);
-    const testFile = join(tempDir, "tokens.claude.md");
-    await writeFile(
-      testFile,
+    const testFile = await createTestAgent(
+      tempDir,
+      "tokens.claude.md",
       `---
 model: opus
 ---
 ${promptText}`
     );
 
-    const proc = Bun.spawn(["bun", "run", "src/index.ts", testFile, "--_dry-run"], {
-      cwd: process.cwd(),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const result = await spawnMd([testFile, "--_dry-run"]);
 
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-
-    expect(exitCode).toBe(0);
-    // Check that token count is shown (exact count depends on tokenizer)
-    expect(stdout).toMatch(/Estimated tokens: ~\d+/);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/Estimated tokens: ~\d+/);
   });
 
   test("dry-run does NOT execute the command", async () => {
     // Create a file that would fail if actually executed (bad command)
-    const testFile = join(tempDir, "norun.nonexistent-command.md");
-    await writeFile(
-      testFile,
+    const testFile = await createTestAgent(
+      tempDir,
+      "norun.nonexistent-command.md",
       `---
 ---
 This should not run.`
     );
 
-    const proc = Bun.spawn(["bun", "run", "src/index.ts", testFile, "--_dry-run"], {
-      cwd: process.cwd(),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
+    const result = await spawnMd([testFile, "--_dry-run"]);
 
     // Should exit 0 because dry-run prevents execution
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("DRY RUN");
-    expect(stdout).toContain("nonexistent-command");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("DRY RUN");
+    expect(result.stdout).toContain("nonexistent-command");
   });
 
   test("dry-run with additional passthrough flags shows them in command", async () => {
-    const testFile = join(tempDir, "passthrough.claude.md");
-    await writeFile(
-      testFile,
+    const testFile = await createTestAgent(
+      tempDir,
+      "passthrough.claude.md",
       `---
 model: opus
 ---
 Test prompt.`
     );
 
-    const proc = Bun.spawn(
-      ["bun", "run", "src/index.ts", testFile, "--_dry-run", "--verbose", "--debug"],
-      {
-        cwd: process.cwd(),
-        stdout: "pipe",
-        stderr: "pipe",
-      }
-    );
+    const result = await spawnMd([testFile, "--_dry-run", "--verbose", "--debug"]);
 
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("DRY RUN");
-    expect(stdout).toContain("--verbose");
-    expect(stdout).toContain("--debug");
-    expect(stdout).not.toContain("--_dry-run"); // Should be consumed, not shown
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("DRY RUN");
+    expect(result.stdout).toContain("--verbose");
+    expect(result.stdout).toContain("--debug");
+    expect(result.stdout).not.toContain("--_dry-run"); // Should be consumed, not shown
   });
 });

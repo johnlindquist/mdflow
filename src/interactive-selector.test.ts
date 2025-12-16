@@ -3,28 +3,21 @@ import { findAgentFiles, clearDescriptionCache, type AgentFile } from "./cli";
 import { mkdirSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { saveCwdAndPath } from "./test-utils";
 
 describe("findAgentFiles", () => {
   let testDir: string;
-  let originalCwd: string;
-  let originalPath: string;
+  let restoreEnv: () => void;
 
   beforeEach(() => {
-    // Create a temporary test directory
     testDir = join(tmpdir(), `md-test-${Date.now()}`);
     mkdirSync(testDir, { recursive: true });
-
-    // Save original values
-    originalCwd = process.cwd();
-    originalPath = process.env.PATH || "";
+    const saved = saveCwdAndPath();
+    restoreEnv = saved.restore;
   });
 
   afterEach(() => {
-    // Restore original values
-    process.chdir(originalCwd);
-    process.env.PATH = originalPath;
-
-    // Clean up test directory
+    restoreEnv();
     try {
       rmSync(testDir, { recursive: true, force: true });
     } catch {
@@ -87,10 +80,10 @@ describe("findAgentFiles", () => {
     // Filter to files from cwd or PATH only (ignoring ~/.mdflow files)
     const relevantFiles = files.filter(f => f.source === "cwd" || f.source === testDir);
 
-    // Should only appear once (from cwd, since we scan that first)
+    // Should only appear once (from PATH, since we scan that before cwd)
     expect(relevantFiles.length).toBe(1);
     expect(relevantFiles[0]!.name).toBe("shared-agent.md");
-    expect(relevantFiles[0]!.source).toBe("cwd");
+    expect(relevantFiles[0]!.source).toBe(testDir);
   });
 
   test("returns empty array when no .md files exist in cwd or PATH", async () => {
@@ -203,21 +196,18 @@ describe("AgentFile interface", () => {
 
 describe("semantic agent picker - description extraction", () => {
   let testDir: string;
-  let originalCwd: string;
-  let originalPath: string;
+  let restoreEnv: () => void;
 
   beforeEach(() => {
     testDir = join(tmpdir(), `md-desc-test-${Date.now()}`);
     mkdirSync(testDir, { recursive: true });
-    originalCwd = process.cwd();
-    originalPath = process.env.PATH || "";
-    // Clear description cache before each test
+    const saved = saveCwdAndPath();
+    restoreEnv = saved.restore;
     clearDescriptionCache();
   });
 
   afterEach(() => {
-    process.chdir(originalCwd);
-    process.env.PATH = originalPath;
+    restoreEnv();
     try {
       rmSync(testDir, { recursive: true, force: true });
     } catch {

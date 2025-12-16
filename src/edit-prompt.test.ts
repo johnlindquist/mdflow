@@ -1,8 +1,11 @@
 import { expect, test, describe, beforeAll, afterAll } from "bun:test";
-import { mkdtemp, rm, writeFile, readFile } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
 import { getEditor, getTempFilePath, editPrompt } from "./edit-prompt";
+import {
+  extractFlag,
+  createFlagExtractionTests,
+  createTempDir,
+  saveEnv,
+} from "./test-utils";
 
 /**
  * Tests for the --_edit flag:
@@ -14,85 +17,47 @@ import { getEditor, getTempFilePath, editPrompt } from "./edit-prompt";
  */
 
 describe("--_edit flag consumption", () => {
+  const FLAG = "--_edit";
+  const testCases = createFlagExtractionTests(FLAG);
+
   test("--_edit flag is consumed and not passed to command", () => {
-    // Simulate CLI: md file.md --_edit --model opus
-    const cliArgs = ["--_edit", "--model", "opus"];
-    const remainingArgs = [...cliArgs];
-
-    // Extract --_edit flag (same logic as cli-runner.ts)
-    let editFlag = false;
-    const editIdx = remainingArgs.indexOf("--_edit");
-    if (editIdx !== -1) {
-      editFlag = true;
-      remainingArgs.splice(editIdx, 1);
-    }
-
-    expect(editFlag).toBe(true);
-    expect(remainingArgs).toEqual(["--model", "opus"]); // --_edit consumed
+    const args = [...testCases.atStart.input];
+    const found = extractFlag(args, FLAG);
+    expect(found).toBe(testCases.atStart.expected.flagFound);
+    expect(args).toEqual(testCases.atStart.expected.remaining);
   });
 
   test("--_edit flag at end of args is consumed", () => {
-    const cliArgs = ["--model", "opus", "--verbose", "--_edit"];
-    const remainingArgs = [...cliArgs];
-
-    let editFlag = false;
-    const editIdx = remainingArgs.indexOf("--_edit");
-    if (editIdx !== -1) {
-      editFlag = true;
-      remainingArgs.splice(editIdx, 1);
-    }
-
-    expect(editFlag).toBe(true);
-    expect(remainingArgs).toEqual(["--model", "opus", "--verbose"]);
+    const args = [...testCases.atEnd.input];
+    const found = extractFlag(args, FLAG);
+    expect(found).toBe(testCases.atEnd.expected.flagFound);
+    expect(args).toEqual(testCases.atEnd.expected.remaining);
   });
 
   test("--_edit flag in middle of args is consumed", () => {
-    const cliArgs = ["--model", "opus", "--_edit", "--verbose"];
-    const remainingArgs = [...cliArgs];
-
-    let editFlag = false;
-    const editIdx = remainingArgs.indexOf("--_edit");
-    if (editIdx !== -1) {
-      editFlag = true;
-      remainingArgs.splice(editIdx, 1);
-    }
-
-    expect(editFlag).toBe(true);
-    expect(remainingArgs).toEqual(["--model", "opus", "--verbose"]);
+    const args = [...testCases.inMiddle.input];
+    const found = extractFlag(args, FLAG);
+    expect(found).toBe(testCases.inMiddle.expected.flagFound);
+    expect(args).toEqual(testCases.inMiddle.expected.remaining);
   });
 
   test("no --_edit flag means editFlag is false", () => {
-    const cliArgs = ["--model", "opus", "--verbose"];
-    const remainingArgs = [...cliArgs];
-
-    let editFlag = false;
-    const editIdx = remainingArgs.indexOf("--_edit");
-    if (editIdx !== -1) {
-      editFlag = true;
-      remainingArgs.splice(editIdx, 1);
-    }
-
-    expect(editFlag).toBe(false);
-    expect(remainingArgs).toEqual(["--model", "opus", "--verbose"]);
+    const args = [...testCases.notPresent.input];
+    const found = extractFlag(args, FLAG);
+    expect(found).toBe(testCases.notPresent.expected.flagFound);
+    expect(args).toEqual(testCases.notPresent.expected.remaining);
   });
 });
 
 describe("getEditor", () => {
-  const originalEditor = process.env.EDITOR;
-  const originalVisual = process.env.VISUAL;
+  let envSnapshot: ReturnType<typeof saveEnv>;
+
+  beforeAll(() => {
+    envSnapshot = saveEnv(["EDITOR", "VISUAL"]);
+  });
 
   afterAll(() => {
-    // Restore original env
-    if (originalEditor !== undefined) {
-      process.env.EDITOR = originalEditor;
-    } else {
-      delete process.env.EDITOR;
-    }
-    if (originalVisual !== undefined) {
-      process.env.VISUAL = originalVisual;
-    } else {
-      delete process.env.VISUAL;
-    }
+    envSnapshot.restore();
   });
 
   test("uses $EDITOR when set", () => {
@@ -116,7 +81,6 @@ describe("getEditor", () => {
   test("falls back to common editors when env not set", () => {
     delete process.env.EDITOR;
     delete process.env.VISUAL;
-    // Should return vim, nano, vi, or vim as last resort
     const editor = getEditor();
     expect(["vim", "nano", "vi"]).toContain(editor);
   });
@@ -143,132 +107,71 @@ describe("getTempFilePath", () => {
 
 describe("editPrompt function", () => {
   let tempDir: string;
+  let cleanup: () => Promise<void>;
+  let envSnapshot: ReturnType<typeof saveEnv>;
 
   beforeAll(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "md-edit-test-"));
+    const temp = await createTempDir("md-edit-test-");
+    tempDir = temp.tempDir;
+    cleanup = temp.cleanup;
+    envSnapshot = saveEnv(["EDITOR"]);
   });
 
   afterAll(async () => {
-    await rm(tempDir, { recursive: true, force: true });
+    envSnapshot.restore();
+    await cleanup();
   });
 
   test("returns confirmed: false when user declines", async () => {
-    // Mock editor that does nothing (just exits)
-    const originalEditor = process.env.EDITOR;
     process.env.EDITOR = "true"; // Unix 'true' command - exits 0 immediately
-
-    try {
-      const result = await editPrompt("Test prompt", {
-        confirmFn: async () => "n",
-      });
-
-      expect(result.confirmed).toBe(false);
-      expect(result.prompt).toBe(null);
-    } finally {
-      if (originalEditor !== undefined) {
-        process.env.EDITOR = originalEditor;
-      } else {
-        delete process.env.EDITOR;
-      }
-    }
+    const result = await editPrompt("Test prompt", {
+      confirmFn: async () => "n",
+    });
+    expect(result.confirmed).toBe(false);
+    expect(result.prompt).toBe(null);
   });
 
   test("returns prompt when user confirms with 'y'", async () => {
-    const originalEditor = process.env.EDITOR;
-    process.env.EDITOR = "true"; // Unix 'true' command - exits 0 immediately
-
-    try {
-      const result = await editPrompt("Test prompt content", {
-        confirmFn: async () => "y",
-      });
-
-      expect(result.confirmed).toBe(true);
-      expect(result.prompt).toBe("Test prompt content");
-    } finally {
-      if (originalEditor !== undefined) {
-        process.env.EDITOR = originalEditor;
-      } else {
-        delete process.env.EDITOR;
-      }
-    }
+    process.env.EDITOR = "true";
+    const result = await editPrompt("Test prompt content", {
+      confirmFn: async () => "y",
+    });
+    expect(result.confirmed).toBe(true);
+    expect(result.prompt).toBe("Test prompt content");
   });
 
   test("returns prompt when user confirms with 'yes'", async () => {
-    const originalEditor = process.env.EDITOR;
     process.env.EDITOR = "true";
-
-    try {
-      const result = await editPrompt("Another test", {
-        confirmFn: async () => "yes",
-      });
-
-      expect(result.confirmed).toBe(true);
-      expect(result.prompt).toBe("Another test");
-    } finally {
-      if (originalEditor !== undefined) {
-        process.env.EDITOR = originalEditor;
-      } else {
-        delete process.env.EDITOR;
-      }
-    }
+    const result = await editPrompt("Another test", {
+      confirmFn: async () => "yes",
+    });
+    expect(result.confirmed).toBe(true);
+    expect(result.prompt).toBe("Another test");
   });
 
   test("returns prompt when user confirms with 'Y' (case insensitive)", async () => {
-    const originalEditor = process.env.EDITOR;
     process.env.EDITOR = "true";
-
-    try {
-      const result = await editPrompt("Case test", {
-        confirmFn: async () => "Y",
-      });
-
-      expect(result.confirmed).toBe(true);
-    } finally {
-      if (originalEditor !== undefined) {
-        process.env.EDITOR = originalEditor;
-      } else {
-        delete process.env.EDITOR;
-      }
-    }
+    const result = await editPrompt("Case test", {
+      confirmFn: async () => "Y",
+    });
+    expect(result.confirmed).toBe(true);
   });
 
   test("skipConfirm option bypasses confirmation", async () => {
-    const originalEditor = process.env.EDITOR;
     process.env.EDITOR = "true";
-
-    try {
-      const result = await editPrompt("Skip confirm test", {
-        skipConfirm: true,
-      });
-
-      expect(result.confirmed).toBe(true);
-      expect(result.prompt).toBe("Skip confirm test");
-    } finally {
-      if (originalEditor !== undefined) {
-        process.env.EDITOR = originalEditor;
-      } else {
-        delete process.env.EDITOR;
-      }
-    }
+    const result = await editPrompt("Skip confirm test", {
+      skipConfirm: true,
+    });
+    expect(result.confirmed).toBe(true);
+    expect(result.prompt).toBe("Skip confirm test");
   });
 
   test("returns null when editor fails", async () => {
-    const originalEditor = process.env.EDITOR;
     process.env.EDITOR = "false"; // Unix 'false' command - exits 1
-
-    try {
-      const result = await editPrompt("Will fail", {
-        confirmFn: async () => "y",
-      });
-
-      expect(result.confirmed).toBe(false);
-      expect(result.prompt).toBe(null);
-    } finally {
-      if (originalEditor !== undefined) {
-        process.env.EDITOR = originalEditor;
-      } else {
-        delete process.env.EDITOR;
-      }
-    }
+    const result = await editPrompt("Will fail", {
+      confirmFn: async () => "y",
+    });
+    expect(result.confirmed).toBe(false);
+    expect(result.prompt).toBe(null);
   });
 });
