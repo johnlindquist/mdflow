@@ -1,3 +1,36 @@
+# [2.34.0](https://github.com/johnlindquist/mdflow/compare/v2.33.0...v2.34.0) (2025-12-16)
+
+
+### Bug Fixes
+
+* remove broken countdown from post-run menu ([4571c2a](https://github.com/johnlindquist/mdflow/commit/4571c2a70dd4e31a1f66914fee55ea96e6998253))
+
+
+### Features
+
+* add --_edit flag for edit-before-execute workflow ([3434ab4](https://github.com/johnlindquist/mdflow/commit/3434ab477e4545d6b0991185d2861f3f1c7d8616))
+* add auto-heal retry loop on command failure ([396ebf6](https://github.com/johnlindquist/mdflow/commit/396ebf64e6517ef9879117a0c9376249a818d126))
+* add auto-heal retry loop on command failure ([1e589a5](https://github.com/johnlindquist/mdflow/commit/1e589a5bad953ea5925d9bac787d4d282564d0c9))
+* add content search mode with auto-scroll to matches ([55f8a95](https://github.com/johnlindquist/mdflow/commit/55f8a9538ace02d3a7f0cc13363760a930cc76cf))
+* add edit-before-execute interceptor ([fe6c6c3](https://github.com/johnlindquist/mdflow/commit/fe6c6c3a5cb613392695437d737f1dfcc8badac0))
+* add interactive form inputs ([8df1f52](https://github.com/johnlindquist/mdflow/commit/8df1f52aa59c1ae1112c931fb0bfc65beb26c2da))
+* add interactive form inputs with typed prompts ([7e566b1](https://github.com/johnlindquist/mdflow/commit/7e566b135917c6ea44cd0588c142ee759f8c76e7))
+* add one-shot ad-hoc execution via md.command aliases ([0e06c7d](https://github.com/johnlindquist/mdflow/commit/0e06c7d4a1ab558cdb8730bfcb320b484f3e51d0))
+* add one-shot ad-hoc execution via md.command aliases ([156ff94](https://github.com/johnlindquist/mdflow/commit/156ff942c7e2b776e5f1d7e5bedf7ebe74b5998c))
+* add post-run action menu ([09859a0](https://github.com/johnlindquist/mdflow/commit/09859a06d72abed9169c367762c601c89eafa3ee))
+* add post-run action menu for output handling ([7e25214](https://github.com/johnlindquist/mdflow/commit/7e25214a6cd799fde4eec5be58bbded97e554b7d))
+* add rich terminal markdown rendering ([9f4780c](https://github.com/johnlindquist/mdflow/commit/9f4780ca70981932e134136c77c763e0b25ee58b))
+* add rich terminal markdown rendering with syntax highlighting ([b0bf725](https://github.com/johnlindquist/mdflow/commit/b0bf725bc164e72d87b3c38764a81c2be57c6d4c))
+* add secret masking and redaction ([7eb2a06](https://github.com/johnlindquist/mdflow/commit/7eb2a06ee9d456b4aa04bf980e48aebfdcd20fc1))
+* add secret masking and redaction ([d9f9260](https://github.com/johnlindquist/mdflow/commit/d9f92600353af2da254bbb43b00b7ac1a9e4b1bc))
+* add semantic agent picker with descriptions ([c9e0577](https://github.com/johnlindquist/mdflow/commit/c9e0577e3e856a74682e26e36dbe930897f87a27))
+* add semantic agent picker with descriptions ([ee6b346](https://github.com/johnlindquist/mdflow/commit/ee6b346ad72b4ddeb6a93e20c55d6f95b3675952))
+* add smart variable persistence with history ([7dde139](https://github.com/johnlindquist/mdflow/commit/7dde13958c3e84c07526cff6f4e4c59346d80648))
+* add smart variable persistence with history ([2929245](https://github.com/johnlindquist/mdflow/commit/2929245905f03feb2ed9a3f4457f348b6e26560b))
+* add Tab/Shift+Tab to cycle through matches in content search ([8934eb4](https://github.com/johnlindquist/mdflow/commit/8934eb4b091f97b8e5aefb4e6f823440cc1f6c93))
+* add visual context tree and cost dashboard ([f21e880](https://github.com/johnlindquist/mdflow/commit/f21e880e0b9fb4b6c618f52d3f76a5b873807efd))
+* add visual context tree and cost dashboard ([3400e41](https://github.com/johnlindquist/mdflow/commit/3400e41257a07e54d0132217010cd3246251a281))
+
 # [2.33.0](https://github.com/johnlindquist/mdflow/compare/v2.32.0...v2.33.0) (2025-12-14)
 
 
