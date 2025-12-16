@@ -3,6 +3,7 @@ import {
   loadHistory,
   getFrecencyScore,
   recordUsage,
+  recordTouch,
   getHistoryData,
   resetHistory,
   loadVariableHistory,
@@ -148,6 +149,104 @@ describe("history", () => {
 
       const entry = getHistoryData()![testPath];
       expect(entry!.count).toBe(initialCount + 3);
+    });
+  });
+
+  describe("recordTouch", () => {
+    it("updates lastTouched without incrementing count", async () => {
+      await loadHistory();
+      const testPath = `/test/touch-${Date.now()}-${Math.random()}.md`;
+
+      // First create an entry via recordUsage
+      await recordUsage(testPath);
+      const afterUsage = getHistoryData()![testPath];
+      const initialCount = afterUsage!.count;
+      const initialLastUsed = afterUsage!.lastUsed;
+
+      // Wait a tiny bit to ensure timestamp difference
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Now touch it
+      await recordTouch(testPath);
+
+      const entry = getHistoryData()![testPath];
+      expect(entry!.count).toBe(initialCount); // Count unchanged
+      expect(entry!.lastUsed).toBe(initialLastUsed); // lastUsed unchanged
+      expect(entry!.lastTouched).toBeGreaterThan(initialLastUsed); // lastTouched set
+    });
+
+    it("creates new entry with lastTouched if path does not exist", async () => {
+      await loadHistory();
+      const testPath = `/test/touch-new-${Date.now()}-${Math.random()}.md`;
+
+      expect(getHistoryData()![testPath]).toBeUndefined();
+
+      await recordTouch(testPath);
+
+      const entry = getHistoryData()![testPath];
+      expect(entry).toBeDefined();
+      expect(entry!.count).toBe(0); // No usage count
+      expect(entry!.lastUsed).toBe(0); // Never "used" (run)
+      expect(entry!.lastTouched).toBeGreaterThan(0); // But touched
+    });
+  });
+
+  describe("getFrecencyScore with lastTouched", () => {
+    it("uses lastTouched for recency when more recent than lastUsed", async () => {
+      await loadHistory();
+
+      const data = getHistoryData()!;
+      const now = Date.now();
+      const hour = 1000 * 60 * 60;
+
+      // File used 10 days ago but touched 1 hour ago
+      data["/touched-recent.md"] = {
+        count: 10,
+        lastUsed: now - 240 * hour, // 10 days ago
+        lastTouched: now - 1 * hour, // 1 hour ago
+      };
+
+      // File used 10 days ago, never touched
+      data["/not-touched.md"] = {
+        count: 10,
+        lastUsed: now - 240 * hour, // 10 days ago
+      };
+
+      const touchedScore = getFrecencyScore("/touched-recent.md");
+      const notTouchedScore = getFrecencyScore("/not-touched.md");
+
+      // The touched file should have a higher score because lastTouched is recent
+      // (4x multiplier for <4h vs 0.25x for >1 week)
+      expect(touchedScore).toBeGreaterThan(notTouchedScore);
+      expect(touchedScore / notTouchedScore).toBeGreaterThan(10); // 4/0.25 = 16x theoretical
+    });
+
+    it("uses lastUsed when more recent than lastTouched", async () => {
+      await loadHistory();
+
+      const data = getHistoryData()!;
+      const now = Date.now();
+      const hour = 1000 * 60 * 60;
+
+      // File touched 10 days ago but used 1 hour ago
+      data["/used-recent.md"] = {
+        count: 10,
+        lastUsed: now - 1 * hour, // 1 hour ago
+        lastTouched: now - 240 * hour, // 10 days ago
+      };
+
+      // File touched 10 days ago, never used (only touched)
+      data["/only-touched.md"] = {
+        count: 10,
+        lastUsed: now - 240 * hour, // 10 days ago
+        lastTouched: now - 240 * hour, // 10 days ago
+      };
+
+      const usedScore = getFrecencyScore("/used-recent.md");
+      const touchedScore = getFrecencyScore("/only-touched.md");
+
+      // The used file should have a higher score because lastUsed is recent
+      expect(usedScore).toBeGreaterThan(touchedScore);
     });
   });
 

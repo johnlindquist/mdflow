@@ -16,6 +16,8 @@ import { homedir } from "os";
 interface HistoryEntry {
   count: number;
   lastUsed: number;
+  /** Timestamp of last edit/touch (for sorting recently edited files higher) */
+  lastTouched?: number;
 }
 
 interface HistoryData {
@@ -80,10 +82,14 @@ export function getFrecencyScore(path: string): number {
   const entry = historyData[path];
   if (!entry) return 0;
 
-  const { count, lastUsed } = entry;
+  const { count, lastUsed, lastTouched } = entry;
+
+  // Use the most recent timestamp (run or edit) for recency calculation
+  // This ensures recently edited files rank higher even if not recently run
+  const mostRecentActivity = Math.max(lastUsed, lastTouched ?? 0);
 
   // Mozilla/z-style recency buckets
-  const hours = (Date.now() - lastUsed) / (1000 * 60 * 60);
+  const hours = (Date.now() - mostRecentActivity) / (1000 * 60 * 60);
   let multiplier: number;
 
   if (hours < 4) {
@@ -114,6 +120,23 @@ export async function recordUsage(path: string): Promise<void> {
 
   historyData![path]!.count++;
   historyData![path]!.lastUsed = Date.now();
+
+  // Fire and forget save
+  saveHistory().catch(() => {});
+}
+
+/**
+ * Record a file touch/edit (updates lastTouched without incrementing count)
+ * Used when user edits a file from the interactive menu to boost its ranking
+ */
+export async function recordTouch(path: string): Promise<void> {
+  await loadHistory();
+
+  if (!historyData![path]) {
+    historyData![path] = { count: 0, lastUsed: 0 };
+  }
+
+  historyData![path]!.lastTouched = Date.now();
 
   // Fire and forget save
   saveHistory().catch(() => {});

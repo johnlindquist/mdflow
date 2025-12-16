@@ -39,3 +39,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 PRESENTATION.md
 .beads/
 bundle.js
+
+# Generated bundles for AI upload
+mdflow-bundle.md
+mdflow-core-bundle.md

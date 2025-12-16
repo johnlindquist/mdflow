@@ -209,10 +209,10 @@ Command resolution:
 
 Agent file discovery (in priority order):
   1. Explicit path:      md ./path/to/agent.md
-  2. Current directory:  ./
-  3. Project agents:     ./.mdflow/
-  4. User agents:        ~/.mdflow/
-  5. $PATH directories
+  2. Project agents:     ./.mdflow/
+  3. User agents:        ~/.mdflow/
+  4. $PATH directories
+  5. Current directory:  ./
 
 All frontmatter keys are passed as CLI flags to the command.
 Global defaults can be set in ~/.mdflow/config.yaml
@@ -274,10 +274,10 @@ const USER_AGENTS_DIR = join(homedir(), ".mdflow");
 
 /**
  * Find agent markdown files with priority order:
- * 1. Current directory (cwd)
- * 2. Project-level: ./.mdflow/
- * 3. User-level: ~/.mdflow/
- * 4. $PATH directories
+ * 1. Project-level: ./.mdflow/
+ * 2. User-level: ~/.mdflow/
+ * 3. $PATH directories
+ * 4. Current directory (cwd)
  *
  * Returns files sorted by frecency (most frequently/recently used first)
  */
@@ -291,27 +291,7 @@ export async function findAgentFiles(): Promise<AgentFile[]> {
   const { loadHistory, getFrecencyScore } = await getHistory();
   await loadHistory();
 
-  // 1. Current directory
-  try {
-    for await (const file of glob.scan({ cwd: process.cwd(), absolute: true })) {
-      const normalizedPath = normalizePath(file);
-      if (!seenPaths.has(normalizedPath)) {
-        seenPaths.add(normalizedPath);
-        const description = extractDescription(normalizedPath);
-        files.push({
-          name: basename(file),
-          path: normalizedPath,
-          source: "cwd",
-          frecency: getFrecencyScore(normalizedPath),
-          ...(description && { description }),
-        });
-      }
-    }
-  } catch {
-    // Skip if cwd is not accessible
-  }
-
-  // 2. Project-level: ./.mdflow/
+  // 1. Project-level: ./.mdflow/
   const projectAgentsPath = join(process.cwd(), PROJECT_AGENTS_DIR);
   try {
     for await (const file of glob.scan({ cwd: projectAgentsPath, absolute: true })) {
@@ -332,7 +312,7 @@ export async function findAgentFiles(): Promise<AgentFile[]> {
     // Skip if .mdflow/ doesn't exist
   }
 
-  // 3. User-level: ~/.mdflow/
+  // 2. User-level: ~/.mdflow/
   try {
     for await (const file of glob.scan({ cwd: USER_AGENTS_DIR, absolute: true })) {
       const normalizedPath = normalizePath(file);
@@ -352,7 +332,7 @@ export async function findAgentFiles(): Promise<AgentFile[]> {
     // Skip if ~/.mdflow/ doesn't exist
   }
 
-  // 4. $PATH directories
+  // 3. $PATH directories
   // Use path.delimiter for cross-platform support (: on Unix, ; on Windows)
   const pathDirs = (process.env.PATH || "").split(delimiter);
   for (const dir of pathDirs) {
@@ -377,8 +357,38 @@ export async function findAgentFiles(): Promise<AgentFile[]> {
     }
   }
 
-  // Sort by frecency (highest first), then by name as tiebreaker
+  // 4. Current directory
+  try {
+    for await (const file of glob.scan({ cwd: process.cwd(), absolute: true })) {
+      const normalizedPath = normalizePath(file);
+      if (!seenPaths.has(normalizedPath)) {
+        seenPaths.add(normalizedPath);
+        const description = extractDescription(normalizedPath);
+        files.push({
+          name: basename(file),
+          path: normalizedPath,
+          source: "cwd",
+          frecency: getFrecencyScore(normalizedPath),
+          ...(description && { description }),
+        });
+      }
+    }
+  } catch {
+    // Skip if cwd is not accessible
+  }
+
+  // Source priority: .mdflow > ~/.mdflow > $PATH > cwd
+  const getSourcePriority = (source: string): number => {
+    if (source === ".mdflow") return 4;
+    if (source === "~/.mdflow") return 3;
+    if (source === "cwd") return 1;
+    return 2; // $PATH directories
+  };
+
+  // Sort by source priority first, then frecency, then name
   files.sort((a, b) => {
+    const priorityDiff = getSourcePriority(b.source) - getSourcePriority(a.source);
+    if (priorityDiff !== 0) return priorityDiff;
     const frecencyDiff = (b.frecency ?? 0) - (a.frecency ?? 0);
     if (frecencyDiff !== 0) return frecencyDiff;
     return a.name.localeCompare(b.name);

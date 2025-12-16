@@ -7,6 +7,7 @@
  */
 
 import { Marked } from "marked";
+// @ts-expect-error no types available
 import { markedTerminal } from "marked-terminal";
 
 // Lazily create marked instance to avoid initialization errors during module load
@@ -138,7 +139,7 @@ export class StreamingMarkdownRenderer {
         if (!this.inCodeBlock) {
           // Opening a code block
           this.inCodeBlock = true;
-          this.codeBlockDelimiter = fenceMatch[1][0].repeat(fenceMatch[1].length);
+          this.codeBlockDelimiter = fenceMatch[1]![0]!.repeat(fenceMatch[1]!.length);
         } else if (trimmed === this.codeBlockDelimiter || trimmed.startsWith(this.codeBlockDelimiter)) {
           // Closing the code block
           this.inCodeBlock = false;

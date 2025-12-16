@@ -17,9 +17,16 @@ import {
   isDownKey,
   usePrefix,
   makeTheme,
+  type KeypressEvent,
 } from "@inquirer/core";
 import { writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+
+// Extended key event type (runtime has more properties than type declares)
+interface ExtendedKeyEvent extends KeypressEvent {
+  sequence?: string;
+  meta?: boolean;
+}
 
 /** Result from the post-run menu */
 export interface PostRunMenuResult {
@@ -176,6 +183,8 @@ export const postRunMenu = createPrompt<PostRunMenuResult, PostRunMenuConfig>(
     options.push({ key: "q", label: "Exit", action: "exit" });
 
     useKeypress((key) => {
+      const extKey = key as ExtendedKeyEvent;
+
       if (inputMode === "filename") {
         if (isEnterKey(key)) {
           if (filename.trim()) {
@@ -195,8 +204,8 @@ export const postRunMenu = createPrompt<PostRunMenuResult, PostRunMenuConfig>(
           return;
         }
         // Add character
-        if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
-          setFilename(filename + key.sequence);
+        if (extKey.sequence && extKey.sequence.length === 1 && !extKey.ctrl && !extKey.meta) {
+          setFilename(filename + extKey.sequence);
         }
         return;
       }

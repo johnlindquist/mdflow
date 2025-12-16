@@ -96,8 +96,8 @@ describe("analyzeContext", () => {
     expect(analysis.promptFile).toBe(promptPath);
     expect(analysis.totalFiles).toBe(1);
     expect(analysis.items.length).toBe(1);
-    expect(analysis.items[0].type).toBe("prompt");
-    expect(analysis.items[0].name).toBe("task.claude.md");
+    expect(analysis.items[0]!.type).toBe("prompt");
+    expect(analysis.items[0]!.name).toBe("task.claude.md");
   });
 
   it("analyzes file imports", async () => {
@@ -112,9 +112,9 @@ describe("analyzeContext", () => {
 
     expect(analysis.totalFiles).toBe(2);
     expect(analysis.items.length).toBe(2);
-    expect(analysis.items[1].type).toBe("file");
-    expect(analysis.items[1].name).toBe("@./config.ts");
-    expect(analysis.items[1].size).toBeGreaterThan(0);
+    expect(analysis.items[1]!.type).toBe("file");
+    expect(analysis.items[1]!.name).toBe("@./config.ts");
+    expect(analysis.items[1]!.size).toBeGreaterThan(0);
   });
 
   it("analyzes glob imports", async () => {

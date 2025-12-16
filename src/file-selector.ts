@@ -19,6 +19,7 @@ import { homedir } from "os";
 import { spawnSync } from "node:child_process";
 import type { AgentFile } from "./cli";
 import { LRUCache } from "./cache";
+import { recordTouch, getFrecencyScore } from "./history";
 
 /** Result from file selector - either a path to run, edit, or dry-run */
 export interface FileSelectorResult {
@@ -149,44 +150,180 @@ function highlightSyntax(line: string): string {
 }
 
 /**
- * Format preview content with line numbers and syntax highlighting
+ * Highlight search term in a line (case-insensitive)
+ */
+function highlightSearchTerm(line: string, searchTerm: string): string {
+  if (!searchTerm) return line;
+
+  const lowerLine = line.toLowerCase();
+  const lowerSearch = searchTerm.toLowerCase();
+  let result = "";
+  let pos = 0;
+
+  while (pos < line.length) {
+    const matchPos = lowerLine.indexOf(lowerSearch, pos);
+    if (matchPos === -1) {
+      result += line.slice(pos);
+      break;
+    }
+    // Add text before match
+    result += line.slice(pos, matchPos);
+    // Add highlighted match (yellow background)
+    result += `\x1b[43m\x1b[30m${line.slice(matchPos, matchPos + searchTerm.length)}\x1b[0m`;
+    pos = matchPos + searchTerm.length;
+  }
+
+  return result;
+}
+
+/**
+ * Wrap a line to fit within maxWidth, preserving words when possible
+ */
+function wrapLine(line: string, maxWidth: number): string[] {
+  if (maxWidth <= 0) return [line];
+
+  const plainLine = stripAnsi(line);
+  if (plainLine.length <= maxWidth) return [line];
+
+  const wrapped: string[] = [];
+  let remaining = line;
+  let remainingPlain = plainLine;
+
+  while (remainingPlain.length > maxWidth) {
+    // Try to break at a word boundary (space) within maxWidth
+    let breakPoint = maxWidth;
+    const spaceIdx = remainingPlain.lastIndexOf(" ", maxWidth);
+    if (spaceIdx > maxWidth * 0.4) {
+      // Only use word break if it's not too far back
+      breakPoint = spaceIdx;
+    }
+
+    // Find the actual position in the ANSI string
+    let visibleCount = 0;
+    let actualIdx = 0;
+    for (let i = 0; i < remaining.length && visibleCount < breakPoint; i++) {
+      if (remaining[i] === "\x1b") {
+        // Skip ANSI sequence
+        const end = remaining.indexOf("m", i);
+        if (end !== -1) {
+          i = end;
+          continue;
+        }
+      }
+      visibleCount++;
+      actualIdx = i + 1;
+    }
+
+    wrapped.push(remaining.slice(0, actualIdx) + "\x1b[0m");
+    remaining = remaining.slice(actualIdx);
+    remainingPlain = stripAnsi(remaining);
+  }
+
+  if (remaining) {
+    wrapped.push(remaining);
+  }
+
+  return wrapped;
+}
+
+/**
+ * Format preview content with line numbers, syntax highlighting, and word wrap
  */
 function formatPreviewContent(
   content: string,
   previewHeight: number,
   scrollOffset: number,
-  previewWidth: number
-): { lines: string[]; totalLines: number } {
+  previewWidth: number,
+  searchTerm?: string
+): { lines: string[]; totalLines: number; firstMatchDisplayLine?: number } {
   const allLines = content.split("\n");
   const totalLines = allLines.length;
 
-  // Clamp scroll offset
-  const maxScroll = Math.max(0, totalLines - previewHeight);
-  const startLine = Math.min(scrollOffset, maxScroll);
-  const visibleLines = allLines.slice(startLine, startLine + previewHeight);
-
   const lineNumWidth = String(totalLines).length;
   const contentWidth = previewWidth - lineNumWidth - 3; // "123| " format
+  const wrapIndent = " ".repeat(lineNumWidth) + " \x1b[90m┆\x1b[0m "; // Continuation marker
 
-  const formattedLines = visibleLines.map((line, idx) => {
-    const lineNum = startLine + idx + 1;
+  // Build display lines with wrapping
+  const displayLines: string[] = [];
+  let firstMatchDisplayLine: number | undefined;
+  const lowerSearch = searchTerm?.toLowerCase();
+
+  for (let lineIdx = 0; lineIdx < allLines.length; lineIdx++) {
+    const line = allLines[lineIdx]!;
+    const lineNum = lineIdx + 1;
     const lineNumStr = String(lineNum).padStart(lineNumWidth, " ");
-    // Apply syntax highlighting before truncation
-    const highlighted = highlightSyntax(line);
-    // Truncate if too long (fitToWidth handles ANSI codes)
-    const displayLine =
-      stripAnsi(highlighted).length > contentWidth
-        ? fitToWidth(highlighted, contentWidth - 1) + "~"
-        : highlighted;
-    return `\x1b[90m${lineNumStr} │\x1b[0m ${displayLine}`;
-  });
 
-  // Pad with empty lines if content is shorter than preview height
-  while (formattedLines.length < previewHeight) {
-    formattedLines.push("");
+    // Track display line of first match (before wrapping adds more lines)
+    if (firstMatchDisplayLine === undefined && lowerSearch && line.toLowerCase().includes(lowerSearch)) {
+      firstMatchDisplayLine = displayLines.length;
+    }
+
+    // Apply syntax highlighting
+    let highlighted = highlightSyntax(line);
+    // Highlight search term if in content mode
+    if (searchTerm) {
+      highlighted = highlightSearchTerm(highlighted, searchTerm);
+    }
+
+    // Wrap the line
+    const wrappedParts = wrapLine(highlighted, contentWidth);
+
+    // First part gets line number
+    displayLines.push(`\x1b[90m${lineNumStr} │\x1b[0m ${wrappedParts[0] || ""}`);
+
+    // Continuation lines get indent marker
+    for (let i = 1; i < wrappedParts.length; i++) {
+      displayLines.push(`${wrapIndent}${wrappedParts[i]}`);
+    }
   }
 
-  return { lines: formattedLines, totalLines };
+  // Apply scroll offset to display lines
+  const maxScroll = Math.max(0, displayLines.length - previewHeight);
+  const startLine = Math.min(scrollOffset, maxScroll);
+  const visibleLines = displayLines.slice(startLine, startLine + previewHeight);
+
+  // Pad with empty lines if content is shorter than preview height
+  while (visibleLines.length < previewHeight) {
+    visibleLines.push("");
+  }
+
+  return { lines: visibleLines, totalLines: displayLines.length, firstMatchDisplayLine };
+}
+
+// Cache for lowercase file content (avoid repeated toLowerCase calls)
+const lowerContentCache = new LRUCache<string, string>(100);
+
+function getLowerContent(filePath: string): string {
+  const cached = lowerContentCache.get(filePath);
+  if (cached !== undefined) return cached;
+
+  const content = readFileContentSync(filePath).toLowerCase();
+  lowerContentCache.set(filePath, content);
+  return content;
+}
+
+/**
+ * Score a file against a content search filter.
+ * Returns score based on number of matches found in file content.
+ */
+function getContentMatchScore(filter: string, file: AgentFile): number {
+  if (!filter) return 1;
+
+  const content = getLowerContent(file.path);
+  const search = filter.toLowerCase();
+
+  // Count occurrences
+  let count = 0;
+  let pos = 0;
+  while ((pos = content.indexOf(search, pos)) !== -1) {
+    count++;
+    pos += search.length;
+  }
+
+  if (count === 0) return 0;
+
+  // Score: base 50 + 10 per match (capped at 100)
+  return Math.min(100, 50 + count * 10);
 }
 
 /**
@@ -290,13 +427,19 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
     const prefix = usePrefix({ status: "idle", theme: makeTheme({}) });
 
     const [cursor, setCursor] = useState(0);
-    const [filter, setFilter] = useState("");
     const [previewScroll, setPreviewScroll] = useState(0);
+    // Combined search state for atomic updates (reduces re-renders)
+    const [searchState, setSearchState] = useState<{ filter: string; mode: "name" | "content" }>({
+      filter: "",
+      mode: "name",
+    });
+    const { filter, mode: searchMode } = searchState;
 
     // Filter and sort files by match score (best matches first)
+    const scoreFn = searchMode === "content" ? getContentMatchScore : getMatchScore;
     const filteredFiles = filter
       ? files
-          .map((f) => ({ file: f, score: getMatchScore(filter, f) }))
+          .map((f) => ({ file: f, score: scoreFn(filter, f) }))
           .filter((x) => x.score > 0)
           .sort((a, b) => b.score - a.score)
           .map((x) => x.file)
@@ -376,27 +519,35 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
 
       // Backspace to delete filter character
       if (key.name === "backspace") {
-        setFilter(filter.slice(0, -1));
+        setSearchState({ ...searchState, filter: filter.slice(0, -1) });
         setCursor(0);
         setPreviewScroll(0);
         return;
       }
 
-      // Escape to clear filter
+      // Escape: clear filter and exit content mode (single atomic update)
       if (key.name === "escape") {
-        if (filter) {
-          setFilter("");
-          setCursor(0);
-          setPreviewScroll(0);
+        if (searchMode === "content" || filter) {
+          setSearchState({ filter: "", mode: "name" });
+          if (filter) {
+            setCursor(0);
+            setPreviewScroll(0);
+          }
         }
+        return;
+      }
+
+      // "/" to toggle content search mode
+      if (extKey.sequence === "/" && !filter) {
+        setSearchState({ ...searchState, mode: searchMode === "content" ? "name" : "content" });
         return;
       }
 
       // Add character to filter (printable characters only, including space for path search)
       if (extKey.sequence && extKey.sequence.length === 1 && !extKey.ctrl && !extKey.meta) {
         const char = extKey.sequence;
-        if (char.match(/[\w\-\.\s]/)) {
-          setFilter(filter + char);
+        if (char.match(/[\w\-\.\s\/]/)) {
+          setSearchState({ ...searchState, filter: filter + char });
           setCursor(0);
           setPreviewScroll(0);
         }
@@ -479,11 +630,26 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
 
     if (currentFile) {
       const content = readFileContentSync(currentFile.path);
+      const searchTerm = searchMode === "content" && filter ? filter : undefined;
+      const previewContentHeight = contentHeight - 2; // Leave room for header and footer
+
+      // Calculate effective scroll - auto-scroll to first match in content mode
+      let effectiveScroll = previewScroll;
+      if (searchTerm && previewScroll === 0) {
+        // First pass: find first match display line
+        const firstPass = formatPreviewContent(content, previewContentHeight, 0, previewWidth, searchTerm);
+        if (firstPass.firstMatchDisplayLine !== undefined) {
+          // Scroll to show match with some context above (3 lines)
+          effectiveScroll = Math.max(0, firstPass.firstMatchDisplayLine - 3);
+        }
+      }
+
       const formatted = formatPreviewContent(
         content,
-        contentHeight - 2, // Leave room for header and footer
-        previewScroll,
-        previewWidth
+        previewContentHeight,
+        effectiveScroll,
+        previewWidth,
+        searchTerm
       );
       previewLines = formatted.lines;
       totalLines = formatted.totalLines;
@@ -494,12 +660,12 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
 
       // Footer: scroll position
       const scrollPct =
-        totalLines <= contentHeight - 2
+        totalLines <= previewContentHeight
           ? 100
           : Math.round(
-              ((previewScroll + contentHeight - 2) / totalLines) * 100
+              ((effectiveScroll + previewContentHeight) / totalLines) * 100
             );
-      previewFooter = `\x1b[90m${Math.min(previewScroll + 1, totalLines)}-${Math.min(previewScroll + contentHeight - 2, totalLines)} of ${totalLines} lines (${Math.min(scrollPct, 100)}%)\x1b[0m`;
+      previewFooter = `\x1b[90m${Math.min(effectiveScroll + 1, totalLines)}-${Math.min(effectiveScroll + previewContentHeight, totalLines)} of ${totalLines} lines (${Math.min(scrollPct, 100)}%)\x1b[0m`;
     }
 
     // Combine list and preview side by side
@@ -507,9 +673,14 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
     const outputLines: string[] = [];
 
     // Header line
+    const modeIndicator = searchMode === "content"
+      ? `\x1b[33m[content]\x1b[0m `
+      : "";
     const filterDisplay = filter
-      ? `\x1b[90mFilter:\x1b[0m \x1b[36m${filter}\x1b[0m`
-      : `\x1b[90mType to filter...\x1b[0m`;
+      ? `${modeIndicator}\x1b[90mFilter:\x1b[0m \x1b[36m${filter}\x1b[0m`
+      : searchMode === "content"
+        ? `${modeIndicator}\x1b[90mType to search file contents...\x1b[0m`
+        : `\x1b[90mType to filter...\x1b[0m`;
     const matchCount = `\x1b[90m(${filteredFiles.length}/${files.length})\x1b[0m`;
     outputLines.push(`${prefix} ${config.message} ${matchCount}  ${filterDisplay}`);
     outputLines.push("");
@@ -534,7 +705,7 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
     const k = (t: string) => `\x1b[7m ${t} \x1b[27m`;
     outputLines.push("");
     outputLines.push(
-      `${k("↑↓")} Nav  ${k("Enter")} Run  ${k("^R")} Dry  ${k("Tab")} Edit  ${k("Esc")} Clear`
+      `${k("↑↓")} Nav  ${k("Enter")} Run  ${k("^R")} Dry  ${k("Tab")} Edit  ${k("/")} Content  ${k("Esc")} Clear`
     );
 
     return outputLines.join("\n");
@@ -608,10 +779,21 @@ export async function showFileSelectorWithPreview(
       });
 
       if (result.action === "edit") {
+        // Record touch to boost frecency (await to update in-memory data)
+        await recordTouch(result.path);
         // Open in editor, then return to selector
         openInEditor(result.path);
         // Clear file content cache so preview reflects edits
         fileContentCache.clear();
+        // Re-calculate frecency scores and re-sort so edited file jumps to top
+        for (const file of files) {
+          file.frecency = getFrecencyScore(file.path);
+        }
+        files.sort((a, b) => {
+          const frecencyDiff = (b.frecency ?? 0) - (a.frecency ?? 0);
+          if (frecencyDiff !== 0) return frecencyDiff;
+          return a.name.localeCompare(b.name);
+        });
         // Clear screen before re-showing selector to avoid duplication artifacts
         process.stdout.write("\x1b[2J\x1b[H");
         continue;

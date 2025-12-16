@@ -149,9 +149,9 @@ describe("form input types", () => {
         default: "World",
       },
     };
-    expect(inputs._name.type).toBe("text");
-    expect(inputs._name.description).toBe("Enter your name");
-    expect(inputs._name.default).toBe("World");
+    expect(inputs._name!.type).toBe("text");
+    expect(inputs._name!.description).toBe("Enter your name");
+    expect(inputs._name!.default).toBe("World");
   });
 
   it("supports select type with options", () => {
@@ -163,9 +163,9 @@ describe("form input types", () => {
         default: "dev",
       },
     };
-    expect(inputs._env.type).toBe("select");
-    expect(inputs._env.options).toEqual(["dev", "staging", "prod"]);
-    expect(inputs._env.default).toBe("dev");
+    expect(inputs._env!.type).toBe("select");
+    expect(inputs._env!.options).toEqual(["dev", "staging", "prod"]);
+    expect(inputs._env!.default).toBe("dev");
   });
 
   it("supports number type with min/max", () => {
@@ -178,10 +178,10 @@ describe("form input types", () => {
         max: 100,
       },
     };
-    expect(inputs._count.type).toBe("number");
-    expect(inputs._count.min).toBe(1);
-    expect(inputs._count.max).toBe(100);
-    expect(inputs._count.default).toBe(5);
+    expect(inputs._count!.type).toBe("number");
+    expect(inputs._count!.min).toBe(1);
+    expect(inputs._count!.max).toBe(100);
+    expect(inputs._count!.default).toBe(5);
   });
 
   it("supports confirm type", () => {
@@ -192,8 +192,8 @@ describe("form input types", () => {
         default: true,
       },
     };
-    expect(inputs._proceed.type).toBe("confirm");
-    expect(inputs._proceed.default).toBe(true);
+    expect(inputs._proceed!.type).toBe("confirm");
+    expect(inputs._proceed!.default).toBe(true);
   });
 
   it("supports password type", () => {
@@ -203,6 +203,6 @@ describe("form input types", () => {
         description: "Enter password",
       },
     };
-    expect(inputs._secret.type).toBe("password");
+    expect(inputs._secret!.type).toBe("password");
   });
 });

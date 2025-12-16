@@ -25,7 +25,10 @@
   },
   "scripts": {
     "test": "bun test --bail=1",
-    "md": "bun run src/index.ts"
+    "md": "bun run src/index.ts",
+    "bundle": "bun run scripts/bundle.ts -o",
+    "bundle:core": "bun run scripts/bundle.ts --core -o",
+    "bundle:stdout": "bun run scripts/bundle.ts"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",
