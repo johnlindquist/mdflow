@@ -221,24 +221,62 @@ Summarize this: {{ _stdin }}
 ```
 
 ```bash
-cat README.md | mdflow summarize.claude.md
+cat README.md | md summarize.claude.md
 ```
+
+### Interactive Form Inputs
+
+Use `_inputs` to define typed interactive prompts with validation:
+
+```yaml
+---
+model: sonnet
+_inputs:
+  _name:
+    type: text
+    description: "Enter your name"
+    default: "World"
+  _env:
+    type: select
+    options: [dev, staging, prod]
+  _count:
+    type: number
+    description: "How many items?"
+  _confirm:
+    type: confirm
+    description: "Are you sure?"
+  _secret:
+    type: password
+    description: "API key"
+---
+Hello {{ _name }}! Deploying to {{ _env }} with {{ _count }} items.
+```
+
+**Input types:**
+- `text` - Free text input (default if no type specified)
+- `select` - Choose from a list of options
+- `number` - Numeric input
+- `confirm` - Yes/no boolean
+- `password` - Hidden input for secrets
+
+**Legacy format:** `_inputs: [_name, _value]` (array of variable names) still works.
 
 ---
 
 ## Frontmatter Reference
 
-### System Keys (handled by mdflow)
+### System Keys (handled by md)
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `_varname` | string | Template variable with default value (use `{{ _varname }}` in body) |
-| `env` | object | Set process environment variables |
-| `env` | string[] | Pass as `--env` flags to command |
+| `_inputs` | object/array | Interactive form inputs (see above) |
+| `_env` | object | Set process environment variables |
 | `$1`, `$2`... | string | Map positional args to flags (e.g., `$1: prompt`) |
 | `_interactive` / `_i` | boolean | Enable interactive mode (overrides print-mode defaults) |
 | `_subcommand` | string/string[] | Prepend subcommand(s) to CLI args |
 | `_cwd` | string | Override working directory for inline commands |
+| `context_window` | number | Override token limit for context (default: model-based) |
 
 ### Auto-Injected Template Variables
 
@@ -553,38 +591,46 @@ Environment variables are available:
 ## CLI Options
 
 ```
-Usage: mdflow <file.md> [any flags for the command]
-       mdflow <file.md> --_command <cmd>
-       mdflow setup
-       mdflow logs
-       mdflow help
+Usage: md <file.md> [flags for the command]
+       md <command> [options]
+
+Commands:
+  md create [name]        Create a new agent file (opens in $EDITOR)
+  md explain <agent.md>   Show resolved config without executing
+  md setup                Configure shell (PATH, aliases)
+  md logs                 Show agent log directory
+  md help                 Show this help
 
 Command resolution:
-  1. --_command flag (e.g., mdflow task.md --_command claude)
+  1. --_command flag (e.g., md task.md --_command claude)
   2. Filename pattern (e.g., task.claude.md → claude)
 
 All frontmatter keys are passed as CLI flags to the command.
 Global defaults can be set in ~/.mdflow/config.yaml
 
-mdflow-specific flags (consumed, not passed to command):
+md-specific flags (consumed, not passed to command):
   --_command, -_c     Specify command to run
   --_dry-run          Preview without executing
   --_interactive, -_i Enable interactive mode
+  --_edit             Open resolved prompt in $EDITOR before execution
   --_no-cache         Force fresh fetch for remote URLs (bypass cache)
   --_trust            Bypass TOFU prompts for remote URLs
+  --_context          Show context tree and exit (no execution)
+  --_quiet            Skip context dashboard display before execution
+  --raw               Output raw markdown without rendering (for piping)
 
 Examples:
-  mdflow task.claude.md -p "print mode"
-  mdflow task.claude.md --model opus --verbose
-  mdflow commit.gemini.md
-  mdflow task.md --_command claude
-  mdflow task.md -_c gemini
-  mdflow task.claude.md -_i  # Run in interactive mode
+  md task.claude.md -p "print mode"
+  md task.claude.md --model opus --verbose
+  md commit.gemini.md
+  md task.md --_command claude
+  md task.md -_c gemini
+  md task.claude.md --_dry-run    # Preview without executing
+  md task.claude.md --_edit       # Edit prompt before running
+  md https://example.com/agent.claude.md  # Remote execution
 
-Without a file:
-  mdflow setup      Configure shell to run .md files directly
-  mdflow logs       Show log directory
-  mdflow help       Show this help
+Without arguments:
+  md              Interactive agent picker (frecency-sorted)
 ```
 
 ### Environment Variables
@@ -649,13 +695,73 @@ git diff | review.claude.md      # Review staged changes
 
 ---
 
+## Rich Output Rendering
+
+By default, LLM output is rendered with syntax highlighting and visual markdown structure (headers, code blocks, etc.). This uses `marked-terminal` for beautiful terminal output.
+
+To bypass rendering (e.g., for piping to other commands):
+
+```bash
+md task.claude.md --raw | jq .
+```
+
+---
+
+## Context Dashboard
+
+Before execution, md shows a pre-flight dashboard with your context tree and token estimates:
+
+```
+┌─ Pre-Flight ──────────────────────────────────────────────────┐
+│  📄 review.claude.md                                   1.2 KB │
+│  ├── 📁 @./src/**/*.ts                     (12 files) 24.5 KB │
+│  └── 📄 @./README.md                                   3.1 KB │
+│                                                               │
+│  Total: 28.8 KB (~7,200 tokens)                              │
+└───────────────────────────────────────────────────────────────┘
+```
+
+Use `--_quiet` to skip the dashboard, or `--_context` to show it and exit without executing.
+
+---
+
+## The `md explain` Command
+
+Inspect what an agent will do without running it:
+
+```bash
+md explain review.claude.md
+```
+
+Shows:
+- Resolved command and source (filename, flag, etc.)
+- Final flags after config merging (built-in → global → project → frontmatter)
+- Expanded prompt preview with token count
+- Trust status for remote URLs
+- Environment variables that will be set
+
+---
+
+## Edit Before Execute
+
+Use `--_edit` to open the fully resolved prompt in your `$EDITOR` before execution:
+
+```bash
+md task.claude.md --_edit
+```
+
+This lets you review and tweak the final prompt (after template substitution and import expansion) before sending it to the LLM.
+
+---
+
 ## Notes
 
 - If no frontmatter is present, the file is printed as-is (unless command inferred from filename)
 - Template system uses [LiquidJS](https://liquidjs.com/) - supports conditionals, loops, and filters
 - Logs are always written to `~/.mdflow/logs/<agent-name>/` for debugging
-- Use `mdflow logs` to show the log directory
+- Use `md logs` to show the log directory
 - Piped input is available as `{{ _stdin }}` template variable
 - Template variables use `_` prefix: `_name` in frontmatter → `{{ _name }}` in body → `--_name` CLI flag
 - Remote URLs are cached at `~/.mdflow/cache/` with 1-hour TTL (use `--_no-cache` to bypass)
 - Imports inside code blocks (``` or `) are ignored by the parser
+- Interactive file picker sorts by frecency (frequency + recency) for quick access to common agents

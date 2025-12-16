@@ -618,3 +618,195 @@ md 20-agent-smith.claude.md --_goal "Review my rust code" > review-rust.claude.m
 ```
 
 *UX Benefit: The tool helps you build the tool.*
+
+---
+
+# Part 3: New Features Tour
+
+These examples demonstrate the latest features added to mdflow.
+
+---
+
+## 21. The Form Builder
+
+**Concept:** *Typed Interactive Inputs*
+**UX Problem:** You want a proper form with different input types, not just text prompts.
+**Solution:** Use the new `_inputs` object format with typed fields.
+
+**File:** `21-deploy-wizard.claude.md`
+
+```markdown
+---
+model: sonnet
+_inputs:
+  _service:
+    type: text
+    description: "Service name"
+    default: "api"
+  _environment:
+    type: select
+    options: [development, staging, production]
+  _replicas:
+    type: number
+    description: "Number of replicas"
+  _dry_run:
+    type: confirm
+    description: "Dry run only?"
+---
+Generate a deployment manifest for {{ _service }} in {{ _environment }}.
+{% if _replicas > 1 %}Use {{ _replicas }} replicas for high availability.{% endif %}
+{% if _dry_run %}This is a dry run - just show what would happen.{% endif %}
+```
+
+**Run it:**
+
+```bash
+md 21-deploy-wizard.claude.md
+```
+
+*UX Benefit: Type-safe forms with select dropdowns, number inputs, and confirmations.*
+
+---
+
+## 22. The Inspector
+
+**Concept:** *Configuration Debugging*
+**UX Problem:** Your agent isn't running as expected, and you need to see what's actually being sent.
+**Solution:** Use `md explain` to see the fully resolved configuration.
+
+**Run it:**
+
+```bash
+md explain review.claude.md
+```
+
+**Output:**
+
+```text
+╭─ Agent Analysis ──────────────────────────────────────────────╮
+│ Command:        claude (from filename: review.claude.md)      │
+│ Interactive:    false (default: print mode)                   │
+│                                                               │
+│ Config Chain:                                                 │
+│   ✓ Built-in defaults                                         │
+│   ✓ ~/.mdflow/config.yaml                                     │
+│   ✗ ./mdflow.config.yaml (not found)                          │
+│   ✓ Frontmatter                                               │
+│                                                               │
+│ Final Flags:    --model opus --print                          │
+│ Token Usage:    ~12,450 / 100,000 (12.4%)                    │
+╰───────────────────────────────────────────────────────────────╯
+```
+
+*UX Benefit: Understand exactly what md will do before running it.*
+
+---
+
+## 23. The Preflight Check
+
+**Concept:** *Context Visualization*
+**UX Problem:** You're importing many files and want to verify the context before sending to the LLM.
+**Solution:** Use `--_context` to see the context tree and exit.
+
+**File:** `23-review-all.claude.md`
+
+```markdown
+---
+model: opus
+---
+Review this entire codebase:
+@./src/**/*.ts
+@./tests/**/*.ts
+```
+
+**Run it:**
+
+```bash
+md 23-review-all.claude.md --_context
+```
+
+**Output:**
+
+```text
+┌─ Pre-Flight ──────────────────────────────────────────────────┐
+│  📄 23-review-all.claude.md                            0.2 KB │
+│  ├── 📁 @./src/**/*.ts                     (24 files) 48.3 KB │
+│  └── 📁 @./tests/**/*.ts                   (12 files) 22.1 KB │
+│                                                               │
+│  Total: 70.6 KB (~17,650 tokens)                             │
+└───────────────────────────────────────────────────────────────┘
+```
+
+*UX Benefit: Know your token budget before committing to an expensive API call.*
+
+---
+
+## 24. The Editor's Cut
+
+**Concept:** *Edit Before Execute*
+**UX Problem:** You want to tweak the final prompt after all imports are resolved.
+**Solution:** Use `--_edit` to open the fully resolved prompt in your editor.
+
+**File:** `24-summarize.claude.md`
+
+```markdown
+---
+model: haiku
+---
+Summarize this code:
+@./src/main.ts
+```
+
+**Run it:**
+
+```bash
+md 24-summarize.claude.md --_edit
+```
+
+Your `$EDITOR` opens with the fully expanded prompt. Make any changes, save, and close. The edited version is then sent to the LLM.
+
+*UX Benefit: Last-chance editing for context-sensitive adjustments.*
+
+---
+
+## 25. The Pretty Printer
+
+**Concept:** *Rich Terminal Output*
+**UX Problem:** LLM output with code blocks looks ugly in the terminal.
+**Solution:** mdflow now renders markdown with syntax highlighting by default.
+
+**Run it:**
+
+```bash
+md explain-code.claude.md  # Beautiful syntax-highlighted output
+```
+
+For piping to other tools, use `--raw`:
+
+```bash
+md generate-json.claude.md --raw | jq .
+```
+
+*UX Benefit: Professional-looking output that's easy to read.*
+
+---
+
+## 26. The History Buff
+
+**Concept:** *Frecency-Based File Picker*
+**UX Problem:** You have many agents and finding the right one takes time.
+**Solution:** The interactive picker now sorts by frecency (frequency + recency).
+
+**Run it:**
+
+```bash
+md   # No arguments - opens the picker
+```
+
+Files you use often and recently appear at the top. The algorithm uses Mozilla/z-style recency buckets:
+- Used in last 4 hours: 4x multiplier
+- Used in last 24 hours: 2x multiplier
+- Used in last week: 0.5x multiplier
+- Older: 0.25x multiplier
+
+*UX Benefit: Your most-used agents are always a keystroke away.*
