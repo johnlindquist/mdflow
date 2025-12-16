@@ -67,13 +67,13 @@ Use these to implement the feature."
 exports[`Snapshot Tests Glob imports expands glob patterns to XML format 1`] = `
 "Here are all TypeScript files in the glob-test directory:
 
-<a path="imports/glob-test/a.ts">
+<a path="a.ts">
 // File a.ts
 export const A = "alpha";
 
 </a>
 
-<b path="imports/glob-test/b.ts">
+<b path="b.ts">
 // File b.ts
 export const B = "beta";
 

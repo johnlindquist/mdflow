@@ -653,6 +653,32 @@ function formatFilesAsXml(files: Array<{ path: string; content: string }>): stri
 }
 
 /**
+ * Extract the static prefix from a glob pattern (everything before the first wildcard)
+ * Returns the directory portion that can be resolved as a path.
+ */
+function extractGlobBaseDir(pattern: string, currentFileDir: string): string {
+  // Find the first glob character
+  const firstWildcard = Math.min(
+    ...[pattern.indexOf('*'), pattern.indexOf('?'), pattern.indexOf('[')]
+      .filter(i => i !== -1)
+      .concat([pattern.length]) // fallback if no wildcards
+  );
+
+  // Get everything before the wildcard
+  const staticPrefix = pattern.slice(0, firstWildcard);
+
+  // Find the last directory separator in the static prefix
+  const lastSlash = staticPrefix.lastIndexOf('/');
+  const dirPart = lastSlash === -1 ? '' : staticPrefix.slice(0, lastSlash);
+
+  // Resolve the directory part
+  if (pattern.startsWith('/')) {
+    return dirPart || '/';
+  }
+  return resolve(currentFileDir, dirPart || '.');
+}
+
+/**
  * Process a glob import pattern
  */
 async function processGlobImport(
@@ -661,21 +687,20 @@ async function processGlobImport(
   verbose: boolean
 ): Promise<string> {
   const resolvedPattern = expandTilde(pattern);
-  const baseDir = resolvedPattern.startsWith("/") ? "/" : currentFileDir;
 
-  // For relative patterns, we need to resolve from the current directory
-  const globPattern = resolvedPattern.startsWith("/")
-    ? resolvedPattern
-    : resolve(currentFileDir, resolvedPattern).replace(currentFileDir + "/", "");
+  // Calculate the actual base directory for the glob
+  // This handles patterns like "../../**/*.rs" by resolving the static prefix
+  const globBaseDir = extractGlobBaseDir(resolvedPattern, currentFileDir);
 
   if (verbose) {
-    console.error(`[imports] Glob pattern: ${globPattern} in ${currentFileDir}`);
+    console.error(`[imports] Glob pattern: ${resolvedPattern} (base: ${globBaseDir})`);
   }
 
-  // Load gitignore
-  const ig = await loadGitignore(currentFileDir);
+  // Load gitignore from the glob's base directory, not the agent file's directory
+  const ig = await loadGitignore(globBaseDir);
 
   // Collect matching files
+  // Use the resolved base directory as cwd for proper pattern matching
   const glob = new Glob(resolvedPattern.startsWith("/") ? resolvedPattern : pattern.replace(/^\.\//, ""));
   const files: Array<{ path: string; content: string }> = [];
   let totalChars = 0;
@@ -683,8 +708,18 @@ async function processGlobImport(
   const skippedBinaryFiles: string[] = [];
 
   for await (const file of glob.scan({ cwd: currentFileDir, absolute: true, onlyFiles: true })) {
-    // Check gitignore
-    const relativePath = relative(currentFileDir, file);
+    // Check gitignore - calculate relative path from the glob's base directory
+    // This ensures paths don't start with "../" which the ignore package can't handle
+    const relativePath = relative(globBaseDir, file);
+
+    // Skip paths that are still outside the glob base (shouldn't happen, but safety check)
+    if (relativePath.startsWith('..')) {
+      if (verbose) {
+        console.error(`[imports] Skipping file outside glob base: ${file}`);
+      }
+      continue;
+    }
+
     if (ig.ignores(relativePath)) {
       continue;
     }

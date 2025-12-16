@@ -271,6 +271,54 @@ test("expandImports handles glob patterns", async () => {
   expect(result).toContain("<b path=");
 });
 
+test("expandImports handles parent directory glob patterns (issue #13)", async () => {
+  // Create a nested subdirectory structure to test parent directory globs
+  // Structure: testDir/parent-glob-test/subdir/agent.md
+  //            testDir/parent-glob-test/*.rs (files to find)
+  const parentDir = join(testDir, "parent-glob-test");
+  const subDir = join(parentDir, "subdir");
+
+  // Create the Rust files in the parent directory
+  await Bun.write(join(parentDir, "main.rs"), "fn main() {}");
+  await Bun.write(join(parentDir, "lib.rs"), "pub mod lib;");
+
+  // Create dummy file in subdir to ensure it exists
+  await Bun.write(join(subDir, "dummy.md"), "");
+
+  // Run glob from subdir looking at parent with ../*.rs
+  const content = "@../*.rs";
+  const result = await expandImports(content, subDir);
+
+  // Should include both .rs files
+  expect(result).toContain("fn main() {}");
+  expect(result).toContain("pub mod lib;");
+  // Should be formatted as XML
+  expect(result).toContain("main.rs");
+  expect(result).toContain("lib.rs");
+});
+
+test("expandImports handles deep parent directory glob patterns", async () => {
+  // Test ../../**/*.rs pattern (2 levels up)
+  const deepParent = join(testDir, "deep-parent");
+  const level1 = join(deepParent, "level1");
+  const level2 = join(level1, "level2");
+
+  // Create files at the top level
+  await Bun.write(join(deepParent, "top.rs"), "// top level");
+  await Bun.write(join(deepParent, "nested/inner.rs"), "// nested");
+
+  // Create dummy to ensure level2 exists
+  await Bun.write(join(level2, "dummy.md"), "");
+
+  // Run glob from level2 looking 2 levels up with **/*.rs
+  const content = "@../../**/*.rs";
+  const result = await expandImports(content, level2);
+
+  // Should include both .rs files
+  expect(result).toContain("// top level");
+  expect(result).toContain("// nested");
+});
+
 // Canonical path tests
 test("toCanonicalPath resolves symlinks to real path", async () => {
   // Create a real file
