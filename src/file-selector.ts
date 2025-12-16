@@ -235,7 +235,7 @@ function formatPreviewContent(
   scrollOffset: number,
   previewWidth: number,
   searchTerm?: string
-): { lines: string[]; totalLines: number; firstMatchDisplayLine?: number } {
+): { lines: string[]; totalLines: number; matchDisplayLines: number[] } {
   const allLines = content.split("\n");
   const totalLines = allLines.length;
 
@@ -245,7 +245,7 @@ function formatPreviewContent(
 
   // Build display lines with wrapping
   const displayLines: string[] = [];
-  let firstMatchDisplayLine: number | undefined;
+  const matchDisplayLines: number[] = [];
   const lowerSearch = searchTerm?.toLowerCase();
 
   for (let lineIdx = 0; lineIdx < allLines.length; lineIdx++) {
@@ -253,9 +253,9 @@ function formatPreviewContent(
     const lineNum = lineIdx + 1;
     const lineNumStr = String(lineNum).padStart(lineNumWidth, " ");
 
-    // Track display line of first match (before wrapping adds more lines)
-    if (firstMatchDisplayLine === undefined && lowerSearch && line.toLowerCase().includes(lowerSearch)) {
-      firstMatchDisplayLine = displayLines.length;
+    // Track display line of each match (before wrapping adds more lines)
+    if (lowerSearch && line.toLowerCase().includes(lowerSearch)) {
+      matchDisplayLines.push(displayLines.length);
     }
 
     // Apply syntax highlighting
@@ -287,7 +287,7 @@ function formatPreviewContent(
     visibleLines.push("");
   }
 
-  return { lines: visibleLines, totalLines: displayLines.length, firstMatchDisplayLine };
+  return { lines: visibleLines, totalLines: displayLines.length, matchDisplayLines };
 }
 
 // Cache for lowercase file content (avoid repeated toLowerCase calls)
@@ -434,6 +434,8 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
       mode: "name",
     });
     const { filter, mode: searchMode } = searchState;
+    // Current match index for Tab/Shift+Tab cycling in content mode
+    const [matchIndex, setMatchIndex] = useState(0);
 
     // Filter and sort files by match score (best matches first)
     const scoreFn = searchMode === "content" ? getContentMatchScore : getMatchScore;
@@ -480,8 +482,29 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
         return;
       }
 
-      // Tab or Ctrl+E to edit the file in $EDITOR
-      if (key.name === "tab" || (key.ctrl && key.name === "e")) {
+      // Tab: In content mode, cycle to next match. Otherwise, edit file.
+      if (key.name === "tab") {
+        if (searchMode === "content" && filter) {
+          // Cycle to next match (will wrap in render based on match count)
+          setMatchIndex(matchIndex + 1);
+          setPreviewScroll(0); // Reset scroll so auto-scroll takes effect
+        } else if (currentFile) {
+          done({ action: "edit", path: currentFile.path });
+        }
+        return;
+      }
+
+      // Shift+Tab: In content mode, cycle to previous match
+      if (extKey.shift && extKey.sequence === "\x1b[Z") {
+        if (searchMode === "content" && filter) {
+          setMatchIndex(matchIndex - 1);
+          setPreviewScroll(0);
+        }
+        return;
+      }
+
+      // Ctrl+E to edit the file in $EDITOR (works in all modes)
+      if (key.ctrl && key.name === "e") {
         if (currentFile) {
           done({ action: "edit", path: currentFile.path });
         }
@@ -522,6 +545,7 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
         setSearchState({ ...searchState, filter: filter.slice(0, -1) });
         setCursor(0);
         setPreviewScroll(0);
+        setMatchIndex(0);
         return;
       }
 
@@ -529,6 +553,7 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
       if (key.name === "escape") {
         if (searchMode === "content" || filter) {
           setSearchState({ filter: "", mode: "name" });
+          setMatchIndex(0);
           if (filter) {
             setCursor(0);
             setPreviewScroll(0);
@@ -540,6 +565,7 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
       // "/" to toggle content search mode
       if (extKey.sequence === "/" && !filter) {
         setSearchState({ ...searchState, mode: searchMode === "content" ? "name" : "content" });
+        setMatchIndex(0);
         return;
       }
 
@@ -550,6 +576,7 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
           setSearchState({ ...searchState, filter: filter + char });
           setCursor(0);
           setPreviewScroll(0);
+          setMatchIndex(0); // Reset to first match on filter change
         }
       }
     });
@@ -627,20 +654,26 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
     let previewHeader = "";
     let previewFooter = "";
     let totalLines = 0;
+    let matchCount = 0;
+    let currentMatchIdx = 0;
 
     if (currentFile) {
       const content = readFileContentSync(currentFile.path);
       const searchTerm = searchMode === "content" && filter ? filter : undefined;
       const previewContentHeight = contentHeight - 2; // Leave room for header and footer
 
-      // Calculate effective scroll - auto-scroll to first match in content mode
+      // Calculate effective scroll - auto-scroll to current match in content mode
       let effectiveScroll = previewScroll;
       if (searchTerm && previewScroll === 0) {
-        // First pass: find first match display line
+        // First pass: get all match positions
         const firstPass = formatPreviewContent(content, previewContentHeight, 0, previewWidth, searchTerm);
-        if (firstPass.firstMatchDisplayLine !== undefined) {
+        matchCount = firstPass.matchDisplayLines.length;
+        if (matchCount > 0) {
+          // Wrap matchIndex to valid range
+          currentMatchIdx = ((matchIndex % matchCount) + matchCount) % matchCount;
+          const targetLine = firstPass.matchDisplayLines[currentMatchIdx]!;
           // Scroll to show match with some context above (3 lines)
-          effectiveScroll = Math.max(0, firstPass.firstMatchDisplayLine - 3);
+          effectiveScroll = Math.max(0, targetLine - 3);
         }
       }
 
@@ -653,10 +686,19 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
       );
       previewLines = formatted.lines;
       totalLines = formatted.totalLines;
+      // Update match count from final pass (in case first pass was skipped)
+      if (searchTerm && matchCount === 0) {
+        matchCount = formatted.matchDisplayLines.length;
+      }
 
-      // Header: shortened path
+      // Header: shortened path + match indicator in content mode
       const shortPath = shortenPath(currentFile.path);
-      previewHeader = `\x1b[1m\x1b[34m${shortPath}\x1b[0m`;
+      const matchIndicator = searchTerm && matchCount > 0
+        ? `  \x1b[33m[${currentMatchIdx + 1}/${matchCount}]\x1b[0m`
+        : searchTerm && matchCount === 0
+          ? `  \x1b[90m[no matches]\x1b[0m`
+          : "";
+      previewHeader = `\x1b[1m\x1b[34m${shortPath}\x1b[0m${matchIndicator}`;
 
       // Footer: scroll position
       const scrollPct =
@@ -681,8 +723,8 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
       : searchMode === "content"
         ? `${modeIndicator}\x1b[90mType to search file contents...\x1b[0m`
         : `\x1b[90mType to filter...\x1b[0m`;
-    const matchCount = `\x1b[90m(${filteredFiles.length}/${files.length})\x1b[0m`;
-    outputLines.push(`${prefix} ${config.message} ${matchCount}  ${filterDisplay}`);
+    const fileCountDisplay = `\x1b[90m(${filteredFiles.length}/${files.length})\x1b[0m`;
+    outputLines.push(`${prefix} ${config.message} ${fileCountDisplay}  ${filterDisplay}`);
     outputLines.push("");
 
     for (let i = 0; i < contentHeight; i++) {
@@ -704,8 +746,12 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
     // Help line with styled keys (inverse video for keys)
     const k = (t: string) => `\x1b[7m ${t} \x1b[27m`;
     outputLines.push("");
+    // Show different Tab hint in content mode (cycles matches vs edit)
+    const tabHint = searchMode === "content" && filter
+      ? `${k("Tab")} Next  ${k("S-Tab")} Prev`
+      : `${k("Tab")} Edit`;
     outputLines.push(
-      `${k("↑↓")} Nav  ${k("Enter")} Run  ${k("^R")} Dry  ${k("Tab")} Edit  ${k("/")} Content  ${k("Esc")} Clear`
+      `${k("↑↓")} Nav  ${k("Enter")} Run  ${k("^R")} Dry  ${tabHint}  ${k("/")} Content  ${k("Esc")} Clear`
     );
 
     return outputLines.join("\n");
