@@ -14,6 +14,7 @@
 import { join } from "path";
 import { ConfigError, getErrorMessage } from "./errors";
 import { detectSensitiveEnvVars } from "./security";
+import { getLogger } from "./logger";
 
 /**
  * Load environment files from a directory using Bun's native file reading
@@ -89,6 +90,15 @@ export async function loadEnvFiles(
       const sensitiveKeys = detectSensitiveEnvVars(vars);
 
       if (sensitiveKeys.length > 0) {
+        getLogger().warn(
+          {
+            module: "env",
+            envFile,
+            envPath,
+            sensitiveKeys,
+          },
+          "Sensitive-looking environment variable keys detected in .env file"
+        );
         console.error(
           `[env][security] ${envFile} contains sensitive-looking keys: ${sensitiveKeys.join(", ")}`
         );

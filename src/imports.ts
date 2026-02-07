@@ -390,10 +390,8 @@ function getProjectRoot(currentFileDir: string, importCtx?: ImportContext): stri
  * Resolve an import path relative to the current file's directory
  */
 function resolveImportPath(importPath: string, currentFileDir: string, projectRoot: string): string {
-  return sanitizePath(importPath, {
-    baseDir: currentFileDir,
-    projectRoot,
-  });
+  const resolvedImportPath = resolve(currentFileDir, importPath);
+  return sanitizePath(projectRoot, resolvedImportPath);
 }
 
 function parseListFromEnv(value: string | undefined): string[] {
@@ -897,10 +895,7 @@ async function processGlobImport(
   const unsafeGlobBaseDir = extractGlobBaseDir(resolvedPattern, currentFileDir);
   let globBaseDir: string;
   try {
-    globBaseDir = sanitizePath(unsafeGlobBaseDir, {
-      baseDir: currentFileDir,
-      projectRoot,
-    });
+    globBaseDir = sanitizePath(projectRoot, unsafeGlobBaseDir);
   } catch (err) {
     throw createImportError(
       `Glob import "${pattern}" escapes project root "${projectRoot}".`,
@@ -933,10 +928,7 @@ async function processGlobImport(
     for await (const file of glob.scan({ cwd: currentFileDir, absolute: true, onlyFiles: true })) {
       let safeFilePath: string;
       try {
-        safeFilePath = sanitizePath(file, {
-          baseDir: currentFileDir,
-          projectRoot,
-        });
+        safeFilePath = sanitizePath(projectRoot, file);
       } catch (err) {
         throw createImportError(
           `Glob import "${pattern}" resolved a path outside project root.`,

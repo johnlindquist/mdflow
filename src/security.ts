@@ -37,8 +37,8 @@ function expandTilde(input: string): string {
   return input;
 }
 
-function isWithinRoot(candidatePath: string, projectRoot: string): boolean {
-  const rel = relative(projectRoot, candidatePath);
+function isWithinBasePath(candidatePath: string, basePath: string): boolean {
+  const rel = relative(basePath, candidatePath);
   if (rel === "") return true;
   if (rel === "..") return false;
   if (rel.startsWith(`..${sep}`)) return false;
@@ -46,27 +46,59 @@ function isWithinRoot(candidatePath: string, projectRoot: string): boolean {
   return true;
 }
 
-export function sanitizePath(rawPath: string, options: SanitizePathOptions): string {
-  const projectRoot = resolve(expandTilde(options.projectRoot));
-  const baseDir = resolve(expandTilde(options.baseDir));
-  const resolvedPath = resolve(baseDir, expandTilde(rawPath));
+function sanitizePathWithinBasePath(basePath: string, inputPath: string): string {
+  const resolvedBasePath = resolve(expandTilde(basePath));
+  const resolvedInputPath = resolve(resolvedBasePath, expandTilde(inputPath));
 
-  if (isWithinRoot(resolvedPath, projectRoot)) {
-    return resolvedPath;
+  if (isWithinBasePath(resolvedInputPath, resolvedBasePath)) {
+    return resolvedInputPath;
   }
 
-  const hasTraversalSegments = rawPath
+  const hasTraversalSegments = inputPath
     .split(/[\\/]+/)
     .some((segment) => segment === "..");
 
   if (hasTraversalSegments) {
     throw new Error(
-      `Path traversal blocked: "${rawPath}" escapes project root "${projectRoot}".`
+      `Path traversal blocked: "${inputPath}" escapes base path "${resolvedBasePath}".`
     );
   }
 
   throw new Error(
-    `Import path "${rawPath}" resolves outside project root "${projectRoot}".`
+    `Import path "${inputPath}" resolves outside base path "${resolvedBasePath}".`
+  );
+}
+
+export function sanitizePath(basePath: string, inputPath: string): string;
+export function sanitizePath(inputPath: string, options: SanitizePathOptions): string;
+export function sanitizePath(
+  basePathOrInputPath: string,
+  inputPathOrOptions: string | SanitizePathOptions
+): string {
+  if (typeof inputPathOrOptions === "string") {
+    return sanitizePathWithinBasePath(basePathOrInputPath, inputPathOrOptions);
+  }
+
+  const projectRoot = resolve(expandTilde(inputPathOrOptions.projectRoot));
+  const baseDir = resolve(expandTilde(inputPathOrOptions.baseDir));
+  const resolvedPath = resolve(baseDir, expandTilde(basePathOrInputPath));
+
+  if (isWithinBasePath(resolvedPath, projectRoot)) {
+    return resolvedPath;
+  }
+
+  const hasTraversalSegments = basePathOrInputPath
+    .split(/[\\/]+/)
+    .some((segment) => segment === "..");
+
+  if (hasTraversalSegments) {
+    throw new Error(
+      `Path traversal blocked: "${basePathOrInputPath}" escapes project root "${projectRoot}".`
+    );
+  }
+
+  throw new Error(
+    `Import path "${basePathOrInputPath}" resolves outside project root "${projectRoot}".`
   );
 }
 
@@ -95,7 +127,7 @@ function matchesDomainRule(url: URL, rawRule: string): boolean {
   return hostWithPort === rule || hostname === rule;
 }
 
-export function validateUrl(rawUrl: string, options: ValidateUrlOptions = {}): URL {
+function parseHttpUrl(rawUrl: string): URL {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -107,6 +139,25 @@ export function validateUrl(rawUrl: string, options: ValidateUrlOptions = {}): U
     throw new Error(
       `Unsupported URL protocol "${parsed.protocol}". Only http:// and https:// are allowed.`
     );
+  }
+  return parsed;
+}
+
+export function validateUrl(rawUrl: string): boolean;
+export function validateUrl(rawUrl: string, options: ValidateUrlOptions): URL;
+export function validateUrl(rawUrl: string, options?: ValidateUrlOptions): boolean | URL {
+  let parsed: URL;
+  try {
+    parsed = parseHttpUrl(rawUrl);
+  } catch (err) {
+    if (!options) {
+      return false;
+    }
+    throw err;
+  }
+
+  if (!options) {
+    return true;
   }
 
   const blocklist = (options.blocklist ?? []).filter(Boolean);
