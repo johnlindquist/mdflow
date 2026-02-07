@@ -13,25 +13,88 @@ export interface IOStreams {
 }
 
 /**
- * Input definition for form-style prompts
- * Supports multiple input types with validation and defaults
+ * Frontmatter keys for underscore-prefixed system/template fields.
+ * Examples: `_inputs`, `_env`, `_name`, `_target`.
  */
-export interface InputDefinition {
-  /** Type of input prompt to display */
-  type: 'text' | 'select' | 'number' | 'confirm' | 'password';
+export type FrontmatterSystemKey = `_${string}`;
+
+/**
+ * Frontmatter keys for positional argument mappings.
+ * Examples: `$1`, `$2`, `$10`.
+ */
+export type FrontmatterPositionalKey = `$${number}`;
+
+/**
+ * Values supported in YAML frontmatter/config payloads.
+ * Keeps passthrough keys typed without falling back to `any`.
+ */
+export type FrontmatterValue =
+  | string
+  | number
+  | boolean
+  | null
+  | FrontmatterValue[]
+  | { [key: string]: FrontmatterValue }
+  | undefined;
+
+type InputDefinitionBase = {
   /** Description/help text shown to user */
   description?: string;
-  /** Default value for the input */
-  default?: string | number | boolean;
+  /** Whether the input is required (defaults to true) */
+  required?: boolean;
+};
+
+type TextInputDefinition = InputDefinitionBase & {
+  /** Type of input prompt to display */
+  type: "text";
+  /** Default value for text input */
+  default?: string;
+};
+
+type SelectInputDefinition = InputDefinitionBase & {
+  /** Type of input prompt to display */
+  type: "select";
   /** Options for select type */
-  options?: string[];
+  options: string[];
+  /** Default selected option */
+  default?: string;
+};
+
+type NumberInputDefinition = InputDefinitionBase & {
+  /** Type of input prompt to display */
+  type: "number";
+  /** Default numeric value */
+  default?: number;
   /** Minimum value for number type */
   min?: number;
   /** Maximum value for number type */
   max?: number;
-  /** Whether the input is required (defaults to true) */
-  required?: boolean;
-}
+};
+
+type ConfirmInputDefinition = InputDefinitionBase & {
+  /** Type of input prompt to display */
+  type: "confirm";
+  /** Default confirmation state */
+  default?: boolean;
+};
+
+type PasswordInputDefinition = InputDefinitionBase & {
+  /** Type of input prompt to display */
+  type: "password";
+  /** Optional default value (rarely used) */
+  default?: string;
+};
+
+/**
+ * Input definition for form-style prompts.
+ * Discriminated by `type` so each prompt variant has type-safe fields.
+ */
+export type InputDefinition =
+  | TextInputDefinition
+  | SelectInputDefinition
+  | NumberInputDefinition
+  | ConfirmInputDefinition
+  | PasswordInputDefinition;
 
 /**
  * Form inputs schema - maps variable names to their input definitions
@@ -47,7 +110,7 @@ export interface InputDefinition {
  *     options: [dev, staging, prod]
  * ```
  */
-export type FormInputs = Record<string, InputDefinition>;
+export type FormInputs = Record<FrontmatterSystemKey, InputDefinition>;
 
 /** Frontmatter configuration - keys become CLI flags */
 export interface AgentFrontmatter {
@@ -78,7 +141,7 @@ export interface AgentFrontmatter {
    * Maps positional arguments to CLI flags
    * Example: $1: prompt → body becomes --prompt <body>
    */
-  [key: `$${number}`]: string;
+  [key: FrontmatterPositionalKey]: string;
 
   /**
    * Template variables (_varname)
@@ -87,7 +150,7 @@ export interface AgentFrontmatter {
    * Example: _name: "default" → {{ _name }} in body → --_name "override"
    * Note: Also includes system keys like _inputs (string[]) and _env (Record<string, string>)
    */
-  [key: `_${string}`]: unknown;
+  [key: FrontmatterSystemKey]: FrontmatterValue;
 
   /**
    * All other keys are passed directly as CLI flags to the command.
@@ -96,14 +159,20 @@ export interface AgentFrontmatter {
    * - Boolean false: (omitted)
    * - Arrays: --key value1 --key value2
    */
-  [key: string]: unknown;
+  [key: string]: FrontmatterValue;
 }
 
+/**
+ * Parsed markdown content split into frontmatter and body.
+ */
 export interface ParsedMarkdown {
   frontmatter: AgentFrontmatter;
   body: string;
 }
 
+/**
+ * Result from command execution.
+ */
 export interface CommandResult {
   command: string;
   output: string;
@@ -171,14 +240,14 @@ export interface GlobalConfig {
  */
 export interface CommandDefaults {
   /** Map positional arg N to a flag (e.g., $1: "prompt" → --prompt <body>) */
-  [key: `$${number}`]: string;
+  [key: FrontmatterPositionalKey]: string;
   /**
    * Context window limit override (in tokens)
    * Overrides model-based defaults for token limit calculations
    */
   context_window?: number;
   /** Default flag values */
-  [key: string]: unknown;
+  [key: string]: FrontmatterValue;
 }
 
 /**

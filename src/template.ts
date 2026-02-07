@@ -4,9 +4,20 @@
  */
 
 import { Liquid, analyzeSync } from "liquidjs";
+import type { FrontmatterSystemKey } from "./types";
 
+/** Template variable names discovered from Liquid templates. */
+export type TemplateVariableName = FrontmatterSystemKey;
+
+/** Key-value map used for template substitution. */
 export interface TemplateVars {
   [key: string]: string;
+}
+
+/** Options for template substitution behavior. */
+export interface TemplateSubstitutionOptions {
+  /** When true, missing underscore-prefixed variables throw before render. */
+  strict?: boolean;
 }
 
 /**
@@ -49,7 +60,7 @@ engine.registerFilter("q", shellEscape); // Short alias
  * Uses LiquidJS's analyzeSync for accurate AST-based extraction,
  * avoiding regex fragility with complex Liquid syntax.
  */
-export function extractTemplateVars(content: string): string[] {
+export function extractTemplateVars(content: string): TemplateVariableName[] {
   try {
     // Parse the template into AST
     const templates = engine.parse(content);
@@ -57,7 +68,9 @@ export function extractTemplateVars(content: string): string[] {
     const analysis = analyzeSync(templates, { partials: false });
     // Only return variables starting with underscore
     // This prevents {{ model }} from consuming --model flags
-    return Object.keys(analysis.globals).filter((k) => k.startsWith("_"));
+    return Object.keys(analysis.globals).filter(
+      (k): k is TemplateVariableName => k.startsWith("_")
+    );
   } catch {
     // Fallback: return empty array if template parsing fails
     // This maintains backward compatibility for malformed templates
@@ -76,8 +89,8 @@ export function extractTemplateVars(content: string): string[] {
  */
 export function substituteTemplateVars(
   content: string,
-  vars: TemplateVars,
-  options: { strict?: boolean } = {}
+  vars: Readonly<TemplateVars>,
+  options: Readonly<TemplateSubstitutionOptions> = {}
 ): string {
   const { strict = false } = options;
 
@@ -99,8 +112,8 @@ export function substituteTemplateVars(
  * Extracts --key value pairs that aren't known flags
  */
 export function parseTemplateArgs(
-  args: string[],
-  knownFlags: Set<string>
+  args: readonly string[],
+  knownFlags: ReadonlySet<string>
 ): TemplateVars {
   const vars: TemplateVars = {};
 
