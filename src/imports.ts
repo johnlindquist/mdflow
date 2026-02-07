@@ -350,7 +350,7 @@ function expandTilde(filePath: string): string {
  * Discover a project root for import path boundary checks.
  * Preference order:
  * 1. Nearest directory containing common project markers (.git/package.json/etc.)
- * 2. Filesystem root as a permissive fallback when no marker exists.
+ * 2. Starting directory when no marker exists.
  */
 function detectProjectRoot(startDir: string): string {
   let current = resolve(startDir);
@@ -367,7 +367,7 @@ function detectProjectRoot(startDir: string): string {
     current = dirname(current);
   }
 
-  return previous || resolve(startDir);
+  return resolve(startDir);
 }
 
 function getProjectRoot(currentFileDir: string, importCtx?: ImportContext): string {
