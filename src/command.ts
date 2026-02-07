@@ -13,6 +13,7 @@ import { getProcessManager } from "./process-manager";
 import { createStreamingRenderer, type StreamingMarkdownRenderer } from "./markdown-renderer";
 import { getRegisteredAdapters } from "./adapters";
 import { CommandError } from "./errors";
+import { escapeShellArg as escapeShellArgShared } from "./security";
 
 /**
  * Module-level reference to the current child process
@@ -424,16 +425,7 @@ function hasNullByte(value: string): boolean {
  * This is display-only; process execution always uses argv arrays.
  */
 export function escapeShellArg(arg: string): string {
-  if (process.platform === "win32") {
-    if (arg.length === 0) return "\"\"";
-    const escaped = arg
-      .replace(/"/g, "\"\"")
-      .replace(/([&|<>^%!])/g, "^$1");
-    return `"${escaped}"`;
-  }
-
-  if (arg.length === 0) return "''";
-  return `'${arg.replace(/'/g, `'\"'\"'`)}'`;
+  return escapeShellArgShared(arg, process.platform === "win32" ? "win32" : "posix");
 }
 
 function formatSpawnPreview(command: string, args: string[]): string {
