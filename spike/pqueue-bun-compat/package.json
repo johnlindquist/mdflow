@@ -1,0 +1,8 @@
+{
+  "name": "pqueue-bun-compat-spike",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "p-queue": "8.0.1"
+  }
+}
