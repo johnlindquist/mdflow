@@ -13,6 +13,7 @@ import { mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
+  MdflowError,
   MarkdownAgentError,
   ConfigurationError,
   SecurityError,
@@ -26,6 +27,7 @@ import {
   HookError,
   UserCancelledError,
   EarlyExitRequest,
+  getErrorMessage,
 } from "./errors";
 import { AgentRuntime, createRuntime } from "./runtime";
 import { handleMaCommands, parseCliArgs } from "./cli";
@@ -63,6 +65,26 @@ describe("Error Classes", () => {
       expect(error.stack).toBeDefined();
       expect(error.stack).toContain("MarkdownAgentError");
     });
+
+    it("preserves explicit metadata options", () => {
+      const cause = new Error("underlying");
+      const error = new MarkdownAgentError("test", {
+        exitCode: 9,
+        errorCode: "HOOK_EXECUTION_FAILED",
+        context: { phase: "hardening" },
+        cause,
+      });
+
+      expect(error.code).toBe(9);
+      expect(error.errorCode).toBe("HOOK_EXECUTION_FAILED");
+      expect(error.context).toEqual({ phase: "hardening" });
+      expect((error as Error & { cause?: unknown }).cause).toBe(cause);
+    });
+
+    it("defaults context to empty object when omitted", () => {
+      const error = new MarkdownAgentError("test", { exitCode: 2 });
+      expect(error.context).toEqual({});
+    });
   });
 
   describe("ConfigurationError", () => {
@@ -93,6 +115,12 @@ describe("Error Classes", () => {
     it("has correct name", () => {
       const error = new SecurityError("test");
       expect(error.name).toBe("SecurityError");
+    });
+
+    it("retains class default error code when numeric exit code is passed", () => {
+      const error = new SecurityError("blocked", 7);
+      expect(error.code).toBe(7);
+      expect(error.errorCode).toBe("SECURITY_TRUST_FAILED");
     });
   });
 
@@ -234,6 +262,18 @@ describe("Error Classes", () => {
       const error = new EarlyExitRequest("done", 0);
       expect(error.code).toBe(0);
     });
+  });
+});
+
+describe("Error helpers", () => {
+  it("test_getErrorMessage_returns_message_for_error_instances", () => {
+    expect(getErrorMessage(new MdflowError("boom"))).toBe("boom");
+  });
+
+  it("test_getErrorMessage_stringifies_non_error_values", () => {
+    expect(getErrorMessage({ reason: "bad-input" })).toBe("[object Object]");
+    expect(getErrorMessage(undefined)).toBe("undefined");
+    expect(getErrorMessage(123)).toBe("123");
   });
 });
 
