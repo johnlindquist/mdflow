@@ -57,6 +57,27 @@ export interface SymbolImportAction {
   index: number;
 }
 
+/** Supported first-class context provider names */
+export type ProviderName =
+  | 'git:diff'
+  | 'git:staged'
+  | 'git:status'
+  | 'git:log'
+  | 'tree'
+  | 'rg';
+
+/** First-class context provider import (e.g. @git:diff, @tree, @rg:pattern) */
+export interface ProviderImportAction {
+  type: 'provider';
+  provider: ProviderName;
+  /** Optional provider argument (git:log count, rg pattern, etc.) */
+  argument?: string;
+  /** Original matched text for replacement */
+  original: string;
+  /** Position in the original string */
+  index: number;
+}
+
 /** Executable Code Fence Action */
 export interface ExecutableCodeFenceAction {
   type: 'executable_code_fence';
@@ -74,6 +95,7 @@ export type ImportAction =
   | UrlImportAction
   | CommandImportAction
   | SymbolImportAction
+  | ProviderImportAction
   | ExecutableCodeFenceAction;
 
 /**

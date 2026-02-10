@@ -32,7 +32,8 @@ export type ReservedFrontmatterSystemKey =
   | "_command"
   | "_c"
   | "_steps"
-  | "_workflow";
+  | "_workflow"
+  | "_context_budget_tokens";
 
 export type FrontmatterSystemKey = ReservedFrontmatterSystemKey | `_${string}`;
 
@@ -174,6 +175,12 @@ export interface AgentFrontmatter {
   _steps?: FrontmatterValue[];
 
   /**
+   * Optional token budget for context providers (@git:diff, @tree, etc.).
+   * When set, provider output is truncated/summarized to fit this budget.
+   */
+  _context_budget_tokens?: number;
+
+  /**
    * Context window limit override (in tokens)
    * If set, overrides the model-based default context limit
    * Useful for custom models or when you want to enforce a specific limit
@@ -193,7 +200,7 @@ export interface AgentFrontmatter {
    * Underscore-prefixed keys are template variables, not passed to CLI.
    * Available in body as {{ _varname }}, can be overridden via --_varname CLI flag.
    * Example: _name: "default" → {{ _name }} in body → --_name "override"
-   * Note: Also includes system keys like _inputs, _env, _output, and _steps.
+   * Note: Also includes system keys like _inputs, _env, _output, _steps, and _context_budget_tokens.
    */
   [key: FrontmatterSystemKey]: FrontmatterValue;
 

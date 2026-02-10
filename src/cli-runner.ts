@@ -235,6 +235,25 @@ export class CliRunner {
     return filePath;
   }
 
+  private parseRegistryArgs(args: string[]): { scope?: "project" | "user"; positional: string[] } {
+    let scope: "project" | "user" | undefined;
+    const positional: string[] = [];
+
+    for (const arg of args) {
+      if (arg === "--project" || arg === "-p") {
+        scope = "project";
+        continue;
+      }
+      if (arg === "--global" || arg === "-g" || arg === "--user") {
+        scope = "user";
+        continue;
+      }
+      positional.push(arg);
+    }
+
+    return { scope, positional };
+  }
+
   async run(argv: string[]): Promise<CliRunResult> {
     let logPath: string | null = null;
     try {
@@ -268,6 +287,7 @@ export class CliRunner {
 
     const cliArgs = parseCliArgs(argv);
     const subcommand = cliArgs.filePath;
+    const registryArgs = this.parseRegistryArgs(cliArgs.passthroughArgs);
 
     // Handle subcommands
     if (subcommand === "create") {
@@ -292,6 +312,60 @@ export class CliRunner {
       }
       return { exitCode: 0 };
     }
+    if (subcommand === "install") {
+      const { installAgent } = await import("./registry");
+      const spec = registryArgs.positional[0];
+      if (!spec) {
+        throw new ConfigurationError("Usage: md install <url|gh:org/repo/path/to/agent.md@ref>", 1);
+      }
+
+      const installed = await installAgent(spec, { scope: registryArgs.scope, cwd: this.cwd });
+      this.writeStdout(`Installed: ${installed.name}`);
+      this.writeStdout(`  Source: ${installed.source}`);
+      if (installed.resolvedRef) {
+        this.writeStdout(`  Resolved ref: ${installed.resolvedRef}`);
+      }
+      this.writeStdout(`  Scope: ${installed.scope}`);
+      this.writeStdout(`  Path: ${installed.installedPath}`);
+      this.writeStdout(`  SHA-256: ${installed.sha256}`);
+      return { exitCode: 0 };
+    }
+    if (subcommand === "remove") {
+      const { removeAgent } = await import("./registry");
+      const name = registryArgs.positional[0];
+      if (!name) {
+        throw new ConfigurationError("Usage: md remove <agent-name>", 1);
+      }
+
+      const removed = await removeAgent(name, { scope: registryArgs.scope, cwd: this.cwd });
+      if (!removed.removed) {
+        throw new ConfigurationError(`Registry agent not found: ${name}`, 1);
+      }
+
+      this.writeStdout(`Removed: ${removed.name} (${removed.removedFrom.join(", ")})`);
+      return { exitCode: 0 };
+    }
+    if (subcommand === "list") {
+      const { listAgents } = await import("./registry");
+      const agents = await listAgents({ scope: registryArgs.scope, cwd: this.cwd });
+      if (agents.length === 0) {
+        this.writeStdout("No registry agents installed.");
+        return { exitCode: 0 };
+      }
+
+      this.writeStdout("Registry agents:");
+      for (const agent of agents) {
+        this.writeStdout(`  ${agent.name} [${agent.scope}]`);
+        this.writeStdout(`    source: ${agent.source}`);
+        if (agent.resolvedRef) {
+          this.writeStdout(`    resolvedRef: ${agent.resolvedRef}`);
+        }
+        this.writeStdout(`    sha256: ${agent.sha256}`);
+        this.writeStdout(`    path: ${agent.installedPath}`);
+        this.writeStdout(`    installedAt: ${agent.installedAt}`);
+      }
+      return { exitCode: 0 };
+    }
     if (subcommand === "explain") {
       const { runExplain } = await import("./explain");
       await runExplain(cliArgs.passthroughArgs);
@@ -312,7 +386,7 @@ export class CliRunner {
       } else if (!result.handled) {
         this.writeStderr("Usage: md <file.md> [flags for command]");
         this.writeStderr("       md <command> [options]");
-        this.writeStderr("\nCommands: create, setup, logs, help");
+        this.writeStderr("\nCommands: create, setup, logs, explain, install, remove, list, help");
         this.writeStderr("Run 'md help' for more info");
         throw new ConfigurationError("No agent file specified", 1);
       }
