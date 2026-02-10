@@ -17,6 +17,7 @@ import type {
   UrlImportAction,
   CommandImportAction,
   SymbolImportAction,
+  ProviderImportAction,
   ExecutableCodeFenceAction,
 } from './imports-types';
 
@@ -135,6 +136,18 @@ const COMMAND_INLINE_PATTERN = /!(`+)([\s\S]+?)\1/g;
 const URL_IMPORT_PATTERN = /@(https?:\/\/[^\s]+)/g;
 
 /**
+ * Pattern to match first-class context providers
+ * Matches:
+ * - @git:diff
+ * - @git:staged
+ * - @git:status
+ * - @git:log(20)
+ * - @tree
+ * - @rg:pattern
+ */
+const PROVIDER_IMPORT_PATTERN = /@((?:git:(?:diff|staged|status)\b|git:log\(\d+\)|tree\b|rg:[^\s]+))/g;
+
+/**
  * Pattern to match executable code fences
  * Matches: ```lang\n#!shebang\ncode\n```
  * Supports variable length fences.
@@ -228,6 +241,101 @@ function parseFileImportPath(
   };
 }
 
+type ParsedProviderImportAction = ProviderImportAction & {
+  /** Provider namespace (e.g. "git", "tree", "rg") */
+  name: string;
+  /** Optional provider subcommand (e.g. "diff", "status", "log") */
+  subcommand?: string;
+  /** Optional provider arg (e.g. git log count, rg pattern) */
+  arg?: string;
+};
+
+function createProviderAction(
+  fullMatch: string,
+  index: number,
+  options: {
+    provider: ParsedProviderImportAction['provider'];
+    name: string;
+    subcommand?: string;
+    arg?: string;
+  }
+): ParsedProviderImportAction {
+  return {
+    type: 'provider',
+    provider: options.provider,
+    argument: options.arg,
+    name: options.name,
+    subcommand: options.subcommand,
+    arg: options.arg,
+    original: fullMatch,
+    index,
+  };
+}
+
+/**
+ * Parse a context provider import path into ProviderImportAction
+ */
+function parseProviderImportPath(
+  fullMatch: string,
+  providerPath: string,
+  index: number
+): ParsedProviderImportAction | null {
+  if (providerPath === 'tree') {
+    return createProviderAction(fullMatch, index, {
+      provider: 'tree',
+      name: 'tree',
+    });
+  }
+
+  if (providerPath.startsWith('rg:')) {
+    const pattern = providerPath.slice('rg:'.length);
+    if (!pattern) {
+      return null;
+    }
+    return createProviderAction(fullMatch, index, {
+      provider: 'rg',
+      name: 'rg',
+      arg: pattern,
+    });
+  }
+
+  if (providerPath === 'git:diff') {
+    return createProviderAction(fullMatch, index, {
+      provider: 'git:diff',
+      name: 'git',
+      subcommand: 'diff',
+    });
+  }
+
+  if (providerPath === 'git:staged') {
+    return createProviderAction(fullMatch, index, {
+      provider: 'git:staged',
+      name: 'git',
+      subcommand: 'staged',
+    });
+  }
+
+  if (providerPath === 'git:status') {
+    return createProviderAction(fullMatch, index, {
+      provider: 'git:status',
+      name: 'git',
+      subcommand: 'status',
+    });
+  }
+
+  const gitLogMatch = providerPath.match(/^git:log\((\d+)\)$/);
+  if (gitLogMatch && gitLogMatch[1]) {
+    return createProviderAction(fullMatch, index, {
+      provider: 'git:log',
+      name: 'git',
+      subcommand: 'log',
+      arg: gitLogMatch[1],
+    });
+  }
+
+  return null;
+}
+
 /**
  * Parse all imports from content
  *
@@ -287,6 +395,17 @@ export function parseImports(content: string): ImportAction[] {
         index: match.index,
       };
       actions.push(urlAction);
+    }
+  }
+
+  // Parse context provider imports
+  PROVIDER_IMPORT_PATTERN.lastIndex = 0;
+  while ((match = PROVIDER_IMPORT_PATTERN.exec(content)) !== null) {
+    if (isInSafeRange(match.index, safeRanges) && match[1]) {
+      const providerAction = parseProviderImportPath(match[0], match[1], match.index);
+      if (providerAction) {
+        actions.push(providerAction);
+      }
     }
   }
 

@@ -10,9 +10,10 @@ import { estimateTokens, getContextLimit, countTokensAsync } from "./tokenizer";
 import { Semaphore, DEFAULT_CONCURRENCY_LIMIT } from "./concurrency";
 import { substituteTemplateVars } from "./template";
 import { parseImports as parseImportsSafe, hasImportsInContent } from "./imports-parser";
-import type { ImportAction, ExecutableCodeFenceAction } from "./imports-types";
+import type { ImportAction, ExecutableCodeFenceAction, ProviderImportAction } from "./imports-types";
 import { ImportError, getErrorMessage } from "./errors";
 import { escapeShellArg, sanitizePath, validateUrl } from "./security";
+import { runProvider, resolveContextProviderImport } from "./context-providers";
 
 // Lazy-load ignore package (only needed for glob imports)
 type IgnoreFactory = typeof import("ignore");
@@ -117,6 +118,7 @@ export { Semaphore, DEFAULT_CONCURRENCY_LIMIT } from "./concurrency";
  * - @./file.ts:10-50 - Line range extraction
  * - @./file.ts#SymbolName - Symbol extraction (interface, function, class, type, const)
  * - @https://example.com/docs or @http://... - Fetch URL content (markdown/json only)
+ * - @git:diff, @git:status, @git:log(20), @tree, @rg:pattern - First-class context providers
  * - !`command` - Execute command and inline stdout/stderr
  *
  * Imports are processed recursively, with circular import detection.
@@ -175,6 +177,11 @@ export interface ImportContext {
    * This keeps path policy stable across recursive import expansion.
    */
   _projectRoot?: string;
+  /**
+   * Optional token budget for first-class context providers (e.g. @git:diff, @tree).
+   * When set, provider output falls back to summary mode/truncation to stay in budget.
+   */
+  _context_budget_tokens?: number;
 }
 
 const PROJECT_ROOT_MARKERS = [
@@ -832,6 +839,90 @@ async function processUrlImport(
       {
         url: targetUrl,
         suggestion: "Check the URL, proxy settings, and internet connectivity, then retry.",
+      },
+      err
+    );
+  }
+}
+
+function getContextProviderBudgetTokens(importCtx?: ImportContext): number | undefined {
+  const budget = importCtx?._context_budget_tokens;
+  if (budget === undefined || budget === null) {
+    return undefined;
+  }
+
+  if (!Number.isFinite(budget)) {
+    return undefined;
+  }
+
+  return Math.floor(budget);
+}
+
+type ProviderImportActionCompat = ProviderImportAction & {
+  name?: string;
+  subcommand?: string;
+  arg?: string;
+};
+
+function getProviderInvocationSpec(
+  action: ProviderImportAction
+): { provider: string; argument?: string } {
+  const compatAction = action as ProviderImportActionCompat;
+  const compatArgument = compatAction.arg ?? compatAction.argument;
+  const providerName = compatAction.name?.trim();
+  const subcommand = compatAction.subcommand?.trim();
+
+  if (providerName) {
+    return {
+      provider: subcommand ? `${providerName}:${subcommand}` : providerName,
+      argument: compatArgument,
+    };
+  }
+
+  return {
+    provider: action.provider,
+    argument: action.argument,
+  };
+}
+
+async function processProviderImport(
+  action: ProviderImportAction,
+  currentFileDir: string,
+  verbose: boolean,
+  importCtx?: ImportContext
+): Promise<string> {
+  const providerCwd = importCtx?.invocationCwd ?? currentFileDir;
+  const maxTokens = getContextProviderBudgetTokens(importCtx);
+  const providerSpec = getProviderInvocationSpec(action);
+  const providerAction: ProviderImportAction = {
+    ...action,
+    provider: providerSpec.provider as ProviderImportAction["provider"],
+    argument: providerSpec.argument,
+  };
+
+  if (verbose) {
+    console.error(`[imports] Expanding context provider: ${action.original}`);
+  }
+
+  try {
+    if (providerCwd === process.cwd()) {
+      return await runProvider(providerSpec.provider, providerSpec.argument, maxTokens);
+    }
+
+    return await resolveContextProviderImport(providerAction, {
+      cwd: providerCwd,
+      maxTokens,
+    });
+  } catch (err) {
+    throw createImportError(
+      `Failed to resolve context provider "${action.original}": ${getErrorMessage(err)}`,
+      "IMPORT_COMMAND_FAILED",
+      {
+        provider: providerSpec.provider,
+        providerArgument: providerSpec.argument,
+        cwd: providerCwd,
+        maxTokens,
+        suggestion: "Verify provider syntax and ensure required binaries (git/rg/tree/find) are installed.",
       },
       err
     );
@@ -1652,6 +1743,7 @@ async function processExecutableCodeFence(
 type ParsedImport =
   | { type: 'file'; full: string; path: string; index: number }
   | { type: 'url'; full: string; url: string; index: number }
+  | { type: 'provider'; full: string; action: ProviderImportAction; index: number }
   | { type: 'command'; full: string; command: string; index: number }
   | { type: 'executable_code_fence'; full: string; action: ExecutableCodeFenceAction; index: number };
 
@@ -1789,6 +1881,8 @@ export async function expandImports(
         return { type: 'file' as const, full: action.original, path: `${action.path}#${action.symbol}`, index: action.index };
       case 'url':
         return { type: 'url' as const, full: action.original, url: action.url, index: action.index };
+      case 'provider':
+        return { type: 'provider' as const, full: action.original, action, index: action.index };
       case 'command':
         return { type: 'command' as const, full: action.original, command: action.command, index: action.index };
       case 'executable_code_fence':
@@ -1829,6 +1923,13 @@ export async function expandImports(
             // Track URL imports
             if (resolvedImportsTracker) {
               resolvedImportsTracker.push(imp.url);
+            }
+            break;
+          case 'provider':
+            resolvedContent = await processProviderImport(imp.action, currentFileDir, verbose, importCtx);
+            // Track provider imports
+            if (resolvedImportsTracker) {
+              resolvedImportsTracker.push(imp.action.original);
             }
             break;
           case 'command':
@@ -1890,17 +1991,17 @@ export function hasImports(content: string): boolean {
 // 3-Phase Import Pipeline
 // ============================================================================
 // Enables LiquidJS template processing between file imports and command execution:
-// 1. expandContentImports() - Expands @file, @glob, @url, @symbol
+// 1. expandContentImports() - Expands @file, @glob, @url, @symbol, @provider
 // 2. LiquidJS templates ({% capture %}, {{ var }}, etc.)
 // 3. expandCommandImports() - Expands !`commands` with resolved template vars
 
 /**
- * Check if content has content imports (file, glob, url, symbol)
+ * Check if content has content imports (file, glob, url, symbol, provider)
  */
 export function hasContentImports(content: string): boolean {
   const actions = parseImportsSafe(content);
   return actions.some(a =>
-    a.type === 'file' || a.type === 'glob' || a.type === 'url' || a.type === 'symbol'
+    a.type === 'file' || a.type === 'glob' || a.type === 'url' || a.type === 'symbol' || a.type === 'provider'
   );
 }
 
@@ -1931,7 +2032,7 @@ export async function expandContentImports(
 
   // Filter to content imports only
   const contentActions = rawActions.filter(a =>
-    a.type === 'file' || a.type === 'glob' || a.type === 'symbol' || a.type === 'url'
+    a.type === 'file' || a.type === 'glob' || a.type === 'symbol' || a.type === 'url' || a.type === 'provider'
   );
 
   if (contentActions.length === 0) return content;
@@ -1961,6 +2062,10 @@ export async function expandContentImports(
           parsed = { type: 'file', full: action.original, path, index: action.index };
           const contentOnlyCtx: ImportContext = { ...ctx, _contentOnly: true };
           resolvedContent = await processFileImport(path, currentFileDir, stack, verbose, contentOnlyCtx);
+        } else if (action.type === 'provider') {
+          parsed = { type: 'provider', full: action.original, action, index: action.index };
+          resolvedContent = await processProviderImport(action, currentFileDir, verbose, ctx);
+          if (tracker) tracker.push(action.original);
         } else {
           // action.type === 'url'
           parsed = { type: 'url', full: action.original, url: action.url, index: action.index };
