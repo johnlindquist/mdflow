@@ -3,6 +3,7 @@
 ```bash
 review.claude.md                 # Run with Claude
 commit.gemini.md "fix auth bug"  # Run with Gemini
+explain.opencode.md              # Run with OpenCode
 git diff | explain.claude.md     # Pipe through any command
 ```
 
@@ -40,6 +41,7 @@ Name your file `task.COMMAND.md` and the command is inferred:
 ```bash
 task.claude.md    # Runs claude
 task.gemini.md    # Runs gemini
+task.opencode.md  # Runs opencode
 task.codex.md     # Runs codex
 task.copilot.md   # Runs copilot (print mode by default)
 ```
@@ -318,6 +320,7 @@ task.claude.md      # Runs: claude --print "..."
 task.copilot.md     # Runs: copilot --silent --prompt "..."
 task.codex.md       # Runs: codex exec "..."
 task.gemini.md      # Runs: gemini "..." (one-shot)
+task.opencode.md    # Runs: opencode run "..." (non-interactive)
 ```
 
 ### Interactive Mode
@@ -329,6 +332,7 @@ task.i.claude.md    # Runs: claude "..." (interactive session)
 task.i.copilot.md   # Runs: copilot --silent --interactive "..."
 task.i.codex.md     # Runs: codex "..." (interactive session)
 task.i.gemini.md    # Runs: gemini --prompt-interactive "..."
+task.i.opencode.md  # Runs: opencode "..." (interactive TUI)
 ```
 
 Or use `_interactive` (or `_i`) in frontmatter:
@@ -401,6 +405,16 @@ sandbox: workspace-write
 full-auto: true
 ---
 Analyze this codebase and suggest improvements.
+```
+
+### OpenCode
+
+```markdown
+# refactor.opencode.md
+---
+model: opencode/glm-5-free
+---
+Refactor the database layer to use the Repository pattern.
 ```
 
 ### Copilot (no frontmatter needed!)
