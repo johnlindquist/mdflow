@@ -412,7 +412,7 @@ Analyze this codebase and suggest improvements.
 ```markdown
 # refactor.opencode.md
 ---
-model: opencode/glm-5-free
+model: opencode/gpt-5.1-codex
 ---
 Refactor the database layer to use the Repository pattern.
 ```
