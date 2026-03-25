@@ -46,7 +46,7 @@ All three code paths now delegate to this function:
 
 ## Testing strategy
 
-Property-based tests (fast-check, 200 randomized inputs per law) replace the case-by-case merge tests. A mutation proof (`doc/mutation-proof.md`) demonstrates equivalence: three deliberate bugs were introduced one at a time, and the property tests caught all three (3/3) while the case tests caught only one (1/3). The two bugs missed by case tests were phantom key injection (caught by identity law) and input mutation (caught by no-mutation law).
+A mutation proof (`docs/mutation-proof.md`) demonstrates equivalence: three deliberate bugs were introduced one at a time, and the property tests caught all three (3/3) while the case tests caught only one (1/3). The two bugs missed by case tests were phantom key injection (caught by identity law) and input mutation (caught by no-mutation law).
 
 ## Consequences
 
