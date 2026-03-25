@@ -15,13 +15,12 @@ import {
   createSilentLogger,
   createTestLogger,
   createConsoleLogger,
-  mergeConfigs,
   BUILTIN_DEFAULTS,
   type TestLogger,
 } from "./context";
 import type { RunContext, GlobalConfig } from "./types";
 import { expandImports } from "./imports";
-import { loadFullConfigFresh, getCommandDefaultsFromConfig, applyDefaults } from "./config";
+import { loadFullConfigFresh, getCommandDefaultsFromConfig } from "./config";
 
 describe("RunContext", () => {
   describe("createRunContext", () => {
@@ -146,59 +145,9 @@ describe("RunContext", () => {
     });
   });
 
-  describe("mergeConfigs", () => {
-    it("merges empty configs", () => {
-      const result = mergeConfigs({}, {});
-      expect(result).toEqual({});
-    });
-
-    it("base config is preserved when override is empty", () => {
-      const base: GlobalConfig = {
-        commands: { claude: { model: "opus" } },
-      };
-      const result = mergeConfigs(base, {});
-
-      expect(result.commands?.claude?.model).toBe("opus");
-    });
-
-    it("override takes priority", () => {
-      const base: GlobalConfig = {
-        commands: { claude: { model: "opus" } },
-      };
-      const override: GlobalConfig = {
-        commands: { claude: { model: "sonnet" } },
-      };
-      const result = mergeConfigs(base, override);
-
-      expect(result.commands?.claude?.model).toBe("sonnet");
-    });
-
-    it("merges command settings", () => {
-      const base: GlobalConfig = {
-        commands: { claude: { model: "opus" } },
-      };
-      const override: GlobalConfig = {
-        commands: { claude: { verbose: true } },
-      };
-      const result = mergeConfigs(base, override);
-
-      expect(result.commands?.claude?.model).toBe("opus");
-      expect(result.commands?.claude?.verbose).toBe(true);
-    });
-
-    it("adds new commands", () => {
-      const base: GlobalConfig = {
-        commands: { claude: { model: "opus" } },
-      };
-      const override: GlobalConfig = {
-        commands: { gemini: { model: "pro" } },
-      };
-      const result = mergeConfigs(base, override);
-
-      expect(result.commands?.claude?.model).toBe("opus");
-      expect(result.commands?.gemini?.model).toBe("pro");
-    });
-  });
+  // NOTE: mergeConfigs merge-logic tests (identity, right-bias, key preservation)
+  // have been replaced by property-based tests in config-monoid.test.ts.
+  // See docs/mutation-proof.md for the equivalence proof.
 });
 
 describe("RunContext Isolation", () => {
@@ -332,23 +281,8 @@ After import`;
     expect(unknownDefaults).toBeUndefined();
   });
 
-  it("applyDefaults works with RunContext config", () => {
-    const ctx = createTestRunContext({
-      config: {
-        commands: {
-          claude: { model: "opus", verbose: true },
-        },
-      },
-    });
-
-    const frontmatter = { temperature: 0.7 };
-    const defaults = getCommandDefaultsFromConfig(ctx.config, "claude");
-    const result = applyDefaults(frontmatter, defaults);
-
-    expect(result.model).toBe("opus");
-    expect(result.verbose).toBe(true);
-    expect(result.temperature).toBe(0.7);
-  });
+  // NOTE: applyDefaults merge-logic test replaced by property-based tests
+  // in config-monoid.test.ts. See docs/mutation-proof.md.
 });
 
 describe("Parallel Test Isolation Demo", () => {
