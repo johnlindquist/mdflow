@@ -10,6 +10,7 @@
 
 import type { AgentFrontmatter } from "./types";
 import type { GlobalConfig } from "./config";
+import { concatFrontmatter } from "./config";
 
 /**
  * Specification for a command to be executed
@@ -279,9 +280,9 @@ export function buildCommand(
   config: GlobalConfig,
   cwd: string = process.cwd()
 ): CommandSpec {
-  // Apply command defaults from config
+  // Apply command defaults from config (defaults ⊕ frontmatter; frontmatter wins)
   const defaults = getCommandDefaultsFromConfig(command, config);
-  const mergedFrontmatter = { ...defaults, ...frontmatter } as AgentFrontmatter;
+  const mergedFrontmatter = concatFrontmatter(defaults as AgentFrontmatter, frontmatter);
 
   // Build base args from frontmatter
   const baseArgs = buildArgsFromFrontmatter(mergedFrontmatter, templateVars);
@@ -329,9 +330,9 @@ export function buildCommandBase(
   config: GlobalConfig,
   cwd: string = process.cwd()
 ): CommandSpec {
-  // Apply command defaults from config
+  // Apply command defaults from config (defaults ⊕ frontmatter; frontmatter wins)
   const defaults = getCommandDefaultsFromConfig(command, config);
-  const mergedFrontmatter = { ...defaults, ...frontmatter } as AgentFrontmatter;
+  const mergedFrontmatter = concatFrontmatter(defaults as AgentFrontmatter, frontmatter);
 
   // Build base args from frontmatter
   const args = buildArgsFromFrontmatter(mergedFrontmatter, templateVars);
