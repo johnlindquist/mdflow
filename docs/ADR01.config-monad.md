@@ -1,7 +1,7 @@
 # ADR-01: Unify config merging under a monoid
 
 - **Status**: Accepted
-- **Date**: 2025-12-12
+- **Date**: 2026-03-25
 - **Scope**: `config.ts`, `command-builder.ts`
 
 ## Context
