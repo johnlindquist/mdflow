@@ -18,6 +18,7 @@ Supported subcommands:
 | --- | --- |
 | `md create [name]` | Create a new agent file. |
 | `md explain <agent.md>` | Print resolved config and prompt without execution. |
+| `md eval <flow.md>` | Run the flow's colocated eval suite (`<flow>.eval.ts`). Costs engine turns; cost is printed first. |
 | `md setup` | Configure shell integration. |
 | `md logs` | Show log directory and per-agent logs. |
 | `md help` | Print CLI help. |
@@ -28,7 +29,7 @@ These flags are consumed by mdflow and are not passed to underlying LLM CLIs.
 
 | Flag | Description |
 | --- | --- |
-| `--_command`, `-_c` | Override command resolution for generic `.md` files. |
+| `--engine` | Select the engine explicitly (top rung of the resolution ladder). Deprecated aliases: `--_command`, `-_c`, `--tool`. |
 | `--_dry-run` | Print resolved command/prompt without execution. |
 | `--_edit` | Open resolved prompt in `$EDITOR` before execution. |
 | `--_trust` | Skip TOFU trust prompt for remote URLs. |
@@ -43,6 +44,31 @@ Interactive mode controls are also supported:
 | Flag | Description |
 | --- | --- |
 | `--_interactive`, `-_i` | Force interactive mode for supported adapters. |
+
+## Engine resolution
+
+The engine that runs a flow is resolved by a ladder, most explicit first:
+
+1. `--engine` CLI flag (deprecated aliases: `--_command`/`-_c`, `--tool`).
+2. `MDFLOW_ENGINE` environment variable.
+3. Filename suffix (`task.claude.md`). The segment only wins when it names a
+   registered adapter or a binary on `PATH`; otherwise it falls through with a
+   `Warning [ENGINE_NOT_FOUND]`.
+4. Frontmatter `engine:` (deprecated aliases: `tool:`, `_tool:` — they still
+   work but warn).
+5. Config `engine:` (project config beats `~/.mdflow/config.yaml`).
+6. Built-in default: `pi`.
+
+Resolution never fails for a missing engine — the default always applies. A
+file with no frontmatter and no explicit engine is a document, not a flow:
+`md README.md` prints it instead of executing it.
+
+Bundled engine adapters: `claude`, `codex`, `copilot`, `gemini`*, `droid`,
+`opencode`, `pi` (default), `cursor-agent`, `agy` (Google Antigravity).
+
+\* Google sunset the gemini CLI for individual accounts in June 2026; the
+gemini adapter remains only for Gemini Code Assist Standard/Enterprise orgs.
+Use `agy` otherwise.
 
 ## Frontmatter contract
 
@@ -59,6 +85,7 @@ Interactive mode controls are also supported:
 
 | Key | Type | Behavior |
 | --- | --- | --- |
+| `engine` | string | Names the engine that runs the flow (deprecated aliases: `tool`, `_tool`). |
 | `_inputs` | `string[]` or typed object | Declares template variables and prompt UI. |
 | `_env` | `Record<string, string \| number \| boolean>` | Sets environment variables for command execution. Values are coerced to strings. |
 | `_interactive`, `_i` | boolean-ish | Enables interactive mode transforms. |
@@ -152,7 +179,7 @@ Known error codes:
 | `IMPORT_CIRCULAR_DEPENDENCY` | Circular import detected. |
 | `IMPORT_COMMAND_FAILED` | Inline command import failed. |
 | `IMPORT_URL_FETCH_FAILED` | URL import fetch or policy check failed. |
-| `COMMAND_MISSING` | No command could be resolved. |
+| `COMMAND_MISSING` | Legacy (v2) — no longer raised; engine resolution falls back to the default engine. |
 | `COMMAND_INVALID` | Invalid command token format. |
 | `COMMAND_NOT_FOUND` | Command binary not available on `PATH`. |
 | `COMMAND_EXECUTION_FAILED` | Spawned command failed at runtime. |

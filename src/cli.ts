@@ -204,10 +204,14 @@ Create options:
   md create -n task -p          Create in project .mdflow/ folder
   md create -g --model gpt-4    Create globally with frontmatter
 
-Command resolution:
-  1. --_command / --tool flag (e.g., md task.md --tool claude)
-  2. Filename pattern (e.g., task.claude.md → claude)
-  3. Frontmatter key (tool: claude or _tool: claude)
+Engine resolution (most explicit wins):
+  1. --engine flag (deprecated aliases: --_command/-_c, --tool)
+  2. MDFLOW_ENGINE environment variable
+  3. Filename pattern (e.g., task.claude.md → claude; must name a real engine)
+  4. Frontmatter key (engine: claude; deprecated: tool:/_tool:)
+  5. Config engine: (project .mdflow.yaml beats ~/.mdflow/config.yaml)
+  6. Built-in default: pi
+  A file with no frontmatter and no explicit engine is printed as a document.
 
 Agent file discovery (in priority order):
   1. Explicit path:      md ./path/to/agent.md
@@ -227,10 +231,10 @@ Remote execution:
 Examples:
   md task.claude.md -p "print mode"
   md task.claude.md --model opus --verbose
-  md commit.gemini.md
-  md task.md --_command claude
-  md task.md --tool claude
-  md task.md -_c gemini
+  md commit.agy.md
+  md task.md                      # engine via the ladder (default: pi)
+  md task.md --engine claude
+  md eval task.md                 # run the flow's eval suite
   md task.claude.md --_dry-run    # Preview without executing
   md https://example.com/agent.claude.md            # Remote execution
   md https://example.com/agent.claude.md --_trust   # Skip trust prompt
@@ -241,8 +245,7 @@ Config file example (~/.mdflow/config.yaml):
       $1: prompt    # Map body to --prompt flag
 
 md-specific flags (consumed, not passed to command):
-  --_command, -_c   Specify command to run
-  --tool            Alias for --_command
+  --engine          Specify the engine to run (deprecated aliases: --_command/-_c, --tool)
   --_dry-run        Show resolved command and prompt without executing
   --_edit           Open resolved prompt in $EDITOR before execution
   --_trust          Skip trust prompt for remote URLs (TOFU bypass)

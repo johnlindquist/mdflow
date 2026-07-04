@@ -1,4 +1,5 @@
 ---
+engine: copilot
 model: claude-sonnet-4
 silent: true
 copilot:

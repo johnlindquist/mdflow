@@ -6,8 +6,8 @@ This guide demonstrates 10 progressively more impressive ways to use `mdflow` (`
 
 ## 1. The "Hello World"
 
-**Concept:** *Command Inference*
-The command to run (`claude`) is inferred automatically from the filename.
+**Concept:** *Engine Inference*
+The engine to run (`claude`) is inferred automatically from the filename. That's just one way to pin an engine — the full resolution ladder is `--engine` flag > `MDFLOW_ENGINE` env var > filename > frontmatter `engine:` > config > the built-in default (`pi`).
 
 **File:** `01-hello.claude.md`
 
@@ -31,19 +31,16 @@ md 01-hello.claude.md
 **Concept:** *Template Variables & Defaults*
 Variables starting with `_` define defaults that can be overridden by CLI flags.
 
-**File:** `02-config.gemini.md`
+**File:** `02-config.claude.md`
 
 ```markdown
 ---
-model: gemini-1.5-flash
+model: haiku
 # Template variables with defaults
-_env: development
+_mode: development
 _port: 8080
-# Pass-through flags for Gemini
-temperature: 0.1
-json: true
 ---
-Generate a JSON configuration for a server running in **{{ _env }}** mode on port **{{ _port }}**.
+Generate a JSON configuration for a server running in **{{ _mode }}** mode on port **{{ _port }}**.
 Return ONLY the raw JSON.
 ```
 
@@ -51,10 +48,10 @@ Return ONLY the raw JSON.
 
 ```bash
 # Use defaults
-md 02-config.gemini.md
+md 02-config.claude.md
 
 # Override with flags
-md 02-config.gemini.md --_env production --_port 3000
+md 02-config.claude.md --_mode production --_port 3000
 ```
 
 ---
@@ -150,14 +147,13 @@ md 05-mock-gen.claude.md > mock-user.json
 ## 6. The Auditor
 
 **Concept:** *Glob Imports & Environment Config*
-Import entire directory trees. We set `MDFLOW_FORCE_CONTEXT` in `env` to override the default token safety limit for large imports.
+Import entire directory trees. We set `MDFLOW_FORCE_CONTEXT` in `_env` to override the default token safety limit for large imports.
 
-**File:** `06-audit.gemini.md`
+**File:** `06-audit.agy.md`
 
 ```markdown
 ---
-model: gemini-1.5-pro
-env:
+_env:
   MDFLOW_FORCE_CONTEXT: "1"
 ---
 You are a Security Auditor. Scan the following files for hardcoded secrets or unsafe regex:
@@ -170,7 +166,7 @@ List any vulnerabilities found.
 **Run it:**
 
 ```bash
-md 06-audit.gemini.md
+md 06-audit.agy.md
 ```
 
 ---
@@ -246,10 +242,10 @@ Run an agent directly from a URL without downloading it. Perfect for sharing tea
 md https://raw.githubusercontent.com/johnlindquist/mdflow/main/examples/hello.claude.md
 ```
 
-Remote URLs are cached locally for 1 hour. Use `--no-cache` to force a fresh fetch:
+Remote URLs are cached locally for 1 hour. Use `--_no-cache` to force a fresh fetch:
 
 ```bash
-md https://example.com/agent.claude.md --no-cache
+md https://example.com/agent.claude.md --_no-cache
 ```
 
 ---
@@ -347,13 +343,13 @@ Missing required variables. Please provide values:
 
 **Concept:** *Trust & Verification*
 **UX Problem:** You are about to run an agent on your entire codebase, but you're nervous about token costs or context size.
-**Solution:** Use `--dry-run` to see exactly what *would* happen—the command, the expanded files, and the token count—without executing anything.
+**Solution:** Use `--_dry-run` to see exactly what *would* happen—the command, the expanded files, and the token count—without executing anything.
 
-**File:** `12-refactor.gemini.md`
+**File:** `12-refactor.claude.md`
 
 ```markdown
 ---
-model: gemini-1.5-pro
+model: opus
 ---
 Refactor every file in this directory:
 @./src/**/*.ts
@@ -362,14 +358,14 @@ Refactor every file in this directory:
 **Run it:**
 
 ```bash
-md 12-refactor.gemini.md --dry-run
+md 12-refactor.claude.md --_dry-run
 ```
 
 **Output:**
 
 ```text
 DRY RUN - Command will NOT be executed
-Command: gemini --model gemini-1.5-pro ...
+Command: claude --model opus ...
 Final Prompt: (Shows full expanded content of all files)
 Estimated tokens: ~15,420
 ```
@@ -389,7 +385,7 @@ Estimated tokens: ~15,420
 ```markdown
 #!/usr/bin/env md
 ---
-command: claude
+engine: claude
 model: haiku
 ---
 Generate a "Daily Standup" update based on my git activity:
@@ -417,7 +413,7 @@ chmod +x daily-report
 
 ```markdown
 ---
-command: openai
+engine: openai
 model: gpt-4o
 # Default configuration
 _lang: Spanish
@@ -531,11 +527,11 @@ Write a curl command to check the health of:
 
 ## 18. The Chameleon (Polymorphism)
 
-**Concept:** *Command Override*
+**Concept:** *Engine Override*
 **UX Problem:** You want to A/B test a prompt against different models without creating multiple files.
-**Solution:** Override the inferred command using the `-c` flag.
+**Solution:** Pick the engine explicitly with the `--engine` flag — the top rung of the resolution ladder. (The old `--_command`/`-_c` and `--tool` flags still work as deprecated aliases.)
 
-**File:** `18-story.md` (No command in filename)
+**File:** `18-story.md` (No engine in filename)
 
 ```markdown
 Write a two-sentence horror story about a compiler.
@@ -545,11 +541,13 @@ Write a two-sentence horror story about a compiler.
 
 ```bash
 # Test with Claude
-md 18-story.md -c claude --model haiku
+md 18-story.md --engine claude --model haiku
 
-# Test with Gemini
-md 18-story.md -c gemini --model gemini-1.5-flash
+# Test with Antigravity
+md 18-story.md --engine agy
 ```
+
+Without an explicit engine, this file has no frontmatter — so `md 18-story.md` treats it as a document and prints it instead of executing it.
 
 *UX Benefit: Decouple your prompt logic from specific providers.*
 

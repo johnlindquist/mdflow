@@ -1,4 +1,5 @@
 ---
+engine: copilot
 model: claude-haiku-4.5
 silent: true
 allow-tool: write

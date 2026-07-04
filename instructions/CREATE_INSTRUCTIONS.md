@@ -1,4 +1,5 @@
 ---
+engine: copilot
 model: claude-sonnet-4
 silent: true
 allow-tool:
@@ -21,6 +22,7 @@ Create a new copilot instructions file based on a user scenario.
 
 4. **Create the instructions file** with:
    - YAML frontmatter containing:
+     - `engine: copilot`
      - `model`: based on complexity
      - `silent: true`
      - `allow-tool`: list of shell commands needed (e.g., `shell(git:*)`, `shell(npm:*)`)
@@ -35,6 +37,7 @@ Create a new copilot instructions file based on a user scenario.
 
 ```markdown
 ---
+engine: copilot
 model: claude-sonnet-4
 silent: true
 allow-tool:

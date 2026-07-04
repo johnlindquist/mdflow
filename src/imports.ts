@@ -1131,8 +1131,10 @@ async function processGlobImport(
     `[imports] Expanding ${pattern}: ${files.length} files (~${actualTokens.toLocaleString()} tokens${needsAccurateCount ? "" : " est"})`
   );
 
-  // Error threshold - use dynamic context limit
-  if (actualTokens > contextLimit && !process.env.MA_FORCE_CONTEXT) {
+  // Error threshold - use dynamic context limit. MDFLOW_FORCE_CONTEXT is the
+  // v3 name; MA_FORCE_CONTEXT remains as a legacy alias.
+  const forceContext = process.env.MDFLOW_FORCE_CONTEXT || process.env.MA_FORCE_CONTEXT;
+  if (actualTokens > contextLimit && !forceContext) {
     throw createImportError(
       `Glob import "${pattern}" would include ~${actualTokens.toLocaleString()} tokens (${files.length} files), ` +
       `which exceeds the ${contextLimit.toLocaleString()} token limit.`,
@@ -1141,7 +1143,7 @@ async function processGlobImport(
         pattern,
         tokenCount: actualTokens,
         contextLimit,
-        suggestion: "Narrow the glob, or set MA_FORCE_CONTEXT=1 to override intentionally.",
+        suggestion: "Narrow the glob, or set MDFLOW_FORCE_CONTEXT=1 to override intentionally.",
       }
     );
   }
