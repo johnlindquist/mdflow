@@ -18,6 +18,9 @@ import { codexAdapter } from "./codex";
 import { geminiAdapter } from "./gemini";
 import { droidAdapter } from "./droid";
 import { opencodeAdapter } from "./opencode";
+import { piAdapter } from "./pi";
+import { cursorAgentAdapter } from "./cursor-agent";
+import { agyAdapter } from "./agy";
 import type { ToolAdapter, AgentFrontmatter } from "../types";
 
 describe("Tool Adapter Registry", () => {
@@ -288,5 +291,80 @@ describe("Default Adapter", () => {
     expect(result).toEqual(frontmatter);
     // Ensure it's a copy, not the same object
     expect(result).not.toBe(frontmatter);
+  });
+});
+
+describe("pi Adapter (v3 default engine)", () => {
+  test("is registered", () => {
+    expect(hasAdapter("pi")).toBe(true);
+  });
+
+  test("has correct name", () => {
+    expect(piAdapter.name).toBe("pi");
+  });
+
+  test("getDefaults is hermetic print mode", () => {
+    const defaults = piAdapter.getDefaults();
+    expect(defaults.print).toBe(true);
+    expect(defaults["no-extensions"]).toBe(true);
+    expect(defaults["no-skills"]).toBe(true);
+    expect(defaults["no-prompt-templates"]).toBe(true);
+    expect(defaults["no-context-files"]).toBe(true);
+    expect(defaults["no-session"]).toBe(true);
+  });
+
+  test("applyInteractiveMode removes print but keeps isolation", () => {
+    const frontmatter: AgentFrontmatter = { print: true, "no-skills": true, model: "gpt-5.5" };
+    const result = piAdapter.applyInteractiveMode(frontmatter);
+    expect(result.print).toBeUndefined();
+    expect(result["no-skills"]).toBe(true);
+    expect(result.model).toBe("gpt-5.5");
+  });
+});
+
+describe("Cursor Agent Adapter", () => {
+  test("is registered", () => {
+    expect(hasAdapter("cursor-agent")).toBe(true);
+  });
+
+  test("has correct name", () => {
+    expect(cursorAgentAdapter.name).toBe("cursor-agent");
+  });
+
+  test("getDefaults uses print mode with text output", () => {
+    const defaults = cursorAgentAdapter.getDefaults();
+    expect(defaults.print).toBe(true);
+    expect(defaults["output-format"]).toBe("text");
+  });
+
+  test("applyInteractiveMode removes print and output-format", () => {
+    const frontmatter: AgentFrontmatter = { print: true, "output-format": "text", model: "sonnet-4" };
+    const result = cursorAgentAdapter.applyInteractiveMode(frontmatter);
+    expect(result.print).toBeUndefined();
+    expect(result["output-format"]).toBeUndefined();
+    expect(result.model).toBe("sonnet-4");
+  });
+});
+
+describe("agy (Antigravity) Adapter", () => {
+  test("is registered", () => {
+    expect(hasAdapter("agy")).toBe(true);
+  });
+
+  test("has correct name", () => {
+    expect(agyAdapter.name).toBe("agy");
+  });
+
+  test("getDefaults uses print mode", () => {
+    const defaults = agyAdapter.getDefaults();
+    expect(defaults.print).toBe(true);
+  });
+
+  test("applyInteractiveMode swaps print for prompt-interactive", () => {
+    const frontmatter: AgentFrontmatter = { print: true, model: "gemini-3.1-pro" };
+    const result = agyAdapter.applyInteractiveMode(frontmatter);
+    expect(result.print).toBeUndefined();
+    expect(result.$1).toBe("prompt-interactive");
+    expect(result.model).toBe("gemini-3.1-pro");
   });
 });

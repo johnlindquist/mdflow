@@ -141,6 +141,29 @@ export const opencodePortableAdapter = createPortableAdapter("opencode", {
   "max-tokens": "max-tokens",
 });
 
+// pi supports --model (with optional ":<thinking>" suffix); no temperature or
+// max-tokens flags — those canonical keys are dropped, not passed through.
+export const piPortableAdapter = createPortableAdapter(
+  "pi",
+  { model: "model", temperature: "temperature", "max-tokens": "max-tokens" },
+  { model: true, temperature: false, maxTokens: false }
+);
+
+// cursor-agent supports --model only.
+export const cursorAgentPortableAdapter = createPortableAdapter(
+  "cursor-agent",
+  { model: "model", temperature: "temperature", "max-tokens": "max-tokens" },
+  { model: true, temperature: false, maxTokens: false }
+);
+
+// agy supports --model (e.g. gemini-3.1-pro, claude-opus); temperature and
+// max-tokens are unconfirmed upstream, so they are dropped rather than passed.
+export const agyPortableAdapter = createPortableAdapter(
+  "agy",
+  { model: "model", temperature: "temperature", "max-tokens": "max-tokens" },
+  { model: true, temperature: false, maxTokens: false }
+);
+
 const PORTABLE_ADAPTERS: Record<string, Adapter> = {
   claude: claudePortableAdapter,
   codex: codexPortableAdapter,
@@ -148,6 +171,9 @@ const PORTABLE_ADAPTERS: Record<string, Adapter> = {
   copilot: copilotPortableAdapter,
   droid: droidPortableAdapter,
   opencode: opencodePortableAdapter,
+  pi: piPortableAdapter,
+  "cursor-agent": cursorAgentPortableAdapter,
+  agy: agyPortableAdapter,
 };
 
 /**

@@ -166,3 +166,41 @@ Portable alias test`);
     expect(result.exitCode).toBe(0);
   });
 });
+
+describe("portable adapter translation for v3 engines", () => {
+  test("pi keeps --model, drops unsupported temperature/max-tokens", () => {
+    const args = buildArgs(
+      { model: "gpt-5.5", temperature: 0.3, "max-tokens": 2048 },
+      new Set(),
+      "pi"
+    );
+
+    expectFlagValue(args, "--model", "gpt-5.5");
+    expect(args).not.toContain("--temperature");
+    expect(args).not.toContain("--max-tokens");
+  });
+
+  test("cursor-agent keeps --model, drops unsupported canonical keys", () => {
+    const args = buildArgs(
+      { model: "sonnet-4-thinking", temperature: 0.5, "max-tokens": 1024 },
+      new Set(),
+      "cursor-agent"
+    );
+
+    expectFlagValue(args, "--model", "sonnet-4-thinking");
+    expect(args).not.toContain("--temperature");
+    expect(args).not.toContain("--max-tokens");
+  });
+
+  test("agy keeps --model, drops unconfirmed canonical keys", () => {
+    const args = buildArgs(
+      { model: "gemini-3.1-pro", temperature: 0.5, "max-tokens": 1024 },
+      new Set(),
+      "agy"
+    );
+
+    expectFlagValue(args, "--model", "gemini-3.1-pro");
+    expect(args).not.toContain("--temperature");
+    expect(args).not.toContain("--max-tokens");
+  });
+});
