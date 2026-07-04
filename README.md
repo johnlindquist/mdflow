@@ -1,12 +1,35 @@
 # mdflow
 
 ```bash
-review.claude.md                 # Run with Claude
-commit.gemini.md "fix auth bug"  # Run with Gemini
-git diff | explain.claude.md     # Pipe through any command
+review.md                        # v3: runs on your default engine (pi)
+review.claude.md                 # Pin an engine in the filename
+git diff | explain.md            # Pipe through any command
 ```
 
 **Your markdown files are now executable AI agents.**
+
+---
+
+## New in v3 (prerelease on the `next` tag)
+
+- **Engines are environment, not filename ceremony.** Bare `review.md` runs
+  on the resolved engine: `--engine` flag > `MDFLOW_ENGINE` env > filename >
+  frontmatter `engine:` > config `engine:` > built-in default (**pi**).
+  Implicit choices print a dim `review.md → pi (engine: default)` line —
+  inspectable, never magic. Files with no frontmatter and no explicit engine
+  are documents: `md README.md` prints instead of executing. The frontmatter
+  key is now `engine:` (`tool:`/`_tool:` still work, with a warning).
+- **pi is the default engine**, runs hermetic (no ambient extensions,
+  skills, or context files), and bridges your Codex CLI login automatically.
+- **New engines:** `cursor-agent` and `agy` (Google Antigravity — the
+  gemini CLI successor; the old gemini adapter remains for Code Assist
+  Standard/Enterprise).
+- **Evals:** `md eval flows/jq.md` runs `flows/jq.eval.ts` — behavioral
+  cases in hermetic sandboxes, cost printed before running, results in a
+  trust ledger. *If a guardrail isn't covered by an eval, it's a wish.*
+
+See `docs/V3-FLOWS.md` for the full v3 design and what's coming (distill,
+evolve, tournament, routing).
 
 ---
 

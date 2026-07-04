@@ -9,10 +9,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## CLI Subcommands
 
 ```bash
-md <file.md> [flags]     # Run an agent
-md create [name]         # Create a new agent file
+md <file.md> [flags]     # Run a flow
+md create [name]         # Create a new flow file
+md eval <flow.md>        # Run the flow's eval suite (costs engine turns)
 md setup                 # Configure shell (PATH, aliases)
-md logs                  # Show agent log directory
+md logs                  # Show flow log directory
 md help                  # Show help
 ```
 
@@ -39,21 +40,34 @@ bun run md task.claude.md
 
 ### Core Flow (`src/index.ts`)
 ```
-.md file → parseFrontmatter() → resolveCommand(filename/env)
-        → loadGlobalConfig() → applyDefaults()
+.md file → parseFrontmatter() → resolveEngine(ladder, see below)
+        → loadFullConfig() → applyDefaults()
         → applyInteractiveMode() → expandImports()
         → substituteTemplateVars() → buildArgs() → runCommand()
 ```
 
 ### Key Modules
 
-- **`command.ts`** - Command resolution and execution
-  - `parseCommandFromFilename()`: Infers command from `task.claude.md` → `claude`
+- **`command.ts`** - Engine resolution and execution
+  - `parseCommandFromFilename()`: Infers engine from `task.claude.md` → `claude`
   - `hasInteractiveMarker()`: Detects `.i.` in filename (e.g., `task.i.claude.md`)
-  - `resolveCommand()`: Priority: MA_COMMAND env var > filename
+  - `resolveEngine()`: the v3 ladder (see Engine Resolution below); never
+    throws for a missing engine — `DEFAULT_ENGINE` (pi) applies
   - `buildArgs()`: Converts frontmatter to CLI flags
   - `extractPositionalMappings()`: Extracts $1, $2, etc. mappings
-  - `runCommand()`: Spawns the command with positional args
+  - `runCommand()`: Spawns the engine; calls the adapter's optional
+    `prepareEnv()` hook (pi uses it for the bridged auth dir)
+  - CAUTION: command.ts exports its own `getAdapter` (portable-key layer);
+    the registry lookup is imported as `getEngineAdapter`
+
+- **`evals.ts`** - `md eval <flow.md>`: behavioral eval suites
+  (`<flow>.eval.ts`, export default EvalCase[]) run in hermetic temp dirs;
+  trust ledger at `~/.mdflow/eval-results.json`; prints cost before running;
+  eval runs redirect MDFLOW_RUNS_FILE so they never pollute telemetry
+
+- **`adapters/pi-auth.ts`** - Codex-subscription auth bridge for the pi
+  engine (`~/.mdflow/pi-agent`, pointed at via PI_CODING_AGENT_DIR); never
+  writes the user's real credential files
 
 - **`config.ts`** - Global configuration
   - Loads defaults from `~/.mdflow/config.yaml`
@@ -89,11 +103,19 @@ bun run md task.claude.md
   - `saveVariableValues()`: Save prompted variable values for future runs
   - `getPreviousVariableValue()`: Get a specific variable's previous value
 
-### Command Resolution
+### Engine Resolution (v3)
 
-Commands are resolved in priority order:
-1. `MA_COMMAND` environment variable
-2. Filename pattern: `task.claude.md` → `claude`
+Engines resolve via the ladder, most explicit first:
+1. `--engine` CLI flag (deprecated aliases: `--_command`/`-_c`, `--tool`)
+2. `MDFLOW_ENGINE` environment variable
+3. Filename pattern: `task.claude.md` → `claude`
+4. Frontmatter `engine:` (deprecated aliases `tool:`/`_tool:` warn)
+5. Config `engine:` (project config beats `~/.mdflow/config.yaml`)
+6. Built-in default: `pi`
+
+Implicit resolution (env/config/default) prints a dim explanation line on
+stderr. A file with no frontmatter and only an implicit engine is treated as
+a document and printed, not executed.
 
 ### Frontmatter Keys
 

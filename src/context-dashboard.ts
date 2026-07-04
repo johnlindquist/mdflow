@@ -128,8 +128,8 @@ export async function analyzeContext(
   const imports = parseImports(content);
 
   // Analyze each import
-  for (const imp of imports) {
-    const item = await analyzeImport(imp, fileDir);
+  for (const entry of imports) {
+    const item = await analyzeImport(entry, fileDir);
     if (item) {
       items.push(item);
       totalSize += item.size;

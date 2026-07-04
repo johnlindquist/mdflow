@@ -149,10 +149,10 @@ describe('imports-parser fuzz tests', () => {
         fc.property(fc.string(), (input) => {
           const ranges = findSafeRanges(input);
           const imports = parseImports(input);
-          for (const imp of imports) {
-            if (imp.type === 'executable_code_fence') continue;
+          for (const entry of imports) {
+            if (entry.type === 'executable_code_fence') continue;
             const inSafeRange = ranges.some(
-              (range) => imp.index >= range.start && imp.index < range.end
+              (range) => entry.index >= range.start && entry.index < range.end
             );
             expect(inSafeRange).toBe(true);
           }

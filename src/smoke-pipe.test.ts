@@ -11,7 +11,7 @@ import { spawn } from "bun";
 
 /**
  * Smoke tests for piping between .md agent files.
- * Uses MA_COMMAND=echo to simulate LLM responses without actual API calls.
+ * Fixtures use the echo engine (filename-pinned) so no real LLM is ever called.
  * These tests verify the stdin/stdout piping mechanism works correctly.
  */
 
@@ -41,7 +41,7 @@ Process this input:
     );
 
     const result = await spawnMdWithPipe(agentFile, "hello world", [], {
-      env: { MA_COMMAND: "echo" },
+      env: { ...process.env },
     });
 
     expect(result.exitCode).toBe(0);
@@ -70,7 +70,7 @@ STAGE2_RECEIVED: {{ _stdin }}
       ],
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, MA_COMMAND: "echo" },
+      env: { ...process.env },
     });
 
     const output = await new Response(proc.stdout).text();
@@ -107,7 +107,7 @@ STAGE2_RECEIVED: {{ _stdin }}
       ],
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, MA_COMMAND: "echo" },
+      env: { ...process.env },
     });
 
     const output = await new Response(proc.stdout).text();
@@ -131,7 +131,7 @@ Hello {{ _name }}! Input: {{ _stdin }}
     );
 
     const result = await spawnMdWithPipe(agent, "context", ["--_name", "World"], {
-      env: { MA_COMMAND: "echo" },
+      env: { ...process.env },
     });
 
     expect(result.exitCode).toBe(0);
@@ -168,7 +168,7 @@ No stdin expected
 `
     );
 
-    const result = await spawnMd([agent], { env: { MA_COMMAND: "echo" } });
+    const result = await spawnMd([agent], { env: { MDFLOW_ENGINE: "echo" } });
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("No stdin expected");
@@ -190,7 +190,7 @@ Received: {{ _stdin }}
       cmd: ["bash", "-c", `printf "line1\\nline2\\nline3" | bun run ${CLI_PATH} ${agent}`],
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, MA_COMMAND: "echo" },
+      env: { ...process.env },
     });
 
     const output = await new Response(proc.stdout).text();

@@ -1816,8 +1816,8 @@ function injectResolvedImports(content: string, resolved: ResolvedImportResult[]
   // Sort by index descending to process from end to start (preserves indices)
   const sortedResolved = [...resolved].sort((a, b) => b.import.index - a.import.index);
 
-  for (const { import: imp, content: replacement } of sortedResolved) {
-    result = result.slice(0, imp.index) + replacement + result.slice(imp.index + imp.full.length);
+  for (const { import: entry, content: replacement } of sortedResolved) {
+    result = result.slice(0, entry.index) + replacement + result.slice(entry.index + entry.full.length);
   }
 
   return result;
@@ -1910,36 +1910,36 @@ export async function expandImports(
 
   try {
     // Phase 2: Resolve all imports in parallel with concurrency limiting
-    const resolvePromises = imports.map(async (imp): Promise<ResolvedImportResult> => {
+    const resolvePromises = imports.map(async (entry): Promise<ResolvedImportResult> => {
       return semaphore.run(async () => {
         let resolvedContent: string;
 
-        switch (imp.type) {
+        switch (entry.type) {
           case 'file':
-            resolvedContent = await processFileImport(imp.path, currentFileDir, stack, verbose, importCtx);
+            resolvedContent = await processFileImport(entry.path, currentFileDir, stack, verbose, importCtx);
             break;
           case 'url':
-            resolvedContent = await processUrlImport(imp.url, verbose, importCtx);
+            resolvedContent = await processUrlImport(entry.url, verbose, importCtx);
             // Track URL imports
             if (resolvedImportsTracker) {
-              resolvedImportsTracker.push(imp.url);
+              resolvedImportsTracker.push(entry.url);
             }
             break;
           case 'provider':
-            resolvedContent = await processProviderImport(imp.action, currentFileDir, verbose, importCtx);
+            resolvedContent = await processProviderImport(entry.action, currentFileDir, verbose, importCtx);
             // Track provider imports
             if (resolvedImportsTracker) {
-              resolvedImportsTracker.push(imp.action.original);
+              resolvedImportsTracker.push(entry.action.original);
             }
             break;
           case 'command':
             // Register with dashboard if active
             const cmdId = Math.random().toString(36).substring(7);
-            if (dashboard) dashboard.register(cmdId, imp.command);
+            if (dashboard) dashboard.register(cmdId, entry.command);
 
             try {
               resolvedContent = await processCommandInline(
-                imp.command,
+                entry.command,
                 currentFileDir,
                 verbose,
                 importCtx,
@@ -1955,17 +1955,17 @@ export async function expandImports(
           case 'executable_code_fence':
             // Register with dashboard
             const fenceId = Math.random().toString(36).substring(7);
-            if (dashboard) dashboard.register(fenceId, `Code Fence (${imp.action.language || 'script'})`);
+            if (dashboard) dashboard.register(fenceId, `Code Fence (${entry.action.language || 'script'})`);
 
             try {
-              resolvedContent = await processExecutableCodeFence(imp.action, currentFileDir, verbose, importCtx);
+              resolvedContent = await processExecutableCodeFence(entry.action, currentFileDir, verbose, importCtx);
             } finally {
               if (dashboard) dashboard.finish(fenceId);
             }
             break;
         }
 
-        return { import: imp, content: resolvedContent };
+        return { import: entry, content: resolvedContent };
       });
     });
 

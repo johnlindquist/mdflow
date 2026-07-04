@@ -25,7 +25,7 @@ ${"A".repeat(10000)}
         cmd: ["bash", "-c", `bun run ${join(process.cwd(), "src/index.ts")} ${tempFile} | head -n 1`],
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, MA_COMMAND: "echo" },
+        env: { ...process.env },
       });
 
       const exitCode = await proc.exited;
