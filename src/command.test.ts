@@ -465,3 +465,16 @@ describe("runCommand command suggestions", () => {
     expect(capturedErrors.some((line) => line.includes("Did you mean 'claude'?"))).toBe(true);
   });
 });
+
+describe("flow metadata keys are never CLI flags (v3)", () => {
+  test("description and route are consumed, real flags still pass", () => {
+    const args = buildArgs(
+      { description: "review staged changes", route: "review|diff", model: "gpt-5.5" } as AgentFrontmatter,
+      new Set(),
+      "codex"
+    );
+    expect(args).not.toContain("--description");
+    expect(args).not.toContain("--route");
+    expect(args).toContain("--model");
+  });
+});

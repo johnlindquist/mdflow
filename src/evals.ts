@@ -37,6 +37,13 @@ export interface EvalCase {
   prompt?: string;
   /** Piped stdin content. */
   stdin?: string;
+  /**
+   * Where the flow runs. Default: a fresh hermetic temp dir per case.
+   * Repo-bound flows (project rosters that inspect the live repository) set
+   * this to a path relative to the flow file (e.g. ".." for the repo root);
+   * no cleanup happens for an explicit cwd.
+   */
+  cwd?: string;
   /** Prepare fixtures inside the sandbox before the flow runs. */
   setup?: (dir: string) => void | Promise<void>;
   /** Return null on pass, or a human-readable failure reason. */
@@ -168,7 +175,10 @@ export async function runEvalSuite(options: RunEvalSuiteOptions): Promise<EvalSu
   const outcome: EvalSuiteOutcome = { pass: 0, fail: 0, total: selected.length, failures: [] };
 
   for (const evalCase of selected) {
-    const dir = mkdtempSync(join(tmpdir(), "mdflow-eval-"));
+    const usingSandbox = !evalCase.cwd;
+    const dir = usingSandbox
+      ? mkdtempSync(join(tmpdir(), "mdflow-eval-"))
+      : resolve(dirname(resolve(flowPath)), evalCase.cwd!);
     try {
       await evalCase.setup?.(dir);
       const run = await runFlow({
@@ -193,9 +203,13 @@ export async function runEvalSuite(options: RunEvalSuiteOptions): Promise<EvalSu
       outcome.failures.push(`${evalCase.name}: ${message}`);
       log(`  ✗ ${evalCase.name}: ${message}`);
     } finally {
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch {}
+      // Only ever delete dirs this run created. An explicit cwd is the
+      // user's real directory and must never be cleaned up.
+      if (usingSandbox) {
+        try {
+          rmSync(dir, { recursive: true, force: true });
+        } catch {}
+      }
     }
   }
 

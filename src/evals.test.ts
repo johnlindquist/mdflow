@@ -235,3 +235,35 @@ describe("trust ledger", () => {
     expect(entry.lastCleanAt).toBeDefined();
   });
 });
+
+describe("repo-bound eval cases (explicit cwd)", () => {
+  test("cwd resolves relative to the flow file and is never cleaned up", async () => {
+    const flowsDir = join(tempDir, "flows");
+    const repoMarker = join(tempDir, "repo-marker.txt");
+    writeFileSync(join(tempDir, "keep.txt"), "still here");
+    writeFileSync(repoMarker, "repo root");
+    const flow = join(flowsDir, "scout.md");
+    // flow lives in flows/, cwd ".." should be tempDir (the "repo root")
+    const runner: FlowRunner = async ({ cwd }) => ({
+      stdout: existsSync(join(cwd, "repo-marker.txt")) ? "IN_REPO" : "WRONG_DIR",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const { mkdirSync } = await import("fs");
+    mkdirSync(flowsDir, { recursive: true });
+    writeFileSync(flow, "---\ndescription: x\n---\nbody");
+
+    const outcome = await runEvalSuite({
+      flowPath: flow,
+      cases: [{ name: "runs in repo", cwd: "..", check: ({ stdout }) => (stdout === "IN_REPO" ? null : stdout) }],
+      runFlow: runner,
+      log: () => {},
+      noLedger: true,
+    });
+
+    expect(outcome.pass).toBe(1);
+    // The real directory survives (no sandbox cleanup).
+    expect(existsSync(join(tempDir, "keep.txt"))).toBe(true);
+  });
+});

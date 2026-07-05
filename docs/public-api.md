@@ -85,6 +85,8 @@ Use `agy` otherwise.
 
 | Key | Type | Behavior |
 | --- | --- | --- |
+| `description` | Flow metadata: human/roster-facing summary; never passed as a CLI flag. |
+| `route` | Reserved for keyword routing; never passed as a CLI flag. |
 | `engine` | string | Names the engine that runs the flow (deprecated aliases: `tool`, `_tool`). |
 | `_inputs` | `string[]` or typed object | Declares template variables and prompt UI. |
 | `_env` | `Record<string, string \| number \| boolean>` | Sets environment variables for command execution. Values are coerced to strings. |

@@ -95,6 +95,12 @@ const SYSTEM_KEYS = new Set([
   "_c",
   "tool",
   "_tool",
+
+  // Flow metadata (v3): human/roster-facing, never CLI flags. `description`
+  // is what marks a minimal file as a flow; `route` is reserved for keyword
+  // routing.
+  "description",
+  "route",
 ]);
 
 /**
