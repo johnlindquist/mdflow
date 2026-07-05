@@ -1,3 +1,10 @@
+# [3.0.0-next.2](https://github.com/johnlindquist/mdflow/compare/v3.0.0-next.1...v3.0.0-next.2) (2026-07-05)
+
+
+### Features
+
+* **eval,engine:** repo-bound eval cases; description/route are reserved keys ([6bff9af](https://github.com/johnlindquist/mdflow/commit/6bff9af16ac54b70880d4d35efb1e09f847e872e))
+
 # [3.0.0-next.1](https://github.com/johnlindquist/mdflow/compare/v2.35.4...v3.0.0-next.1) (2026-07-05)
 
 
