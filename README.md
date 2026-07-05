@@ -12,21 +12,30 @@ git diff | explain.md            # Pipe through any command
 
 ## New in v3 (prerelease on the `next` tag)
 
+**Markdown agents that evolve.** One file per agent. Any engine. Evals that
+prove behavior. Every run makes them better.
+
+- **`./flows` is your repo's agent roster.** One markdown agent per job:
+  code review, release notes, issue triage. Diffable in PRs, provable with
+  `md eval`, readable by every teammate, human or AI. The installable skill
+  (`npx skills add johnlindquist/mdflow`) teaches your coding agent to build
+  and maintain it.
 - **Engines are environment, not filename ceremony.** Bare `review.md` runs
   on the resolved engine: `--engine` flag > `MDFLOW_ENGINE` env > filename >
   frontmatter `engine:` > config `engine:` > built-in default (**pi**).
-  Implicit choices print a dim `review.md → pi (engine: default)` line —
-  inspectable, never magic. Files with no frontmatter and no explicit engine
+  Implicit choices print a dim `review.md → pi (engine: default)` line.
+  Inspectable, never magic. Files with no frontmatter and no explicit engine
   are documents: `md README.md` prints instead of executing. The frontmatter
   key is now `engine:` (`tool:`/`_tool:` still work, with a warning).
 - **pi is the default engine**, runs hermetic (no ambient extensions,
   skills, or context files), and bridges your Codex CLI login automatically.
-- **New engines:** `cursor-agent` and `agy` (Google Antigravity — the
-  gemini CLI successor; the old gemini adapter remains for Code Assist
+- **New engines:** `cursor-agent` and `agy` (Google Antigravity, the gemini
+  CLI successor; the old gemini adapter remains for Code Assist
   Standard/Enterprise).
-- **Evals:** `md eval flows/jq.md` runs `flows/jq.eval.ts` — behavioral
-  cases in hermetic sandboxes, cost printed before running, results in a
-  trust ledger. *If a guardrail isn't covered by an eval, it's a wish.*
+- **Evals:** `md eval flows/review.md` runs `flows/review.eval.ts`.
+  Behavioral cases in hermetic sandboxes, cost printed before running,
+  results in a trust ledger. *If a guardrail isn't covered by an eval, it's
+  a wish.*
 
 See `docs/V3-FLOWS.md` for the full v3 design and what's coming (distill,
 evolve, tournament, routing).
@@ -153,7 +162,7 @@ If no command can be resolved, you'll get an error with instructions.
 
 ## Flag Hijacking
 
-Some CLI flags are "hijacked" by mdflow—they're consumed and never passed to the underlying command. This allows generic markdown files without command names to be executed.
+Some CLI flags are "hijacked" by mdflow: they're consumed and never passed to the underlying command. This allows generic markdown files without command names to be executed.
 
 ### `--_command` / `-_c`
 
@@ -188,7 +197,7 @@ mdflow create.claude.md
 mdflow create.claude.md --_feature_name "Payments" --_target_dir "src/billing"
 ```
 
-The `--_feature_name` and `--_target_dir` flags are consumed by mdflow for template substitution—they won't be passed to the command.
+The `--_feature_name` and `--_target_dir` flags are consumed by mdflow for template substitution. They won't be passed to the command.
 
 **No frontmatter declaration required:** You can pass `--_varname` flags without declaring them in frontmatter. If the variable is used in the body but not provided, you'll be prompted for it:
 
@@ -523,7 +532,7 @@ Now review this code:
 - `@./path` - Relative to current markdown file
 - `@/path` - Absolute path
 
-Imports are recursive—imported files can have their own `@` imports.
+Imports are recursive. Imported files can have their own `@` imports.
 
 ### Glob Imports
 

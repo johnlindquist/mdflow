@@ -257,7 +257,7 @@ export async function runEvalCli(args: string[], cliPath?: string): Promise<numb
     return 1;
   }
   console.log(
-    `${basename(flowPath)}: ${selectedCount} case${selectedCount === 1 ? "" : "s"} × 1 flow run each — ${selectedCount} engine turn${selectedCount === 1 ? "" : "s"} will be spent`
+    `${basename(flowPath)}: ${selectedCount} case${selectedCount === 1 ? "" : "s"} × 1 flow run each = ${selectedCount} engine turn${selectedCount === 1 ? "" : "s"}`
   );
 
   const runFlow = makeCliFlowRunner(cliPath ?? join(import.meta.dir, "index.ts"));
