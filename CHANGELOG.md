@@ -1,3 +1,26 @@
+# [3.0.0-next.3](https://github.com/johnlindquist/mdflow/compare/v3.0.0-next.2...v3.0.0-next.3) (2026-07-06)
+
+
+* feat!: mdflow v3 — markdown agents that evolve ([7d521a6](https://github.com/johnlindquist/mdflow/commit/7d521a6a46033bd8a8a718321fd1e422dd0dada3))
+
+
+### Features
+
+* **guardrails:** enforce _max_prompt_tokens; adhoc engines match the ladder ([f7ebb68](https://github.com/johnlindquist/mdflow/commit/f7ebb68181cdfb79f560fefc156323b5de066814))
+
+
+### BREAKING CHANGES
+
+* engine: replaces tool:, bare .md files run on the resolved
+engine or print as documents, description/route are reserved frontmatter
+keys. See the v3 commit series for details.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+# Conflicts:
+#	CHANGELOG.md
+#	package.json
+
 # [3.0.0-next.2](https://github.com/johnlindquist/mdflow/compare/v3.0.0-next.1...v3.0.0-next.2) (2026-07-05)
 
 
