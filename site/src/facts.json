@@ -1,6 +1,5 @@
 {
   "$generated": "by scripts/generate-facts.ts — DO NOT EDIT; run `bun run facts`",
-  "version": "3.0.0-next.5",
   "versionBase": "3.0.0",
   "defaultEngine": "pi",
   "engines": [
