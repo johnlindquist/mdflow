@@ -303,14 +303,14 @@ describe("pi Adapter (v3 default engine)", () => {
     expect(piAdapter.name).toBe("pi");
   });
 
-  test("getDefaults is hermetic print mode", () => {
-    const defaults = piAdapter.getDefaults();
-    expect(defaults.print).toBe(true);
-    expect(defaults["no-extensions"]).toBe(true);
-    expect(defaults["no-skills"]).toBe(true);
-    expect(defaults["no-prompt-templates"]).toBe(true);
-    expect(defaults["no-context-files"]).toBe(true);
-    expect(defaults["no-session"]).toBe(true);
+  test("getDefaults is print mode; hermetic set comes from the default-on isolation layer", () => {
+    expect(piAdapter.getDefaults()).toEqual({ print: true });
+    const isolation = piAdapter.getIsolationDefaults!();
+    expect(isolation["no-extensions"]).toBe(true);
+    expect(isolation["no-skills"]).toBe(true);
+    expect(isolation["no-prompt-templates"]).toBe(true);
+    expect(isolation["no-context-files"]).toBe(true);
+    expect(isolation["no-session"]).toBe(true);
   });
 
   test("applyInteractiveMode removes print but keeps isolation", () => {

@@ -38,6 +38,9 @@ import { loadEnvFiles } from "./env";
 import {
   loadGlobalConfig, loadFullConfig, getCommandDefaults, applyDefaults, applyInteractiveMode,
 } from "./config";
+import { getAdapter as getEngineAdapter } from "./adapters";
+import { resolveIsolationMode, resolveIsolationDefaults } from "./isolation";
+import { extractSystemPromptSpec, applySystemPromptToFrontmatter } from "./system-prompt";
 import {
   initLogger, getParseLogger, getTemplateLogger, getCommandLogger,
   getImportLogger, getCurrentLogPath,
@@ -1370,6 +1373,9 @@ export class CliRunner {
     let contextOnly = false, quiet = false, noMenu = false, noHistory = false, resume = false;
     let jsonMode = false;
     let cwdFromCli: string | undefined;
+    let isolatedFromCli: boolean | undefined;
+    let systemPromptFromCli: string | undefined;
+    const appendSystemPromptFromCli: string[] = [];
 
     // --engine is the v3 flag; --_command/-_c and --tool are deprecated aliases.
     const engineIdx = remainingArgs.findIndex((a) => a === "--engine");
@@ -1419,8 +1425,34 @@ export class CliRunner {
     if (contextIdx !== -1) { contextOnly = true; remainingArgs.splice(contextIdx, 1); }
     const quietIdx = remainingArgs.indexOf("--_quiet");
     if (quietIdx !== -1) { quiet = true; remainingArgs.splice(quietIdx, 1); }
+    // Isolation + system prompt overrides
+    // --_isolated [true|false] — bare flag means true; isolation is the
+    // default, so the false form is the interesting one (opt back into
+    // ambient context).
+    const isolatedIdx = remainingArgs.indexOf("--_isolated");
+    if (isolatedIdx !== -1) {
+      const next = remainingArgs[isolatedIdx + 1];
+      if (next === "false" || next === "true") {
+        isolatedFromCli = next === "true";
+        remainingArgs.splice(isolatedIdx, 2);
+      } else {
+        isolatedFromCli = true;
+        remainingArgs.splice(isolatedIdx, 1);
+      }
+    }
+    const sysPromptIdx = remainingArgs.indexOf("--_system-prompt");
+    if (sysPromptIdx !== -1 && sysPromptIdx + 1 < remainingArgs.length) {
+      systemPromptFromCli = remainingArgs[sysPromptIdx + 1];
+      remainingArgs.splice(sysPromptIdx, 2);
+    }
+    // --_append-system-prompt is repeatable
+    let appendIdx: number;
+    while ((appendIdx = remainingArgs.indexOf("--_append-system-prompt")) !== -1 && appendIdx + 1 < remainingArgs.length) {
+      appendSystemPromptFromCli.push(remainingArgs[appendIdx + 1]!);
+      remainingArgs.splice(appendIdx, 2);
+    }
 
-    return { remainingArgs, commandFromCli, dryRun, editFlag, trustFlag, interactiveFromCli, cwdFromCli, noCache, rawOutput, contextOnly, quiet, noMenu, noHistory, resume, jsonMode };
+    return { remainingArgs, commandFromCli, dryRun, editFlag, trustFlag, interactiveFromCli, cwdFromCli, noCache, rawOutput, contextOnly, quiet, noMenu, noHistory, resume, jsonMode, isolatedFromCli, systemPromptFromCli, appendSystemPromptFromCli };
   }
 
   private async processAgent(
@@ -1494,9 +1526,50 @@ export class CliRunner {
 
     await loadGlobalConfig();
     const commandDefaults = await getCommandDefaults(command);
-    let frontmatter = applyDefaults(baseFrontmatter as AgentFrontmatter, commandDefaults);
+
+    // Isolation (v3): ON BY DEFAULT — the flow file is the entire behavior.
+    // The adapter's verified context-stripping flags layer between config
+    // defaults and frontmatter, so an isolated flow can still re-enable one
+    // layer (e.g. `safe-mode: false`); `_isolated: false` opts back into
+    // ambient context entirely.
+    const engineAdapter = getEngineAdapter(command);
+    const isolationMode = resolveIsolationMode({
+      frontmatter: baseFrontmatter as AgentFrontmatter,
+      cliValue: parsed.isolatedFromCli,
+      commandDefaults,
+    });
+    let effectiveDefaults = commandDefaults;
+    if (isolationMode.isolated) {
+      const isolation = resolveIsolationDefaults(engineAdapter, command);
+      // Engines with no isolation controls run ambient; only an EXPLICIT
+      // `_isolated: true` warns — the default would otherwise warn every run.
+      if (isolation.unsupportedWarning && isolationMode.explicit && !parsed.quiet && !jsonMode) {
+        const dim = process.stderr.isTTY ? ["\x1b[2m", "\x1b[0m"] : ["", ""];
+        this.writeStderr(`${dim[0]}${isolation.unsupportedWarning}${dim[1]}`);
+      }
+      effectiveDefaults = { ...(commandDefaults ?? {}), ...isolation.defaults };
+    }
+
+    let frontmatter = applyDefaults(baseFrontmatter as AgentFrontmatter, effectiveDefaults);
     const interactiveFromFilename = hasInteractiveMarker(localFilePath);
     frontmatter = applyInteractiveMode(frontmatter, command, interactiveFromFilename || interactiveFromCli);
+
+    // System prompt override (v3): translate _system-prompt /
+    // _append-system-prompt into engine-native flags/env. Runs BEFORE
+    // extractEnvVars so a translation that sets env (gemini GEMINI_SYSTEM_MD)
+    // lands in _env. Unsupported engines fail loudly — a flow that declares
+    // its system prompt and runs without it is a different flow.
+    const systemPromptSpec = extractSystemPromptSpec(frontmatter, {
+      replace: parsed.systemPromptFromCli,
+      append: parsed.appendSystemPromptFromCli,
+    });
+    if (systemPromptSpec) {
+      const applied = applySystemPromptToFrontmatter(
+        engineAdapter, command, frontmatter, systemPromptSpec
+      );
+      frontmatter = applied.frontmatter;
+      getProcessManager().onCleanup(applied.cleanup);
+    }
 
     const envVars = extractEnvVars(frontmatter);
     if (envVars) Object.entries(envVars).forEach(([k, v]) => { this.processEnv[k] = v; });
@@ -1511,7 +1584,10 @@ export class CliRunner {
 
     // Extract _varname fields from frontmatter and match with --_varname CLI flags
     // Variables starting with _ are template variables (except internal keys)
-    const internalKeys = new Set(["_interactive", "_i", "_cwd", "_subcommand", "_steps", "_output"]);
+    const internalKeys = new Set([
+      "_interactive", "_i", "_cwd", "_subcommand", "_steps", "_output",
+      "_isolated", "_system-prompt", "_append-system-prompt",
+    ]);
     const namedVarFields = Object.keys(frontmatter).filter((k) => k.startsWith("_") && !internalKeys.has(k));
     for (const key of namedVarFields) {
       const defaultValue = frontmatter[key];

@@ -55,6 +55,10 @@ Vercel with Root Directory = `site`). Rules:
   `cli-runner.ts` requires a matching `COMMAND_DOCS` entry in the generator.
 - Site-only commits use `chore(site):` / `docs(site):` scopes so
   semantic-release never cuts a CLI release for a visual change.
+- `site/content/*.md` are article pages (e.g. the auto-evolve deep dive,
+  formerly an external here.now URL). `scripts/build-content.mjs` renders
+  each to `dist/<slug>/index.html` during `npm run build` so they're hosted
+  on mdflow.dev — never link site copy to external here.now pages.
 - Factual site copy should render from facts.json; artistic copy (headlines,
   shaders, easter eggs) is hand-written. See `docs/SITE-SYNC.md`.
 
@@ -108,6 +112,14 @@ Vercel with Root Directory = `site`). Rules:
 - **`adapters/pi-auth.ts`** - Codex-subscription auth bridge for the pi
   engine (`~/.mdflow/pi-agent`, pointed at via PI_CODING_AGENT_DIR); never
   writes the user's real credential files
+
+- **`isolation.ts`** - `_isolated` resolution: adapter-declared
+  context-stripping flags layered config defaults < isolation < frontmatter;
+  unsupported engines produce a stderr warning (see Isolation table below)
+
+- **`system-prompt.ts`** - `_system-prompt`/`_append-system-prompt`
+  extraction and adapter translation (flags, codex `-c` overrides, gemini
+  GEMINI_SYSTEM_MD temp file); unsupported engines fail the run
 
 - **`compat.ts`** - Automatic frontmatter version/compatibility stamps:
   `_mdflow_version` written at creation (`md create`/`md init`), `_compat`
@@ -176,7 +188,38 @@ a document and printed, not executed.
 - `_interactive`: Enable interactive mode (overrides print-mode defaults)
 - `_subcommand`: Prepend subcommand(s) to CLI args (e.g., `_subcommand: exec`)
 - `_cwd`: Override working directory for inline commands (`` !`cmd` ``)
+- `_isolated`: Isolation is ON BY DEFAULT — set `false` to opt back into ambient context (skills, MCP, memory/context files, plugins) — see Isolation below
+- `_system-prompt` / `_append-system-prompt`: Replace/append the engine's system prompt, translated per engine — see System Prompt below
 - `_mdflow_version` / `_compat`: Automatic compatibility stamps (see below) — never set these by hand
+
+**Isolation (`src/isolation.ts` + adapter `getIsolationDefaults()`):**
+ON BY DEFAULT for every engine — the flow file is the entire behavior;
+skills/MCP/context a flow needs are referenced explicitly in frontmatter
+(`mcp-config:`, `plugin-dir:`, `add-dir:`, extension paths), not inherited
+from the machine. `_isolated: false` (frontmatter), `--_isolated false`
+(CLI), or `commands.<engine>._isolated: false` (config) opts out. The
+verified flags layer between config defaults and frontmatter, so an isolated
+flow can still re-enable one layer (`safe-mode: false`). Per engine:
+
+| Engine | Flags |
+|--------|-------|
+| claude | `--safe-mode --no-session-persistence` (the latter is print-only, stripped in interactive; `--bare` deliberately NOT used — it breaks OAuth auth) |
+| codex | `--ignore-user-config --ephemeral -c project_doc_max_bytes=0` (first two are exec-only, stripped in interactive) |
+| gemini | `--extensions none` (GEMINI.md + settings MCP have no CLI kill-switch) |
+| copilot | `--no-custom-instructions --disable-builtin-mcps` (user MCP config still loads) |
+| opencode | `--pure` (AGENTS.md still loads) |
+| pi | `--no-extensions --no-skills --no-prompt-templates --no-context-files --no-session` |
+| droid / cursor-agent / agy | no controls exist — runs ambient; warns only on an explicit `_isolated: true` |
+
+**System prompt (`src/system-prompt.ts` + adapter `applySystemPrompt()`):**
+the flow body is always the *user* prompt; `_system-prompt` (replace) and
+`_append-system-prompt` (string or list) control the *system* prompt.
+Translations: claude/pi → `--system-prompt`/`--append-system-prompt`; codex →
+`-c model_instructions_file=<temp file>` / `-c developer_instructions=…`;
+gemini → `GEMINI_SYSTEM_MD=<temp file>` env (replace only — append errors).
+Engines with no mechanism (copilot, droid, opencode, cursor-agent, agy) fail
+the run — a silently dropped system prompt would be a different flow. Never
+add a translation from an unverified flag; check the engine's `--help` first.
 
 **Compatibility stamps (`src/compat.ts`):** every flow tracks which mdflow it
 works with, with zero user involvement. `md create`/`md init` stamp

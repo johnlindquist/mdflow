@@ -156,6 +156,13 @@ export const frontmatterSchema = z.object({
   // Environment variables (underscore-prefixed system key)
   // Object form sets process.env
   _env: z.record(z.string(), stringCoerce).optional(),
+
+  // Isolation mode: strip the engine's ambient context (adapter-translated)
+  _isolated: z.boolean().optional(),
+
+  // System prompt override / append (adapter-translated per engine)
+  "_system-prompt": z.string().optional(),
+  "_append-system-prompt": z.union([z.string(), z.array(z.string())]).optional(),
 }).passthrough(); // Allow all other keys - they become CLI flags (including $1, $2, etc.)
 
 /** Type inferred from schema */

@@ -49,6 +49,32 @@ real credential files) and points every pi spawn at it via
 setup. Adapters can contribute spawn-time env vars via the new optional
 `ToolAdapter.prepareEnv()` hook.
 
+### Isolation (`_isolated`) and system prompt (`_system-prompt`)
+
+pi's hermetic story is now the DEFAULT for every engine: flows run with
+ambient skills, MCP servers, memory/context files, plugins, and session
+persistence stripped, using adapter-verified flags layered between config
+defaults and frontmatter. Whatever a flow needs it references explicitly
+(`mcp-config:`, `plugin-dir:`, `add-dir:`, extension paths) — the flow file
+is the entire behavior. Opt out per flow (`_isolated: false`), per
+invocation (`--_isolated false`), or per machine
+(`commands.<engine>._isolated: false` in config); an isolated flow can also
+re-enable a single layer (`safe-mode: false`). claude gets `--safe-mode
+--no-session-persistence`, codex `--ignore-user-config --ephemeral -c
+project_doc_max_bytes=0`, gemini `--extensions none`, copilot
+`--no-custom-instructions --disable-builtin-mcps`, opencode `--pure`;
+droid/cursor-agent/agy have no controls, run ambient, and warn only when a
+flow explicitly sets `_isolated: true`. Every flag was verified against the
+engine's own `--help` or shipped source (claude's `--bare` is deliberately
+avoided: it locks auth to `ANTHROPIC_API_KEY`).
+
+`_system-prompt` (replace) and `_append-system-prompt` (append; string or
+list) make the system prompt part of the flow file. Translations: claude/pi
+native flags; codex `-c model_instructions_file=<temp file>` /
+`-c developer_instructions=…`; gemini `GEMINI_SYSTEM_MD=<temp file>`
+(replace only). Engines with no mechanism fail the run instead of silently
+dropping the prompt. `md explain` shows both resolutions for free.
+
 ### Evals (`md eval`)
 
 `md eval flows/jq.md` runs the colocated suite `flows/jq.eval.ts`

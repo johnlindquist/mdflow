@@ -37,7 +37,10 @@ export type ReservedFrontmatterSystemKey =
   | "_max_prompt_tokens"
   | "_max_runtime_ms"
   | "_mdflow_version"
-  | "_compat";
+  | "_compat"
+  | "_isolated"
+  | "_system-prompt"
+  | "_append-system-prompt";
 
 export type FrontmatterSystemKey = ReservedFrontmatterSystemKey | `_${string}`;
 
@@ -195,6 +198,32 @@ export interface AgentFrontmatter {
    * Used for telemetry budget enforcement checks.
    */
   _max_runtime_ms?: number;
+
+  /**
+   * Isolation is ON BY DEFAULT: every flow runs with the engine's ambient
+   * context stripped (skills, MCP servers, memory/context files, plugins,
+   * session persistence — whatever the engine exposes flags for), translated
+   * per engine by the adapter's getIsolationDefaults(). Set `false` to opt
+   * back into ambient context; set `true` explicitly to also surface a
+   * warning on engines with no isolation controls (droid, cursor-agent,
+   * agy), which otherwise run ambient silently.
+   */
+  _isolated?: boolean;
+
+  /**
+   * Replace the engine's default system prompt. Translated per engine
+   * (claude/pi: --system-prompt; codex: model_instructions_file; gemini:
+   * GEMINI_SYSTEM_MD). Engines with no supported mechanism fail the run
+   * rather than silently ignoring the key.
+   */
+  "_system-prompt"?: string;
+
+  /**
+   * Append to the engine's default system prompt. String or list of strings.
+   * Translated per engine (claude/pi: --append-system-prompt; codex:
+   * developer_instructions). Unsupported engines fail the run.
+   */
+  "_append-system-prompt"?: string | string[];
 
   /**
    * mdflow version this flow was created with. Stamped automatically by
@@ -415,6 +444,62 @@ export interface ToolAdapter {
    * hermetic agent dir.
    */
   prepareEnv?(): Record<string, string> | undefined;
+
+  /**
+   * Optional: flags that strip the engine's ambient context (skills, MCP,
+   * memory/context files, plugins, session persistence). Isolation is ON BY
+   * DEFAULT — these apply to every run unless the flow opts out with
+   * `_isolated: false`. Layered after config defaults, before frontmatter,
+   * so a flow can still re-enable one layer (e.g. `safe-mode: false`).
+   * Absent = the engine has no isolation controls; it runs ambient, and an
+   * explicit `_isolated: true` triggers a stderr warning.
+   *
+   * Only list flags verified against the engine's own --help/source; a
+   * guessed flag breaks every flow on that engine.
+   */
+  getIsolationDefaults?(): CommandDefaults;
+
+  /**
+   * Optional: translate the canonical `_system-prompt` /
+   * `_append-system-prompt` keys into engine-native configuration. Absent =
+   * the engine has no supported mechanism and the run FAILS (a silently
+   * dropped system prompt would change flow behavior).
+   *
+   * `writeTempFile` is injected so engines that need a file on disk (gemini
+   * GEMINI_SYSTEM_MD, codex model_instructions_file) stay testable; callers
+   * own the temp lifecycle.
+   */
+  applySystemPrompt?(
+    spec: SystemPromptSpec,
+    writeTempFile: (content: string) => string
+  ): SystemPromptTranslation;
+}
+
+/**
+ * Canonical system prompt request extracted from `_system-prompt` /
+ * `_append-system-prompt` (frontmatter or CLI).
+ */
+export interface SystemPromptSpec {
+  /** Full replacement for the engine's default system prompt. */
+  replace?: string;
+  /** Segments appended to the engine's default system prompt. */
+  append?: string[];
+}
+
+/**
+ * Engine-native translation of a SystemPromptSpec.
+ */
+export interface SystemPromptTranslation {
+  /**
+   * Frontmatter fragment to merge (keys become CLI flags via the normal
+   * pipeline). Array values concat with existing arrays; scalars override.
+   */
+  frontmatter?: Record<string, FrontmatterValue>;
+  /**
+   * Env vars to set on the engine process (merged into _env; wins over an
+   * existing _env key because `_system-prompt` is the more specific intent).
+   */
+  env?: Record<string, string>;
 }
 
 /**

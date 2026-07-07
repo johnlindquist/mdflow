@@ -21,6 +21,9 @@ import {
   loadGlobalConfig, loadProjectConfig, loadFullConfig,
   applyDefaults, applyInteractiveMode, BUILTIN_DEFAULTS, getConfigFile,
 } from "./config";
+import { getAdapter as getEngineAdapter } from "./adapters";
+import { resolveIsolationMode, resolveIsolationDefaults } from "./isolation";
+import { extractSystemPromptSpec, applySystemPromptToFrontmatter } from "./system-prompt";
 import { expandContentImports, hasContentImports } from "./imports";
 import { substituteTemplateVars, extractTemplateVars } from "./template";
 import { isDomainTrusted, extractDomain, getKnownHostsPath } from "./trust";
@@ -50,6 +53,18 @@ export interface ExplainResult {
   interactiveMode: boolean;
   interactiveModeSource: string;
   configPaths: { global: string; globalExists: boolean; project: string | null; projectExists: boolean };
+  isolation: {
+    isolated: boolean;
+    explicit: boolean;
+    supported: boolean;
+    flags: CommandDefaults;
+    warning?: string;
+  };
+  systemPrompt?: {
+    replace: boolean;
+    appendCount: number;
+    error?: string;
+  };
 }
 
 function truncateText(text: string, maxLength: number): { text: string; truncated: boolean } {
@@ -98,7 +113,28 @@ export async function analyzeAgent(filePath: string, passthroughArgs: string[] =
   const projectDefaults = projectConfig.commands?.[command];
   const fullDefaults = fullConfig.commands?.[command];
 
-  let frontmatter = applyDefaults(originalFrontmatter as AgentFrontmatter, fullDefaults);
+  // Isolation: mirror cli-runner — ON by default, config defaults <
+  // isolation defaults < frontmatter, so explain shows exactly what a run
+  // would do.
+  const engineAdapter = getEngineAdapter(command);
+  const isolatedFlagIdx = passthroughArgs.indexOf("--_isolated");
+  let cliIsolated: boolean | undefined;
+  if (isolatedFlagIdx !== -1) {
+    const next = passthroughArgs[isolatedFlagIdx + 1];
+    cliIsolated = next === "false" ? false : true;
+  }
+  const isolationMode = resolveIsolationMode({
+    frontmatter: originalFrontmatter as AgentFrontmatter,
+    cliValue: cliIsolated,
+    commandDefaults: fullDefaults,
+  });
+  const isolationInfo = resolveIsolationDefaults(engineAdapter, command);
+  let effectiveDefaults = fullDefaults;
+  if (isolationMode.isolated && !isolationInfo.unsupportedWarning) {
+    effectiveDefaults = { ...(fullDefaults ?? {}), ...isolationInfo.defaults };
+  }
+
+  let frontmatter = applyDefaults(originalFrontmatter as AgentFrontmatter, effectiveDefaults);
 
   const interactiveFromFilename = hasInteractiveMarker(localFilePath);
   const interactiveFromCli = passthroughArgs.includes("--_interactive") || passthroughArgs.includes("-_i");
@@ -111,11 +147,34 @@ export async function analyzeAgent(filePath: string, passthroughArgs: string[] =
 
   frontmatter = applyInteractiveMode(frontmatter, command, interactiveFromFilename || interactiveFromCli);
 
+  // System prompt: apply the same translation a run would, with a
+  // placeholder writer so explain never touches the filesystem.
+  let systemPromptResult: ExplainResult["systemPrompt"];
+  const systemPromptSpec = extractSystemPromptSpec(frontmatter);
+  if (systemPromptSpec) {
+    systemPromptResult = {
+      replace: systemPromptSpec.replace !== undefined,
+      appendCount: systemPromptSpec.append?.length ?? 0,
+    };
+    try {
+      const applied = applySystemPromptToFrontmatter(
+        engineAdapter, command, frontmatter, systemPromptSpec,
+        () => "<generated system prompt file>"
+      );
+      frontmatter = applied.frontmatter;
+    } catch (err) {
+      systemPromptResult.error = (err as Error).message;
+    }
+  }
+
   const envVars = extractEnvVars(frontmatter);
   const envKeys = envVars ? Object.keys(envVars) : [];
 
   const templateVars: Record<string, string> = {};
-  const internalKeys = new Set(["_interactive", "_i", "_cwd", "_subcommand"]);
+  const internalKeys = new Set([
+    "_interactive", "_i", "_cwd", "_subcommand",
+    "_isolated", "_system-prompt", "_append-system-prompt",
+  ]);
   for (const key of Object.keys(frontmatter).filter((k) => k.startsWith("_") && !internalKeys.has(k))) {
     const value = frontmatter[key];
     if (value != null && value !== "") templateVars[key] = String(value);
@@ -163,6 +222,14 @@ export async function analyzeAgent(filePath: string, passthroughArgs: string[] =
     interactiveMode: interactiveFromFilename || interactiveFromCli || interactiveFromFrontmatter,
     interactiveModeSource,
     configPaths: { global: globalConfigPath, globalExists: existsSync(globalConfigPath), project: projectConfigPath, projectExists: projectConfigPath !== null },
+    isolation: {
+      isolated: isolationMode.isolated,
+      explicit: isolationMode.explicit,
+      supported: !isolationInfo.unsupportedWarning,
+      flags: isolationInfo.defaults,
+      warning: isolationInfo.unsupportedWarning,
+    },
+    systemPrompt: systemPromptResult,
   };
 }
 
@@ -183,6 +250,37 @@ export function formatExplainOutput(result: ExplainResult): string {
   lines.push(thinSep, "MODE", thinSep);
   lines.push(`Interactive mode: ${result.interactiveMode ? "YES" : "NO (print mode)"}`);
   lines.push(`Source: ${result.interactiveModeSource}`, "");
+
+  lines.push(thinSep, "ISOLATION", thinSep);
+  if (result.isolation.isolated) {
+    const source = result.isolation.explicit ? "explicit" : "default";
+    if (result.isolation.supported) {
+      lines.push(`ON (${source}) — the flow file is the entire behavior`);
+      for (const [k, v] of Object.entries(result.isolation.flags)) {
+        lines.push(`   ${k}: ${JSON.stringify(v)}`);
+      }
+      lines.push(`   (opt out with _isolated: false)`);
+    } else {
+      lines.push(`ON (${source}) — but this engine has no isolation controls; runs ambient`);
+      if (result.isolation.warning) lines.push(`   ${result.isolation.warning}`);
+    }
+  } else {
+    lines.push("OFF (_isolated: false) — ambient skills/MCP/context files load");
+  }
+  lines.push("");
+
+  if (result.systemPrompt) {
+    lines.push(thinSep, "SYSTEM PROMPT", thinSep);
+    if (result.systemPrompt.error) {
+      lines.push(`ERROR: ${result.systemPrompt.error}`);
+    } else {
+      if (result.systemPrompt.replace) lines.push("Replace: YES (_system-prompt)");
+      if (result.systemPrompt.appendCount > 0) {
+        lines.push(`Append segments: ${result.systemPrompt.appendCount} (_append-system-prompt)`);
+      }
+    }
+    lines.push("");
+  }
 
   lines.push(thinSep, "CONFIGURATION PRECEDENCE", thinSep, "(Later entries override earlier ones)", "");
 

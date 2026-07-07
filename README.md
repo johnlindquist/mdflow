@@ -40,6 +40,21 @@ prove behavior. Every run makes them better.
   key is now `engine:` (`tool:`/`_tool:` still work, with a warning).
 - **pi is the default engine**, runs hermetic (no ambient extensions,
   skills, or context files), and bridges your Codex CLI login automatically.
+- **Isolation is the default, for every engine.** Flows run with the
+  engine's ambient context stripped using its own verified flags — claude
+  `--safe-mode --no-session-persistence`, codex `--ignore-user-config
+  --ephemeral -c project_doc_max_bytes=0`, gemini `--extensions none`,
+  copilot `--no-custom-instructions --disable-builtin-mcps`, opencode
+  `--pure`, pi its hermetic set. Skills/MCP/context a flow needs are
+  declared explicitly in frontmatter; `_isolated: false` opts back into
+  ambient. Engines with no controls (droid, cursor-agent, agy) run ambient
+  and warn only on an explicit `_isolated: true` — never pretending. *The
+  flow file is the entire behavior.*
+- **System prompt as a first-class key:** `_system-prompt:` replaces the
+  engine's system prompt, `_append-system-prompt:` appends (string or list).
+  Translated per engine (claude/pi flags, codex `model_instructions_file` /
+  `developer_instructions` config, gemini `GEMINI_SYSTEM_MD`). Engines with
+  no mechanism fail the run instead of silently dropping your prompt.
 - **New engines:** `cursor-agent` and `agy` (Google Antigravity, the gemini
   CLI successor; the old gemini adapter remains for Code Assist
   Standard/Enterprise).

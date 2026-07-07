@@ -107,6 +107,12 @@ const SYSTEM_KEYS = new Set([
   // (`_mdflow_version`) and after successful runs (`_compat`); never flags.
   "_mdflow_version",
   "_compat",
+
+  // Isolation + system prompt (v3): consumed by mdflow and translated into
+  // engine-native flags/env by the adapter layer; never passed through.
+  "_isolated",
+  "_system-prompt",
+  "_append-system-prompt",
 ]);
 
 /**
