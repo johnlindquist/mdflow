@@ -1,3 +1,24 @@
+# [4.0.0](https://github.com/johnlindquist/mdflow/compare/v3.1.0...v4.0.0) (2026-07-07)
+
+
+* feat!: isolate every engine by default and add first-class system prompt override ([20a9fe0](https://github.com/johnlindquist/mdflow/commit/20a9fe0f636bd5fa53cc12c8bd48bce6c6d0cd92))
+
+
+### Bug Fixes
+
+* **site:** tighten hero CTA layout ([e0380da](https://github.com/johnlindquist/mdflow/commit/e0380da1947beb8b7e8ddf956620b97ac212a86b))
+
+
+### BREAKING CHANGES
+
+* flows on claude/codex/gemini/copilot/opencode that
+implicitly relied on ambient skills, MCP servers, or CLAUDE.md/AGENTS.md
+memory now run isolated by default. Add `_isolated: false` to restore
+the previous behavior, or declare the needed context explicitly in
+frontmatter.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
 # [3.1.0](https://github.com/johnlindquist/mdflow/compare/v3.0.0...v3.1.0) (2026-07-07)
 
 
