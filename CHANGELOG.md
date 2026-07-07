@@ -1,3 +1,16 @@
+# [3.1.0](https://github.com/johnlindquist/mdflow/compare/v3.0.0...v3.1.0) (2026-07-07)
+
+
+### Bug Fixes
+
+* **compat:** stamp _compat only on major/minor upgrades ([11cf84b](https://github.com/johnlindquist/mdflow/commit/11cf84b66dcfbdae91d20d0cd1212afc6ab70b05))
+* **pkg:** whitelist published files; add site facts generator ([909812b](https://github.com/johnlindquist/mdflow/commit/909812bd27a82d30b4fcd254502849d789f7cb1c))
+
+
+### Features
+
+* **compat:** automatic frontmatter version/compatibility stamps ([df0e2b9](https://github.com/johnlindquist/mdflow/commit/df0e2b90aca929e87862eda508e4674e7edbb4fb))
+
 # [3.0.0-next.6](https://github.com/johnlindquist/mdflow/compare/v3.0.0-next.5...v3.0.0-next.6) (2026-07-07)
 
 
