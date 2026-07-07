@@ -1,3 +1,10 @@
+## [3.1.1-next.1](https://github.com/johnlindquist/mdflow/compare/v3.1.0...v3.1.1-next.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **site:** tighten hero CTA layout ([e0380da](https://github.com/johnlindquist/mdflow/commit/e0380da1947beb8b7e8ddf956620b97ac212a86b))
+
 # [3.1.0](https://github.com/johnlindquist/mdflow/compare/v3.0.0...v3.1.0) (2026-07-07)
 
 
