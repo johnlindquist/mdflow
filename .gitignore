@@ -46,3 +46,6 @@ mdflow-core-bundle.md
 
 # packx context-bundler cache
 .packx_cache/
+
+# web-choices HITL app session state
+.hitl-choice/

@@ -9,6 +9,7 @@ import { join, resolve } from "path";
 import yaml from "js-yaml";
 import { getProjectAgentsDir, getUserAgentsDir } from "./cli";
 import { openInEditor } from "./file-selector";
+import { mdflowVersion } from "./compat";
 
 interface CreateOptions {
   name?: string;
@@ -173,8 +174,9 @@ Examples:
     options.content = "";
   }
 
-  // Prepare frontmatter - only include what user explicitly provided
-  const finalFrontmatter = { ...options.frontmatter };
+  // Prepare frontmatter - what the user provided, plus the creation-version
+  // stamp (`_mdflow_version`) the compat system uses to track compatibility.
+  const finalFrontmatter = { _mdflow_version: mdflowVersion(), ...options.frontmatter };
 
   // Construct YAML
   let fileContent = "";

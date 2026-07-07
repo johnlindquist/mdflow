@@ -109,20 +109,42 @@ export function getFrecencyScore(path: string): number {
 }
 
 /**
- * Record a file usage (increments count and updates lastUsed)
+ * A re-run this soon after the previous run reads as dissatisfaction with
+ * the previous output — the implicit-complaint signal auto-evolve feeds on.
  */
-export async function recordUsage(path: string): Promise<void> {
+export const QUICK_RERUN_WINDOW_MS = 120_000;
+
+export interface UsageSignal {
+  /** True when this run started within QUICK_RERUN_WINDOW_MS of the previous one. */
+  quickRerun: boolean;
+  msSincePrevious: number | null;
+}
+
+/**
+ * Record a file usage (increments count and updates lastUsed).
+ * Returns the quick-re-run signal derived from the previous lastUsed.
+ */
+export async function recordUsage(path: string): Promise<UsageSignal> {
   await loadHistory();
 
   if (!historyData![path]) {
     historyData![path] = { count: 0, lastUsed: 0 };
   }
 
+  const previousLastUsed = historyData![path]!.lastUsed;
+  const now = Date.now();
+  const msSincePrevious = previousLastUsed > 0 ? now - previousLastUsed : null;
+
   historyData![path]!.count++;
-  historyData![path]!.lastUsed = Date.now();
+  historyData![path]!.lastUsed = now;
 
   // Fire and forget save
   saveHistory().catch(() => {});
+
+  return {
+    quickRerun: msSincePrevious !== null && msSincePrevious < QUICK_RERUN_WINDOW_MS,
+    msSincePrevious,
+  };
 }
 
 /**

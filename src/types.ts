@@ -35,7 +35,9 @@ export type ReservedFrontmatterSystemKey =
   | "_workflow"
   | "_context_budget_tokens"
   | "_max_prompt_tokens"
-  | "_max_runtime_ms";
+  | "_max_runtime_ms"
+  | "_mdflow_version"
+  | "_compat";
 
 export type FrontmatterSystemKey = ReservedFrontmatterSystemKey | `_${string}`;
 
@@ -193,6 +195,18 @@ export interface AgentFrontmatter {
    * Used for telemetry budget enforcement checks.
    */
   _max_runtime_ms?: number;
+
+  /**
+   * mdflow version this flow was created with. Stamped automatically by
+   * `md create` / `md init`; never passed as a CLI flag.
+   */
+  _mdflow_version?: string;
+
+  /**
+   * Newest mdflow version verified to run this flow successfully. Stamped
+   * automatically after clean runs; never passed as a CLI flag.
+   */
+  _compat?: string;
 
   /**
    * Engine (agent CLI) that executes this flow, e.g. "claude", "codex", "pi".

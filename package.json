@@ -8,7 +8,7 @@
     "url": "https://github.com/johnlindquist/mdflow.git"
   },
   "bin": {
-    "mdflow": "./src/index.ts",
+    "mdflow": "./bin/mdflow.mjs",
     "md": "./src/index.ts"
   },
   "scripts": {

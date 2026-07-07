@@ -98,9 +98,15 @@ const SYSTEM_KEYS = new Set([
 
   // Flow metadata (v3): human/roster-facing, never CLI flags. `description`
   // is what marks a minimal file as a flow; `route` is reserved for keyword
-  // routing.
+  // routing; `evolve: auto` opts the flow into post-run auto-evolution.
   "description",
   "route",
+  "evolve",
+
+  // Compatibility/version stamps (v3): written automatically at creation
+  // (`_mdflow_version`) and after successful runs (`_compat`); never flags.
+  "_mdflow_version",
+  "_compat",
 ]);
 
 /**

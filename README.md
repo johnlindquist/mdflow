@@ -8,6 +8,16 @@ git diff | explain.md            # Pipe through any command
 
 **Your markdown files are now executable AI agents.**
 
+```bash
+npx mdflow init
+```
+
+Your agent CLI (claude, codex, copilot, ...) opens pre-loaded with the mdflow
+setup guide: it reads your repo, proposes flows tailored to it, writes
+`./flows` + `.mdflow.yaml` once you approve, and verifies everything with free
+dry runs. No agent CLI handy — or scripting it? `npx mdflow init --yes`
+scaffolds the starter roster with zero engine turns.
+
 ---
 
 ## New in v3
@@ -17,7 +27,8 @@ prove behavior. Every run makes them better.
 
 - **`./flows` is your repo's agent roster.** One markdown agent per job:
   code review, release notes, issue triage. Diffable in PRs, provable with
-  `md eval`, readable by every teammate, human or AI. The installable skill
+  `md eval`, readable by every teammate, human or AI. Start one with
+  `npx mdflow init`; the installable skill
   (`npx skills add johnlindquist/mdflow`) teaches your coding agent to build
   and maintain it.
 - **Engines are environment, not filename ceremony.** Bare `review.md` runs
@@ -36,9 +47,18 @@ prove behavior. Every run makes them better.
   Behavioral cases in hermetic sandboxes, cost printed before running,
   results in a trust ledger. *If a guardrail isn't covered by an eval, it's
   a wish.*
+- **Evolution:** `md complain flows/review.md "missed the race condition"`
+  records evidence; `md evolve` has a maintainer engine redraft the prompt
+  and applies it only if the eval suite scores clean and no worse than the
+  ancestor's baseline. Add `evolve: auto` to frontmatter for the full loop —
+  gated on a proven-clean suite (`lastCleanAt`), never auto-applying to an
+  unproven one. *Benefit is a measurement, not a hope.*
 
 See `docs/V3-FLOWS.md` for the full v3 design and what's coming (distill,
-evolve, tournament, routing).
+tournament, routing), [`docs/public-api.md`](docs/public-api.md) for the
+stable CLI contract, and [`GUIDE-NEW-FEATURES.md`](GUIDE-NEW-FEATURES.md) for
+workflows (`_steps`), structured outputs (`_output`), context providers
+(`@git:diff`), the flow registry, `--json` mode, and run telemetry.
 
 ---
 
@@ -71,9 +91,10 @@ Name your file `task.COMMAND.md` and the command is inferred:
 
 ```bash
 task.claude.md    # Runs claude
-task.gemini.md    # Runs gemini
 task.codex.md     # Runs codex
 task.copilot.md   # Runs copilot (print mode by default)
+task.agy.md       # Runs agy (Google Antigravity, the gemini CLI successor)
+task.gemini.md    # Runs gemini (Code Assist Standard/Enterprise only — sunset for individuals)
 ```
 
 ### 2. Frontmatter → CLI Flags
@@ -118,22 +139,36 @@ mdflow plan.claude.md | mdflow implement.codex.md
 
 ## Installation
 
+No install needed to start — bootstrap a flow roster in any repo:
+
+```bash
+npx mdflow init
+```
+
+Keep it installed for daily runs:
+
 ```bash
 npm install -g mdflow
 # or
 bun install && bun link
 ```
 
+mdflow runs on [Bun](https://bun.sh); `npx mdflow` offers to install it if
+it's missing.
+
 ## Quick Start
 
 ```bash
-# Run with filename-inferred command
-mdflow task.claude.md
-mdflow task.gemini.md
+# Initialize a flow roster (an installed agent CLI guides you; -y to scaffold)
+npx mdflow init
 
-# Override command via --_command flag
-mdflow task.md --_command claude
-mdflow task.md -_c gemini
+# Run with filename-inferred engine
+mdflow task.claude.md
+mdflow task.codex.md
+
+# Override the engine explicitly
+mdflow task.md --engine claude
+MDFLOW_ENGINE=codex mdflow task.md
 
 # One-shot ad-hoc mode (no file required)
 md.claude "Summarize: !`git diff --staged`"
@@ -149,14 +184,23 @@ mdflow task.claude.md --verbose --debug
 
 ---
 
-## Command Resolution
+## Engine Resolution
 
-Commands are resolved in this priority order:
+Engines are resolved by a ladder, most explicit first:
 
-1. **CLI flag**: `--_command claude` or `-_c claude`
-2. **Filename pattern**: `task.claude.md` → `claude`
+1. **CLI flag**: `--engine claude` (deprecated aliases: `--_command`/`-_c`, `--tool`)
+2. **Environment variable**: `MDFLOW_ENGINE`
+3. **Filename pattern**: `task.claude.md` → `claude` (must name a real engine)
+4. **Frontmatter**: `engine: claude` (deprecated aliases `tool:`/`_tool:` warn)
+5. **Config** `engine:` (project config beats `~/.mdflow/config.yaml`)
+6. **Built-in default**: `pi`
 
-If no command can be resolved, you'll get an error with instructions.
+Resolution never fails — the default always applies. Implicit choices print a
+dim explanation line on stderr. A file with no frontmatter and no explicit
+engine is a document: `md README.md` prints it instead of executing it.
+
+Bundled engines: `claude`, `codex`, `copilot`, `gemini`, `droid`, `opencode`,
+`pi` (default), `cursor-agent`, `agy` (Google Antigravity).
 
 ---
 
@@ -164,17 +208,17 @@ If no command can be resolved, you'll get an error with instructions.
 
 Some CLI flags are "hijacked" by mdflow: they're consumed and never passed to the underlying command. This allows generic markdown files without command names to be executed.
 
-### `--_command` / `-_c`
+### `--engine`
 
-Override the command for any markdown file:
+Override the engine for any markdown file (deprecated aliases: `--_command`,
+`-_c`, `--tool` — they still work but warn):
 
 ```bash
-# Run a generic .md file with any command
-mdflow task.md --_command claude
-mdflow task.md -_c gemini
+# Run a generic .md file on any engine
+mdflow task.md --engine claude
 
-# Override the filename-inferred command
-mdflow task.claude.md --_command gemini  # Runs gemini, not claude
+# Override the filename-inferred engine
+mdflow task.claude.md --engine gemini  # Runs gemini, not claude
 ```
 
 ### `_varname` Template Variables
@@ -662,15 +706,22 @@ Usage: md <file.md> [flags for the command]
        md.COMMAND "prompt" [flags]      # Ad-hoc execution (no file needed)
 
 Commands:
+  md init [--engine <e>] [-y]   Initialize a flow roster for this project
+                                (guided by an installed agent CLI; -y scaffolds)
   md create [name] [flags]      Create a new agent file
   md explain <agent.md>         Show resolved config without executing
+  md eval <flow.md>             Run the flow's eval suite (<flow>.eval.ts) — costs engine turns
+  md complain <flow.md> "msg"   Record evolution evidence for a flow (free)
+  md evolve <flow.md> [--check] Evidence-gated prompt evolution; --check is free
+  md install <url|gh:...@ref>   Install a flow into the registry (--global for user scope)
+  md remove <name>              Remove an installed registry flow
+  md list                       List installed registry flows
   md setup                      Configure shell (PATH, aliases)
   md logs                       Show agent log directory
   md help                       Show this help
 
 Ad-hoc execution (one-shot mode):
   md.claude "What is 2+2?"                    # Quick prompt to Claude
-  md.gemini "Explain quantum computing"       # Quick prompt to Gemini
   md.codex "Write a function"                 # Quick prompt to Codex
   md.copilot "Help me debug"                  # Quick prompt to Copilot
   md.droid "Build an app"                     # Quick prompt to Droid
@@ -684,9 +735,14 @@ Create options:
   md create -n task -p          Create in project .mdflow/ folder
   md create -g --model gpt-4    Create globally with frontmatter
 
-Command resolution:
-  1. --_command flag (e.g., md task.md --_command claude)
-  2. Filename pattern (e.g., task.claude.md → claude)
+Engine resolution (most explicit wins):
+  1. --engine flag (deprecated aliases: --_command/-_c, --tool)
+  2. MDFLOW_ENGINE environment variable
+  3. Filename pattern (e.g., task.claude.md → claude; must name a real engine)
+  4. Frontmatter key (engine: claude; deprecated: tool:/_tool:)
+  5. Config engine: (project .mdflow.yaml beats ~/.mdflow/config.yaml)
+  6. Built-in default: pi
+  A file with no frontmatter and no explicit engine is printed as a document.
 
 Agent file discovery (in priority order):
   1. Explicit path:      md ./path/to/agent.md
@@ -695,7 +751,7 @@ Agent file discovery (in priority order):
   4. $PATH directories
   5. Current directory:  ./
 
-All frontmatter keys are passed as CLI flags to the command.
+All non-system frontmatter keys are passed as CLI flags to the command.
 Global defaults can be set in ~/.mdflow/config.yaml
 
 Remote execution:
@@ -704,7 +760,7 @@ Remote execution:
   Trusted domains are stored in ~/.mdflow/known_hosts
 
 md-specific flags (consumed, not passed to command):
-  --_command, -_c   Specify command to run
+  --engine          Specify the engine to run (deprecated aliases: --_command/-_c, --tool)
   --_dry-run        Show resolved command and prompt without executing
   --_edit           Open resolved prompt in $EDITOR before execution
   --_trust          Skip trust prompt for remote URLs (TOFU bypass)
@@ -713,13 +769,15 @@ md-specific flags (consumed, not passed to command):
   --_context        Show context tree and exit (no execution)
   --_quiet          Skip context dashboard display before execution
   --_no-menu        Disable post-run action menu (for scripting/piping)
+  --json            Emit a single JSON result object and disable interactive UI
 
 Examples:
   md task.claude.md -p "print mode"
   md task.claude.md --model opus --verbose
-  md commit.gemini.md
-  md task.md --_command claude
-  md task.md -_c gemini
+  md commit.agy.md
+  md task.md                      # engine via the ladder (default: pi)
+  md task.md --engine claude
+  md eval task.md                 # run the flow's eval suite
   md task.claude.md --_dry-run    # Preview without executing
   md https://example.com/agent.claude.md            # Remote execution
   md https://example.com/agent.claude.md --_trust   # Skip trust prompt
@@ -767,6 +825,22 @@ Add to `~/.zshrc`:
 alias -s md='mdflow'
 export PATH="$HOME/agents:$PATH"  # Your agent library
 ```
+
+---
+
+## Installing Shared Flows
+
+Install versioned flows from a URL or GitHub into the registry:
+
+```bash
+md install gh:myorg/agents/code-review.claude.md@v1.2   # project scope (./.mdflow/registry/)
+md install https://example.com/agents/review.claude.md --global  # user scope (~/.mdflow/registry/)
+md list                     # list installed flows
+md remove review.claude.md  # remove one
+```
+
+Every install is pinned in `.mdflow/mdflow.lock.json` (source, resolved ref,
+sha256) — commit it for reproducible CI runs.
 
 ---
 

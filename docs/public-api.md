@@ -16,9 +16,17 @@ Supported subcommands:
 
 | Command | Description |
 | --- | --- |
+| `md init [--engine <e>] [--yes]` | Initialize a flow roster for the current project. Default: launches an installed agent CLI interactively, pre-loaded with the bundled setup guide (uses your engine session; asks for consent first). `--yes` (or no TTY) scaffolds the starter catalog deterministically — zero engine turns. |
 | `md create [name]` | Create a new agent file. |
 | `md explain <agent.md>` | Print resolved config and prompt without execution. |
 | `md eval <flow.md>` | Run the flow's colocated eval suite (`<flow>.eval.ts`). Costs engine turns; cost is printed first. |
+| `md complain <flow.md> "<message>"` | Record evolution evidence for a flow (free). |
+| `md evolve <flow.md> [--check] [--auto] [--yes] [--engine <e>]` | Evidence-gated prompt evolution: refuses without an eval suite or fresh complaints/rough runs; baseline + candidate are scored on the suite and the revision applies only if clean and no worse. `--check` prints the decision for free; `--auto` applies the auto-mode gate. |
+
+Flows may opt into **auto-evolution** with `evolve: auto` in frontmatter: after each successful run, a re-run within 2 minutes is recorded as an implicit complaint, and evolution fires automatically when evidence exists — but only if the flow's trust-ledger entry has `lastCleanAt` (a proven-clean suite). Machine diffs never auto-apply to an unproven suite. Complaints are consumed only by evolution itself; rough runs are consumed by evolution or a later clean `md eval`.
+| `md install <url\|gh:org/repo/path@ref>` | Install a flow from a URL or GitHub shorthand into the registry (project scope by default; `--global` for user scope). Writes `.mdflow/mdflow.lock.json`. |
+| `md remove <name>` | Remove an installed registry flow. |
+| `md list [--project\|--global]` | List installed registry flows. |
 | `md setup` | Configure shell integration. |
 | `md logs` | Show log directory and per-agent logs. |
 | `md help` | Print CLI help. |
@@ -38,6 +46,7 @@ These flags are consumed by mdflow and are not passed to underlying LLM CLIs.
 | `--_quiet` | Skip preflight context dashboard. |
 | `--_no-menu` | Disable post-run action menu. |
 | `--raw` | Emit raw markdown output (no terminal renderer). |
+| `--json` | Emit a single JSON result object (`{exitCode, command, args, stdout, stderr}`) and disable interactive UI. |
 
 Interactive mode controls are also supported:
 
@@ -95,6 +104,22 @@ Use `agy` otherwise.
 | `_subcommand` | string or string[] | Prepends subcommand tokens to generated args. |
 | `$1`, `$2`, ... | string | Maps positional prompt body to named flag(s). |
 | `context_window` | number | Overrides context token-window estimation. |
+| `_mdflow_version` | string | mdflow version the flow was created with. Stamped automatically by `md create`/`md init`; never a CLI flag. |
+| `_compat` | string | Newest mdflow version verified to run the flow successfully. Stamped/upgraded automatically after clean local runs; never a CLI flag. |
+
+### Compatibility stamps
+
+Flows track which mdflow they work with, fully automatically:
+
+- `md create` and `md init` stamp `_mdflow_version` at creation time.
+- After any successful local run, mdflow records the running version in
+  `_compat` (added if missing, upgraded if older). Remote flows and eval
+  sandboxes are never stamped; failed stamps never affect the run.
+- On a major-version mismatch between the recorded version and the running
+  mdflow, a dim one-line notice is printed to stderr; execution is never
+  blocked, and the next clean run re-verifies the flow.
+- A file whose frontmatter contains only these stamps still counts as a
+  document for the document-vs-flow decision.
 
 ### `_inputs` typed object format
 
