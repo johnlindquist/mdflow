@@ -1,0 +1,28 @@
+{
+  "name": "mdflow.dev",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "portless run --name mdflow vite",
+    "dev:raw": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "og-image": "node scripts/generate-og-image.mjs"
+  },
+  "dependencies": {
+    "@google/genai": "^1.32.0",
+    "framer-motion": "^12.23.25",
+    "lucide-react": "^0.556.0",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.1.2",
+    "puppeteer": "^24.32.1",
+    "typescript": "~5.8.2",
+    "vite": "^6.4.1"
+  }
+}

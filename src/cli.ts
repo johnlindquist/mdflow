@@ -181,9 +181,16 @@ Usage: md <file.md> [flags for the command]
        md.COMMAND "prompt" [flags]      # Ad-hoc execution (no file needed)
 
 Commands:
+  md init [--engine <e>] [-y]   Initialize a flow roster for this project
+                                (guided by an installed agent CLI; -y scaffolds)
   md create [name] [flags]      Create a new agent file
   md explain <agent.md>         Show resolved config without executing
   md eval <flow.md>             Run the flow's eval suite (<flow>.eval.ts) — costs engine turns
+  md complain <flow.md> "msg"   Record evolution evidence for a flow (free)
+  md evolve <flow.md> [--check] Evidence-gated prompt evolution; --check is free
+  md install <url|gh:...@ref>   Install a flow into the registry (--global for user scope)
+  md remove <name>              Remove an installed registry flow
+  md list                       List installed registry flows
   md setup                      Configure shell (PATH, aliases)
   md logs                       Show agent log directory
   md help                       Show this help

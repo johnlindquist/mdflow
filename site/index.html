@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mdflow | Markdown agents that evolve</title>
+
+    <!-- Open Graph / Social Media Meta Tags -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://mdflow.dev/" />
+    <meta property="og:title" content="mdflow | Markdown agents that evolve" />
+    <meta property="og:description" content="Executable markdown for AI agents. Any engine: claude, codex, pi, cursor, copilot, antigravity. Paste one prompt into your agent and it sets everything up. v3: flows with evals that prove behavior." />
+    <meta property="og:image" content="https://mdflow.dev/og-image.png" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="https://mdflow.dev/" />
+    <meta name="twitter:title" content="mdflow | Markdown agents that evolve" />
+    <meta name="twitter:description" content="Executable markdown for AI agents. Any engine. Agent-first onboarding. v3: flows with evals that prove behavior." />
+    <meta name="twitter:image" content="https://mdflow.dev/og-image.png" />
+
+    <!-- General Meta -->
+    <meta name="description" content="Executable markdown for AI agents. Any engine: claude, codex, pi, cursor-agent, copilot, agy. Agent-first onboarding: paste one prompt and your agent sets it up. v3 adds evals and a trust ledger." />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@100..800&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              display: ['"Space Grotesk"', 'sans-serif'],
+              mono: ['"JetBrains Mono"', 'monospace'],
+            },
+            colors: {
+              cyan: {
+                400: '#22d3ee',
+                500: '#06b6d4',
+              },
+              orange: {
+                400: '#fb923c',
+                500: '#f97316',
+                600: '#ea580c',
+              },
+              blue: {
+                500: '#3b82f6',
+                600: '#2563eb',
+              },
+              zinc: {
+                950: '#09090b', // Deep black/gray
+                900: '#18181b',
+                850: '#202023',
+              }
+            },
+            animation: {
+              'cursor-blink': 'blink 1s step-end infinite',
+              'scanline': 'scanline 8s linear infinite',
+              'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              'float': 'float 6s ease-in-out infinite',
+            },
+            keyframes: {
+              blink: {
+                '0%, 100%': { opacity: '1' },
+                '50%': { opacity: '0' },
+              },
+              scanline: {
+                '0%': { transform: 'translateY(-100%)' },
+                '100%': { transform: 'translateY(100%)' },
+              },
+              float: {
+                '0%, 100%': { transform: 'translateY(0)' },
+                '50%': { transform: 'translateY(-20px)' },
+              }
+            }
+          },
+        },
+      }
+    </script>
+    <style>
+      /* Kill double-tap smart-zoom (the tap easter eggs need clean taps)
+         while keeping pinch-zoom for accessibility */
+      html {
+        touch-action: manipulation;
+      }
+      /* Custom Scrollbar for Cyber Aesthetic */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #09090b; 
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #3f3f46; 
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #52525b; 
+      }
+      body {
+        background-color: #050505;
+        color: #e4e4e7;
+        overflow-x: hidden;
+      }
+      
+      /* Background Grid Pattern */
+      .bg-grid {
+        background-size: 50px 50px;
+        background-image: linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                          linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+        mask-image: linear-gradient(to bottom, black 40%, transparent 100%);
+      }
+      
+      .text-glow {
+        text-shadow: 0 0 20px rgba(249, 115, 22, 0.5);
+      }
+
+      /* When the WebGL guide layer is live (ShaderGuide adds .shader-fx),
+         the EVOLVE glyphs become translucent windows and the mask-aligned
+         aurora behind the content paints them. Without WebGL the word
+         stays solid white. */
+      html.shader-fx .evolve-live {
+        color: rgba(244, 244, 245, 0.22);
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "react-dom": "https://aistudiocdn.com/react-dom@^19.2.1",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0",
+    "framer-motion": "https://aistudiocdn.com/framer-motion@^12.23.25"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

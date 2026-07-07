@@ -1,3 +1,47 @@
+# [3.0.0-next.6](https://github.com/johnlindquist/mdflow/compare/v3.0.0-next.5...v3.0.0-next.6) (2026-07-07)
+
+
+### Bug Fixes
+
+* **pkg:** whitelist published files; add site facts generator ([909812b](https://github.com/johnlindquist/mdflow/commit/909812bd27a82d30b4fcd254502849d789f7cb1c))
+
+# [3.0.0-next.5](https://github.com/johnlindquist/mdflow/compare/v3.0.0-next.4...v3.0.0-next.5) (2026-07-07)
+
+
+### Bug Fixes
+
+* **compat:** stamp _compat only on major/minor upgrades ([11cf84b](https://github.com/johnlindquist/mdflow/commit/11cf84b66dcfbdae91d20d0cd1212afc6ab70b05))
+
+# [3.0.0-next.4](https://github.com/johnlindquist/mdflow/compare/v3.0.0-next.3...v3.0.0-next.4) (2026-07-07)
+
+
+### Features
+
+* **compat:** automatic frontmatter version/compatibility stamps ([df0e2b9](https://github.com/johnlindquist/mdflow/commit/df0e2b90aca929e87862eda508e4674e7edbb4fb))
+
+# [3.0.0-next.3](https://github.com/johnlindquist/mdflow/compare/v3.0.0-next.2...v3.0.0-next.3) (2026-07-06)
+
+
+* feat!: mdflow v3 — markdown agents that evolve ([7d521a6](https://github.com/johnlindquist/mdflow/commit/7d521a6a46033bd8a8a718321fd1e422dd0dada3))
+
+
+### Features
+
+* **guardrails:** enforce _max_prompt_tokens; adhoc engines match the ladder ([f7ebb68](https://github.com/johnlindquist/mdflow/commit/f7ebb68181cdfb79f560fefc156323b5de066814))
+
+
+### BREAKING CHANGES
+
+* engine: replaces tool:, bare .md files run on the resolved
+engine or print as documents, description/route are reserved frontmatter
+keys. See the v3 commit series for details.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+# Conflicts:
+#	CHANGELOG.md
+#	package.json
+
 # [3.0.0](https://github.com/johnlindquist/mdflow/compare/v2.35.5...v3.0.0) (2026-07-06)
 
 
@@ -61,6 +105,7 @@ deprecated aliases. resolveCommand() no longer throws for missing commands.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 
+||||||| 31696e7
 # [3.0.0-next.2](https://github.com/johnlindquist/mdflow/compare/v3.0.0-next.1...v3.0.0-next.2) (2026-07-05)
 
 

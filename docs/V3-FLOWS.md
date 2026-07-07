@@ -1,6 +1,6 @@
 # mdflow v3 — flows that learn
 
-Status: v3 branch, in progress. Updated 2026-07-04.
+Status: shipped — `mdflow@3.0.0` is on the npm `latest` dist-tag. Updated 2026-07-06.
 
 v3 absorbs an earlier single-file-agent prototype (now retired; its durable
 ideas live here under mdflow's own vocabulary). The pitch:
@@ -59,14 +59,49 @@ ledger (`~/.mdflow/eval-results.json`, `MDFLOW_EVAL_RESULTS` override); a
 full clean run stamps `lastCleanAt`. Eval runs redirect `MDFLOW_RUNS_FILE`
 into the sandbox — synthetic runs never enter the telemetry corpus.
 
+### Evolve (`md evolve`)
+
+`md complain flows/jq.md "output was wrong"` records evidence
+(`~/.mdflow/complaints.jsonl`, override `MDFLOW_COMPLAINTS_FILE`); non-zero
+exits in the runs corpus count too. `md evolve flows/jq.md` then: gathers
+evidence newer than the watermark (last accepted evolution or last clean eval,
+whichever is later) → refuses if there is no eval suite or no fresh evidence
+(`--check` shows the decision for free) → prints cost → scores the ancestor
+on its own suite (baseline) → asks a maintainer engine for a revised prompt
+BODY only (frontmatter is frozen; complaints are framed as untrusted
+evidence; the reply is accepted only from a fenced block with the closing
+fence on its own line) → gates the candidate on the full suite. Accepted
+means clean and no worse than the baseline: benefit is a printed measurement
+(`ancestor 0/1 → candidate 1/1`), not a hope. Failures revert byte-identical
+and park the candidate at `<flow>.pending.md`. Gate runs write a scratch
+ledger, never the trust ledger; acceptance ends by pointing at `git diff`.
+
+**Auto mode.** `evolve: auto` in frontmatter opts a flow into the full loop:
+after each successful run, a re-run within `QUICK_RERUN_WINDOW_MS` (2 min) is
+recorded as an implicit complaint ("the user re-ran because the output wasn't
+right"), and evolution fires automatically on fresh evidence — gated on the
+trust ledger's `lastCleanAt`, the purpose-built proof-of-clean-suite marker:
+machine diffs never auto-apply to a suite that has not passed clean at least
+once. Eval-sandbox runs (`MDFLOW_EVAL_RUN`) neither record implicit
+complaints nor trigger the hook. Watermarks are per-evidence-kind: complaints
+are consumed only by evolution itself (a clean eval can't see a verbosity
+complaint), while rough runs are consumed by evolution or a later clean full
+eval. An accepted evolution records the passing gate run to the trust ledger
+— the applied content is what just passed. Crash safety: the original is
+parked at `<flow>.md.evolve-backup` before mutation and auto-restored on the
+next evolve if a run died mid-gate.
+
+The verification harness (`src/evolve.test.ts`) proves all three claims
+deterministically with stub engines: it works (failing ancestor → applied
+passing candidate), it is beneficial (measured baseline delta, bad candidates
+revert), and it never fires when it shouldn't (no suite, no evidence,
+synthetic eval-sandbox runs, stale pre-watermark evidence → zero maintainer
+calls, zero eval turns).
+
 ## Still to come
 
 - **Distill**: recorded real runs → eval cases (good runs lock behavior in,
   bad runs become tests that fail on purpose).
-- **Evolve**: complaints and rough runs → pending suggestions → reviewable
-  diffs to the flow file, applied only if the suite passes. Because a flow is
-  prompt + config (data, not code), a model-drafted diff can't introduce
-  executable code — the mutation surface is the prompt itself.
 - **Tournament**: competing candidate revisions scored against the suite
   plus probe replays of real prompts.
 - **Routing**: `md route "query"` keyword-summons flows that declare
@@ -91,5 +126,6 @@ into the sandbox — synthetic runs never enter the telemetry corpus.
 
 ## Release
 
-The `v3` branch publishes `3.0.0-next.N` prereleases on the npm `next`
-dist-tag via semantic-release; merging to main graduates it to `3.0.0`.
+`3.0.0` is live on the npm `latest` dist-tag. The `v3` branch continues to
+publish `3.0.0-next.N` prereleases on the `next` dist-tag via
+semantic-release; merges to main graduate them.

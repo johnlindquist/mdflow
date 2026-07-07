@@ -1,0 +1,133 @@
+{
+  "$generated": "by scripts/generate-facts.ts — DO NOT EDIT; run `bun run facts`",
+  "versionBase": "3.0.0",
+  "defaultEngine": "pi",
+  "engines": [
+    "claude",
+    "copilot",
+    "codex",
+    "gemini",
+    "droid",
+    "opencode",
+    "pi",
+    "cursor-agent",
+    "agy"
+  ],
+  "enginesLabel": "claude, copilot, codex, gemini, droid, opencode, pi, cursor-agent, agy (Antigravity)",
+  "install": "npx mdflow init",
+  "repo": "https://github.com/johnlindquist/mdflow",
+  "ladder": [
+    {
+      "rung": "--engine flag",
+      "note": "deprecated aliases: --_command/-_c, --tool"
+    },
+    {
+      "rung": "MDFLOW_ENGINE env var",
+      "note": ""
+    },
+    {
+      "rung": "filename (task.claude.md)",
+      "note": "must name a real engine"
+    },
+    {
+      "rung": "frontmatter engine:",
+      "note": "deprecated aliases: tool:/_tool: (they warn)"
+    },
+    {
+      "rung": "config engine:",
+      "note": "project config beats ~/.mdflow/config.yaml"
+    },
+    {
+      "rung": "default: pi",
+      "note": "implicit picks are announced on stderr"
+    }
+  ],
+  "commands": [
+    {
+      "name": "init",
+      "usage": "init [--engine <e>] [-y]",
+      "description": "bootstrap a flow roster (agent-guided; -y scaffolds deterministically)"
+    },
+    {
+      "name": "create",
+      "usage": "create [name] [flags]",
+      "description": "create a new flow file"
+    },
+    {
+      "name": "explain",
+      "usage": "explain <flow.md>",
+      "description": "show resolved config without executing (free)"
+    },
+    {
+      "name": "eval",
+      "usage": "eval <flow.md>",
+      "description": "run the flow's eval suite — costs engine turns"
+    },
+    {
+      "name": "complain",
+      "usage": "complain <flow.md> \"msg\"",
+      "description": "record evolution evidence (free)"
+    },
+    {
+      "name": "evolve",
+      "usage": "evolve <flow.md> [--check]",
+      "description": "evidence-gated prompt evolution; --check is free"
+    },
+    {
+      "name": "install",
+      "usage": "install <url|gh:org/repo/path@ref>",
+      "description": "install a flow from a registry"
+    },
+    {
+      "name": "remove",
+      "usage": "remove <name>",
+      "description": "remove an installed flow"
+    },
+    {
+      "name": "list",
+      "usage": "list",
+      "description": "list installed registry flows"
+    },
+    {
+      "name": "setup",
+      "usage": "setup",
+      "description": "configure shell (PATH, aliases)"
+    },
+    {
+      "name": "logs",
+      "usage": "logs",
+      "description": "show the flow log directory"
+    },
+    {
+      "name": "help",
+      "usage": "help",
+      "description": "full built-in help"
+    }
+  ],
+  "mdFlags": [
+    {
+      "flag": "--engine",
+      "description": "specify the engine to run"
+    },
+    {
+      "flag": "--_dry-run",
+      "description": "preview without executing"
+    },
+    {
+      "flag": "--_edit",
+      "description": "edit prompt in $EDITOR"
+    },
+    {
+      "flag": "--_context",
+      "description": "show context tree"
+    },
+    {
+      "flag": "--raw",
+      "description": "raw output (for piping)"
+    },
+    {
+      "flag": "--json",
+      "description": "single JSON result object"
+    }
+  ]
+}

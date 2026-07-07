@@ -8,15 +8,26 @@
     "url": "https://github.com/johnlindquist/mdflow.git"
   },
   "bin": {
-    "mdflow": "./src/index.ts",
+    "mdflow": "./bin/mdflow.mjs",
     "md": "./src/index.ts"
   },
+  "files": [
+    "bin",
+    "src",
+    "!src/**/*.test.ts",
+    "assets",
+    "skills",
+    "docs/public-api.md",
+    "README.md"
+  ],
   "scripts": {
     "test": "bun test --bail=1",
     "md": "bun run src/index.ts",
     "bundle": "bun run scripts/bundle.ts -o",
     "bundle:core": "bun run scripts/bundle.ts --core -o",
-    "bundle:stdout": "bun run scripts/bundle.ts"
+    "bundle:stdout": "bun run scripts/bundle.ts",
+    "facts": "bun run scripts/generate-facts.ts",
+    "facts:check": "bun run scripts/generate-facts.ts --check"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",

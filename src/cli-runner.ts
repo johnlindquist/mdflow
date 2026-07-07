@@ -53,6 +53,7 @@ import {
   NetworkError, SecurityError, ConfigurationError, TemplateError, ImportError,
 } from "./errors";
 import { recordRun, type RunRecord } from "./telemetry";
+import { compatNotice, isCompatOnlyFrontmatter, stampCompatFile } from "./compat";
 import type { SystemEnvironment } from "./system-environment";
 import { editPrompt } from "./edit-prompt";
 import { maskArgsArray } from "./secrets";
@@ -435,6 +436,23 @@ export class CliRunner {
     }
   }
 
+  /**
+   * After a successful run, record the running mdflow version in the flow's
+   * `_compat` frontmatter key. Skipped for remote flows (the local file is a
+   * throwaway copy) and eval runs (hermetic sandboxes; MDFLOW_EVAL_RUN=1).
+   * Best-effort: a failed stamp never affects the run's outcome.
+   */
+  private stampCompatAfterSuccess(localFilePath: string, isRemote: boolean): void {
+    if (isRemote || process.env.MDFLOW_EVAL_RUN === "1") return;
+    try {
+      if (stampCompatFile(resolve(localFilePath))) {
+        getCommandLogger().debug({ agentPath: localFilePath }, "Stamped _compat version");
+      }
+    } catch {
+      // Never let version stamping interfere with a successful run.
+    }
+  }
+
   async run(argv: string[]): Promise<CliRunResult> {
     const jsonMode = argv.includes("--json");
     let logPath: string | null = null;
@@ -506,6 +524,10 @@ export class CliRunner {
     const registryArgs = this.parseRegistryArgs(cliArgs.passthroughArgs);
 
     // Handle subcommands
+    if (subcommand === "init") {
+      const { runInit } = await import("./init");
+      return { exitCode: await runInit(cliArgs.passthroughArgs) };
+    }
     if (subcommand === "create") {
       const { runCreate } = await import("./create");
       await runCreate(cliArgs.passthroughArgs);
@@ -591,6 +613,14 @@ export class CliRunner {
       const { runEvalCli } = await import("./evals");
       return { exitCode: await runEvalCli(cliArgs.passthroughArgs) };
     }
+    if (subcommand === "evolve") {
+      const { runEvolveCli } = await import("./evolve");
+      return { exitCode: await runEvolveCli(cliArgs.passthroughArgs) };
+    }
+    if (subcommand === "complain") {
+      const { runComplainCli } = await import("./evolve");
+      return { exitCode: runComplainCli(cliArgs.passthroughArgs) };
+    }
     if (subcommand === "help") cliArgs.help = true;
 
     let filePath = cliArgs.filePath;
@@ -599,7 +629,7 @@ export class CliRunner {
       if (jsonModeRequested && !filePath && subcommand !== "help") {
         this.writeStderr("Usage: md <file.md> [flags for command]");
         this.writeStderr("       md <command> [options]");
-        this.writeStderr("\nCommands: create, setup, logs, explain, eval, install, remove, list, help");
+        this.writeStderr("\nCommands: init, create, setup, logs, explain, eval, evolve, complain, install, remove, list, help");
         this.writeStderr("Run 'md help' for more info");
         throw new ConfigurationError("No agent file specified", 1);
       }
@@ -613,7 +643,7 @@ export class CliRunner {
       } else if (!result.handled) {
         this.writeStderr("Usage: md <file.md> [flags for command]");
         this.writeStderr("       md <command> [options]");
-        this.writeStderr("\nCommands: create, setup, logs, explain, eval, install, remove, list, help");
+        this.writeStderr("\nCommands: init, create, setup, logs, explain, eval, evolve, complain, install, remove, list, help");
         this.writeStderr("Run 'md help' for more info");
         throw new ConfigurationError("No agent file specified", 1);
       }
@@ -948,6 +978,7 @@ export class CliRunner {
       });
 
       if (workflowResult.exitCode === 0) {
+        this.stampCompatAfterSuccess(localFilePath, isRemote);
         getRecordUsage().then(recordUsage => recordUsage(localFilePath)).catch(() => {}); // Fire and forget
 
         const promptedVars = (templateVars as Record<string, unknown>)["__promptedVars__"] as Record<string, string> | undefined;
@@ -1137,7 +1168,25 @@ export class CliRunner {
         });
       }
 
-      getRecordUsage().then(recordUsage => recordUsage(localFilePath)).catch(() => {}); // Fire and forget
+      // Stamp before auto-evolve so evolve's backup/revert cycle captures
+      // (and preserves) the updated `_compat`.
+      this.stampCompatAfterSuccess(localFilePath, isRemote);
+
+      const usageSignal = await getRecordUsage()
+        .then(recordUsage => recordUsage(localFilePath))
+        .catch(() => null);
+
+      // evolve: auto — the flow opted into the learning loop. Quick re-runs
+      // become implicit complaints; evolution itself is still gated (suite +
+      // fresh evidence + trust-ledger lastCleanAt) and prints cost first.
+      if (frontmatter.evolve === "auto") {
+        const { handleAutoEvolve } = await import("./evolve");
+        await handleAutoEvolve(
+          resolve(localFilePath),
+          usageSignal ?? { quickRerun: false, msSincePrevious: null },
+          (line) => this.writeStderr(line)
+        );
+      }
 
       // Save prompted variable values to history for future runs (fire and forget)
       const promptedVars = (templateVars as Record<string, unknown>)["__promptedVars__"] as Record<string, string> | undefined;
@@ -1417,7 +1466,10 @@ export class CliRunner {
     // A markdown file with no frontmatter and no explicit engine is a
     // document, not a flow — print it instead of executing it. Frontmatter
     // (or a filename/flag engine) is what marks a file as executable.
-    if (engineIsImplicit && Object.keys(baseFrontmatter).length === 0) {
+    // Compat-only keys (_mdflow_version/_compat) are invisible metadata and
+    // don't count: automatic version stamping must never flip a document
+    // into an executable flow.
+    if (engineIsImplicit && isCompatOnlyFrontmatter(baseFrontmatter as Record<string, unknown>)) {
       this.writeStdout(await this.env.fs.readText(localFilePath));
       throw new EarlyExitRequest();
     }
@@ -1427,6 +1479,17 @@ export class CliRunner {
     if (engineIsImplicit && !parsed.quiet && !jsonMode) {
       const dim = process.stderr.isTTY ? ["\x1b[2m", "\x1b[0m"] : ["", ""];
       this.writeStderr(`${dim[0]}${basename(localFilePath)} → ${command} (engine: ${engineSource})${dim[1]}`);
+    }
+
+    // Version skew is surfaced but never blocks: a flow verified with a
+    // different mdflow major gets a dim one-liner, and a clean run below
+    // re-stamps `_compat` automatically.
+    if (!parsed.quiet && !jsonMode) {
+      const notice = compatNotice(baseFrontmatter as Record<string, unknown>);
+      if (notice) {
+        const dim = process.stderr.isTTY ? ["\x1b[2m", "\x1b[0m"] : ["", ""];
+        this.writeStderr(`${dim[0]}${notice}${dim[1]}`);
+      }
     }
 
     await loadGlobalConfig();
