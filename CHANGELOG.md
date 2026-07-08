@@ -1,3 +1,17 @@
+# [4.1.0](https://github.com/johnlindquist/mdflow/compare/v4.0.2...v4.1.0) (2026-07-08)
+
+
+### Bug Fixes
+
+* make evolve lifecycle errors predictable ([b4f87e3](https://github.com/johnlindquist/mdflow/commit/b4f87e35a646364ed0d678527196f0a136b026b5))
+* preserve terminal stdio for interactive flows ([c69cbf9](https://github.com/johnlindquist/mdflow/commit/c69cbf997506d58036f374ed4cbdcb41f7b314ca))
+* tighten evolve consent and policy reporting ([f48337a](https://github.com/johnlindquist/mdflow/commit/f48337a49c7186215f8c3ad3f3b04d815a4c7acb))
+
+
+### Features
+
+* make evolve proposal-first and verifiable ([90de31f](https://github.com/johnlindquist/mdflow/commit/90de31f24cc53134b5de9d42febf6d8ed96bb7a0))
+
 ## [4.0.2](https://github.com/johnlindquist/mdflow/compare/v4.0.1...v4.0.2) (2026-07-08)
 
 
