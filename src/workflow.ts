@@ -51,6 +51,10 @@ export interface ExecuteWorkflowOptions {
   resume?: boolean;
   cacheDir?: string;
   runCommandFn?: (ctx: RunContext) => Promise<RunResult>;
+  /** Called just before a non-skipped step executes (or resolves from cache). */
+  onStepStart?: (step: WorkflowStep) => void;
+  /** Called with the result of every non-skipped step. */
+  onStepComplete?: (result: WorkflowStepResult) => void;
 }
 
 interface RawWorkflowStep {
@@ -342,6 +346,8 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
     resume = false,
     cacheDir,
     runCommandFn = runCommand,
+    onStepStart,
+    onStepComplete,
   } = options;
 
   const context: Record<string, unknown> = {
@@ -379,6 +385,8 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
 
         const resolvedPrompt = substituteTemplateVars(step.run, stepContext);
 
+        onStepStart?.(step);
+
         if (resume) {
           const cached = await getCachedResult({
             prompt: resolvedPrompt,
@@ -388,7 +396,7 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
           });
 
           if (cached.hit && cached.result) {
-            return toWorkflowStepResult(
+            const cachedResult = toWorkflowStepResult(
               step,
               resolvedPrompt,
               tool,
@@ -398,6 +406,8 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
               false,
               {}
             );
+            onStepComplete?.(cachedResult);
+            return cachedResult;
           }
         }
 
@@ -443,7 +453,7 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
           );
         }
 
-        return toWorkflowStepResult(
+        const executedResult = toWorkflowStepResult(
           step,
           resolvedPrompt,
           tool,
@@ -453,6 +463,8 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
           false,
           {}
         );
+        onStepComplete?.(executedResult);
+        return executedResult;
       })
     );
 

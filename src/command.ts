@@ -529,8 +529,10 @@ export function extractEnvVars(frontmatter: AgentFrontmatter): Record<string, st
  * - "none": Inherit stdout/stderr, no capture (streaming to terminal)
  * - "capture": Pipe and buffer output, print after completion
  * - "tee": Tee streams - simultaneous display and capture (best of both)
+ * - "stream": Pipe and deliver chunks to ctx.onOutput as they arrive; never
+ *   writes to the terminal (used by --events NDJSON runs)
  */
-export type CaptureMode = "none" | "capture" | "tee";
+export type CaptureMode = "none" | "capture" | "tee" | "stream";
 
 export interface RunContext {
   /** The command to execute */
@@ -571,6 +573,13 @@ export interface RunContext {
    * piping even one output stream makes tools such as Codex reject the launch.
    */
   interactive?: boolean;
+  /**
+   * Called with each output chunk as it arrives (mode "stream" only).
+   * stderr chunks are delivered only when captureStderr is enabled.
+   */
+  onOutput?: (channel: "stdout" | "stderr", text: string) => void;
+  /** Called with the child pid immediately after a successful spawn. */
+  onSpawn?: (pid: number) => void;
 }
 
 export interface RunResult {
@@ -613,10 +622,10 @@ export function resolveCommandStdio(options: {
     return { stdin: "inherit", stdout: "inherit", stderr: "inherit" };
   }
 
-  const shouldPipeStdout =
-    options.mode === "capture" || options.mode === "tee" || options.spinnerActive;
-  const shouldPipeStderr =
-    (options.mode === "capture" || options.mode === "tee") && options.captureStderr;
+  const capturing =
+    options.mode === "capture" || options.mode === "tee" || options.mode === "stream";
+  const shouldPipeStdout = capturing || options.spinnerActive;
+  const shouldPipeStderr = capturing && options.captureStderr;
   return {
     stdin: "inherit",
     stdout: shouldPipeStdout ? "pipe" : "inherit",
@@ -779,6 +788,8 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
   // Store reference for legacy signal handling (deprecated)
   currentChildProcess = proc;
 
+  ctx.onSpawn?.(proc.pid);
+
   let stdout = "";
   let stderr = "";
 
@@ -810,6 +821,49 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
     }
 
     await Promise.all(promises);
+  } else if (mode === "stream") {
+    // Stream mode: deliver chunks to the caller as they arrive while
+    // accumulating the full text. Nothing is written to the terminal.
+    stopSpinner();
+    const readStream = async (
+      stream: ReadableStream<Uint8Array>,
+      channel: "stdout" | "stderr"
+    ): Promise<string> => {
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        if (!text) continue;
+        accumulated += text;
+        ctx.onOutput?.(channel, text);
+      }
+      const tail = decoder.decode();
+      if (tail) {
+        accumulated += tail;
+        ctx.onOutput?.(channel, tail);
+      }
+      return accumulated;
+    };
+
+    const streamPromises: Promise<void>[] = [];
+    if (proc.stdout) {
+      streamPromises.push(
+        readStream(proc.stdout, "stdout").then((content) => {
+          stdout = content;
+        })
+      );
+    }
+    if (proc.stderr && stdio.stderr === "pipe") {
+      streamPromises.push(
+        readStream(proc.stderr, "stderr").then((content) => {
+          stderr = content;
+        })
+      );
+    }
+    await Promise.all(streamPromises);
   } else if (mode === "capture") {
     // Stop spinner before reading output
     stopSpinner();
