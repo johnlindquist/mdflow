@@ -20,7 +20,7 @@ Supported subcommands:
 | `md` | Open the interactive Flow Workbench, including the zero-flow state. Browse/filter with a Markdown and lifecycle preview; run, dry-run, edit, create, record feedback, or enter the proposal-first evolution path. Every action shows its shell equivalent and `FREE`, `ENGINE`, or `LOCAL WRITE` effect before execution. Apply and rollback require a second `Enter`/`c` confirmation on a dedicated local-write screen. |
 | `md init [--guided] [--engine <e>] [--yes]` | Safely scaffold a starter flow roster with zero engine invocations. Plain init is a no-op when `flows/` already has a roster. `--guided` launches an installed agent CLI with the bundled setup guide for a repo-tailored session; an explicit `--engine` preserves that guided behavior unless `--yes` is also present. |
 | `md create "<intent>"` | Create a stable-identity project flow at `flows/<slug>.md` from plain-language intent. Pass `--global` to create a personal, user-scoped flow at `~/.mdflow/<slug>.md` that is available from any project. Uses create-only writes and never overwrites an existing flow. With no intent in a TTY, asks one question. |
-| `md explain <agent.md>` | Print resolved config and prompt without execution. |
+| `md explain <agent.md> [--json]` | Print resolved config and prompt without execution (free — no engine call). `--json` emits the Flow UX Protocol v1 explanation object (see "Machine-facing Flow UX protocol"). |
 | `md eval <flow.md> [--plan] [--yes] [--filter <text>] [--json]` | Preview or run the flow's executable colocated eval suite (`<flow>.eval.ts`). Cost includes repetitions and is printed before consent. |
 | `md feedback <flow.md> "<message>"` | Record durable, private evidence with a stable ID (free). `list`, `show`, `distill`, `dismiss`, `reopen`, and explicit permanent `forget <id> --yes` manage its lifecycle/privacy. |
 | `md complain ...` | Compatibility alias for `md feedback`. |
@@ -31,6 +31,8 @@ Supported subcommands:
 | `md install <url\|gh:org/repo/path@ref>` | Install a flow from a URL or GitHub shorthand into the registry (project scope by default; `--global` for user scope). Writes `.mdflow/mdflow.lock.json`. |
 | `md remove <name>` | Remove an installed registry flow. |
 | `md list [--project\|--global]` | List installed registry flows. |
+| `md roster --json` | Machine-readable enumeration of project (`<projectRoot>/flows/`), global (`~/.mdflow/`), and registry (`.mdflow/registry/`) flows as a single Flow UX Protocol v1 JSON object. Documents (no frontmatter, no engine marker) are excluded. Always exits 0; soft failures land in `warnings`. |
+| `md --version` | Print the bare mdflow version string (capability handshake for machine callers). |
 | `md setup` | Configure shell integration. |
 | `md logs` | Show log directory and per-agent logs. |
 | `md help` | Print CLI help. |
@@ -60,6 +62,7 @@ These flags are consumed by mdflow and are not passed to underlying LLM CLIs.
 | `--no-evolve`, `--_no-evolve` | Disable post-run evolution observation/proposal handling for this invocation. `MDFLOW_EVOLVE=off` is the environment equivalent. |
 | `--raw` | Emit raw markdown output (no terminal renderer). |
 | `--json` | Emit a single JSON result object (`{exitCode, command, args, stdout, stderr}`) and disable interactive UI. |
+| `--events` | Stream NDJSON run events on stdout (Flow UX Protocol v1). Implies non-interactive; human rendering is suppressed. See "Machine-facing Flow UX protocol". |
 
 Interactive mode controls are also supported:
 
@@ -167,6 +170,79 @@ Within a single directory, lookup order is:
 1. `mdflow.config.yaml`
 2. `.mdflow.yaml`
 3. `.mdflow.json`
+
+## Machine-facing Flow UX protocol (`protocolVersion: 1`)
+
+Three contracts let GUIs and agents drive mdflow without scraping terminal
+output. All three are versioned together under `protocolVersion: 1`; callers
+should verify it (via `md --version` + `md roster --json`) before relying on
+the shapes below.
+
+### `md roster --json`
+
+One-shot. Prints a single JSON object to stdout and exits 0 even when
+directories are missing or unreadable (soft failures go to `warnings`):
+
+| Field | Description |
+| --- | --- |
+| `protocolVersion` | Always `1`. |
+| `cwd` | Absolute process cwd at invocation. |
+| `projectRoot` | Resolved project root (config > `flows/` dir > git root > cwd), or `null`. |
+| `flows[]` | Project flows first (alphabetical), then global, then registry. |
+| `warnings[]` | Human-readable soft failures. |
+
+Each flow: `id` (stable `<source>:<slug>`, slug = filename stem), `path`,
+`source` (`project`\|`global`\|`registry`), `name`, `description` (or `null`),
+`engine` + `engineSource` (resolved via the normal engine ladder,
+config-aware), `inputs[]` (from `_inputs`: `{name, type, message, options?,
+default}`; `options` only for `select`), `isWorkflow` (has `_steps`),
+`interactive` (`_interactive`/`_i` or `.i.` filename marker), and `mtimeMs`.
+Documents — markdown files with no frontmatter and no engine marker — are
+excluded.
+
+### `md explain <flow> --json`
+
+Free (no engine call). Prints one JSON object: `protocolVersion`, `flowId`,
+`path`, `engine`, `command` (executable), `args` (full argv including the
+prompt positional; `promptIncluded` says whether the prompt rides in argv),
+`cwd` (effective run cwd with `_cwd`/`--_cwd` applied), `prompt` (fully
+resolved, untruncated), `promptTokensEstimate` (~chars/4), `inputs` (same
+shape as roster), `warnings`, and `configFingerprint` (`sha256:<hex>` over the
+resolved config + flow content + mdflow version — cache explanations keyed on
+`(path, mtimeMs, cwd, mdflowVersion, configFingerprint)`). `--_<name>` value
+overrides are applied to the prompt exactly as a run would.
+
+### `md <flow> --events`
+
+NDJSON run event stream on stdout; stdout is protocol-pure (every line is one
+JSON object). Engine output is carried inside `output.delta` events,
+JSON-escaped, never interleaved raw. Diagnostics may appear on stderr as free
+text. Common envelope on every event:
+
+```json
+{ "protocolVersion": 1, "seq": 0, "runId": "r-<uuid>", "ts": 1752000000000, "event": "..." }
+```
+
+`seq` starts at 0 and increments by 1 with no gaps. Order contract:
+`protocol` first, `run.started` second, exactly one terminal event
+(`run.completed` \| `run.error` \| `run.cancelled`) last.
+
+| Event | Payload |
+| --- | --- |
+| `protocol` | `{mdflowVersion}` |
+| `run.started` | `{flowId, path, engine, command, args, cwd, pid}` |
+| `output.delta` | `{channel: "stdout"\|"stderr", text}` |
+| `step.started` | `{stepId, needs}` (workflow `_steps` only) |
+| `step.completed` | `{stepId, exitCode, cached}` |
+| `run.completed` | `{exitCode, durationMs}` |
+| `run.error` | `{exitCode\|null, message, durationMs}` (nonzero exit, spawn failure, or pre-run error) |
+| `run.cancelled` | `{signal, durationMs}` |
+
+`--events` implies non-interactive: `_inputs` values must arrive as
+`--_<name> <value>` overrides, and a TTY-only interactive flow emits
+`run.error` with message `interactive flow requires a terminal`. On SIGTERM,
+mdflow forwards the signal to the engine child, emits `run.cancelled`, and
+exits cleanly.
 
 ## URL import policy API
 

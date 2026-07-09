@@ -94,6 +94,11 @@
       "description": "list installed registry flows"
     },
     {
+      "name": "roster",
+      "usage": "roster --json",
+      "description": "machine-readable roster of project/global/registry flows (free)"
+    },
+    {
       "name": "setup",
       "usage": "setup",
       "description": "configure shell (PATH, aliases)"

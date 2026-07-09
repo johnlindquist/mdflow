@@ -56,6 +56,7 @@ const COMMAND_DOCS: Record<string, { usage: string; description: string }> = {
   install: { usage: "install <url|gh:org/repo/path@ref>", description: "install a flow from a registry" },
   remove: { usage: "remove <name>", description: "remove an installed flow" },
   list: { usage: "list", description: "list installed registry flows" },
+  roster: { usage: "roster --json", description: "machine-readable roster of project/global/registry flows (free)" },
   setup: { usage: "setup", description: "configure shell (PATH, aliases)" },
   logs: { usage: "logs", description: "show the flow log directory" },
   help: { usage: "help", description: "full built-in help" },
