@@ -36,8 +36,11 @@ export const Hero: React.FC = () => {
         let currentIndex = 0;
         const interval = setInterval(() => {
             if (currentIndex < HERO_OUTPUT.length) {
-                setLines(prev => [...prev, HERO_OUTPUT[currentIndex]]);
+                const line = HERO_OUTPUT[currentIndex];
                 currentIndex++;
+                setLines(prev => prev.some((existing) => existing.id === line.id)
+                    ? prev
+                    : [...prev, line]);
             } else {
                 clearInterval(interval);
             }
@@ -133,10 +136,9 @@ export const Hero: React.FC = () => {
                         </div>
 
                         <p className="mt-5 max-w-xl text-sm text-zinc-500 leading-relaxed">
-                            Start with npx — mdflow runs on Bun and opens your agent CLI (claude, codex, cursor-agent, agy, …)
-                            with the setup guide, and the agent builds a <span className="font-mono text-zinc-400">./flows</span> roster
-                            tailored to your repo. Scripting? <span className="font-mono text-zinc-400">--yes</span> scaffolds
-                            it with zero engine invocations.
+                            Start with npx — mdflow safely scaffolds a <span className="font-mono text-zinc-400">./flows</span> roster
+                            with zero engine invocations, then bare <span className="font-mono text-zinc-400">md</span> opens the Workbench.
+                            Want a repo-tailored setup conversation? Use <span className="font-mono text-zinc-400">--guided</span>.
                         </p>
                     </motion.div>
                 </div>

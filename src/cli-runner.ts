@@ -70,6 +70,7 @@ import { compatNotice, isCompatOnlyFrontmatter, stampCompatFile } from "./compat
 import type { SystemEnvironment } from "./system-environment";
 import { editPrompt } from "./edit-prompt";
 import { maskArgsArray } from "./secrets";
+import { resolveProjectRootWith } from "./project-root";
 
 // Lazy-load @inquirer/prompts input function
 let _input: typeof import("@inquirer/prompts").input | null = null;
@@ -157,6 +158,14 @@ interface JsonModeState {
   hasCommandResult: boolean;
 }
 
+/**
+ * Interactive engines treat any positional prompt as a submitted first turn.
+ * A blank interactive body therefore means no positional argument at all.
+ */
+export function promptPositionals(prompt: string, interactive: boolean): string[] {
+  return interactive && !prompt.trim() ? [] : [prompt];
+}
+
 /** Options for CliRunner */
 export interface CliRunnerOptions {
   env: SystemEnvironment;
@@ -230,39 +239,65 @@ export class CliRunner {
   /**
    * Resolve file path by checking multiple locations in order:
    * 1. As-is (absolute path or relative to cwd)
-   * 2. Project agents: ./.mdflow/<filename>
-   * 3. User agents: ~/.mdflow/<filename>
-   * 4. PATH directories (for files without path separators)
+   * 2. Project flow roster: ./flows/<filename>
+   * 3. Legacy project agents: ./.mdflow/<filename>
+   * 4. User agents: ~/.mdflow/<filename>
+   * 5. PATH directories (for files without path separators)
+   *
+   * Simple flow names may omit the .md extension (`md review`).
    */
   private async resolveFilePath(filePath: string): Promise<string> {
+    const simpleName = !filePath.includes("/") && !filePath.includes(sep);
+    const candidateNames = simpleName && !filePath.toLowerCase().endsWith(".md")
+      ? [filePath, `${filePath}.md`]
+      : [filePath];
+
     // 1. Try as-is (could be absolute or relative from cwd)
-    if (await this.env.fs.exists(filePath)) {
-      return filePath;
+    for (const candidate of candidateNames) {
+      if (await this.env.fs.exists(candidate)) {
+        return candidate;
+      }
     }
 
     // Only search directories for simple filenames (no path separators)
     // Check for both forward slash and platform-specific separator for cross-platform support
-    if (!filePath.includes("/") && !filePath.includes(sep)) {
-      // 2. Try ./.mdflow/
-      const projectPath = join(this.cwd, ".mdflow", filePath);
-      if (await this.env.fs.exists(projectPath)) {
-        return projectPath;
+    if (simpleName) {
+      const { projectRoot } = await resolveProjectRootWith(this.cwd, this.env.fs);
+
+      // 2. Try the canonical roster at the nearest project root.
+      for (const candidate of candidateNames) {
+        const rosterPath = join(projectRoot, "flows", candidate);
+        if (await this.env.fs.exists(rosterPath)) {
+          return rosterPath;
+        }
       }
 
-      // 3. Try ~/.mdflow/
-      const userPath = join(homedir(), ".mdflow", filePath);
-      if (await this.env.fs.exists(userPath)) {
-        return userPath;
+      // 3. Try the legacy project directory at the same project root.
+      for (const candidate of candidateNames) {
+        const projectPath = join(projectRoot, ".mdflow", candidate);
+        if (await this.env.fs.exists(projectPath)) {
+          return projectPath;
+        }
       }
 
-      // 4. Try $PATH directories
+      // 4. Try ~/.mdflow/
+      for (const candidate of candidateNames) {
+        const userPath = join(homedir(), ".mdflow", candidate);
+        if (await this.env.fs.exists(userPath)) {
+          return userPath;
+        }
+      }
+
+      // 5. Try $PATH directories
       // Use path.delimiter for cross-platform support (: on Unix, ; on Windows)
       const pathDirs = (this.processEnv.PATH || "").split(delimiter);
       for (const dir of pathDirs) {
         if (!dir) continue;
-        const pathFilePath = join(dir, filePath);
-        if (await this.env.fs.exists(pathFilePath)) {
-          return pathFilePath;
+        for (const candidate of candidateNames) {
+          const pathFilePath = join(dir, candidate);
+          if (await this.env.fs.exists(pathFilePath)) {
+            return pathFilePath;
+          }
         }
       }
     }
@@ -552,8 +587,8 @@ export class CliRunner {
     }
     if (subcommand === "create") {
       const { runCreate } = await import("./create");
-      await runCreate(cliArgs.passthroughArgs);
-      return { exitCode: 0 };
+      const createResult = await runCreate(cliArgs.passthroughArgs);
+      return { exitCode: createResult.status === "conflict" ? 1 : 0 };
     }
     if (subcommand === "setup") {
       const { runSetup } = await import("./setup");
@@ -1001,6 +1036,7 @@ export class CliRunner {
       }
 
       const workflowStartedAt = Date.now();
+      let workflowUsageSignal: { quickRerun: boolean; msSincePrevious: number | null } | null = null;
       const workflowResult = await executeWorkflow({
         workflow,
         defaultTool: command,
@@ -1028,6 +1064,7 @@ export class CliRunner {
       if (workflowResult.exitCode === 0) {
         this.stampCompatAfterSuccess(localFilePath, isRemote);
         const usageSignal = await getRecordUsage().then(recordUsage => recordUsage(localFilePath)).catch(() => null);
+        workflowUsageSignal = usageSignal;
         if (!parsed.noEvolve && !parsed.jsonMode && !isRemote && existsSync(localFilePath)) {
           const { handleAutoEvolve } = await import("./evolve");
           await handleAutoEvolve(
@@ -1112,6 +1149,23 @@ export class CliRunner {
         }
       }
 
+      if (
+        shouldShowMenu &&
+        workflowResult.exitCode === 0 &&
+        !isRemote &&
+        workflowUsageSignal?.msSincePrevious === null
+      ) {
+        const { contextualFlowTip } = await import("./tips");
+        const suitePath = localFilePath.replace(/\.md$/i, ".eval.ts");
+        const tip = contextualFlowTip({
+          cwd: this.cwd,
+          flowPath: localFilePath,
+          firstSuccessfulRun: true,
+          hasEval: existsSync(suitePath),
+        });
+        if (tip) this.writeStderr(`\nTip: ${tip}`);
+      }
+
       logger.info({
         exitCode: workflowResult.exitCode,
         workflowSteps: workflowResult.stepOrder.length,
@@ -1122,7 +1176,17 @@ export class CliRunner {
 
     // Dry run
     if (parsed.dryRun) {
-      return this.handleDryRun(command, frontmatter, args, [finalBody], positionalMappings, logger, isRemote, localFilePath, logPath);
+      return this.handleDryRun(
+        command,
+        frontmatter,
+        args,
+        promptPositionals(finalBody, interactiveMode),
+        positionalMappings,
+        logger,
+        isRemote,
+        localFilePath,
+        logPath
+      );
     }
 
     // Edit before execute
@@ -1193,7 +1257,10 @@ export class CliRunner {
       runResult = await this.executeCommand({
         command,
         args: finalRunArgs,
-        positionals: [currentPrompt],
+        // A positional argument seeds and immediately submits the first turn in
+        // interactive agent CLIs. Leave it out when the rendered flow body is
+        // blank so the configured TUI opens and waits for the user's prompt.
+        positionals: promptPositionals(currentPrompt, interactiveMode),
         positionalMappings,
         captureOutput: captureMode,
         captureStderr: !interactiveMode && (shouldShowMenu || parsed.jsonMode), // TUI engines own terminal stderr
@@ -1271,6 +1338,7 @@ export class CliRunner {
     });
 
     // Record usage for frecency tracking (skip for failed runs, lazy-load history)
+    let usageSignal: { quickRerun: boolean; msSincePrevious: number | null } | null = null;
     if (runResult.exitCode === 0) {
       if (structuredOutputConfig) {
         const structuredOutputCwd = parsed.cwdFromCli ?? (frontmatter._cwd as string | undefined) ?? this.cwd;
@@ -1286,7 +1354,7 @@ export class CliRunner {
       // Stamp before proposal handling so receipts bind the updated `_compat`.
       this.stampCompatAfterSuccess(localFilePath, isRemote);
 
-      const usageSignal = await getRecordUsage()
+      usageSignal = await getRecordUsage()
         .then(recordUsage => recordUsage(localFilePath))
         .catch(() => null);
 
@@ -1347,6 +1415,23 @@ export class CliRunner {
       } catch {
         // Menu cancelled or failed, just continue
       }
+    }
+
+    if (
+      shouldShowMenu &&
+      runResult.exitCode === 0 &&
+      !isRemote &&
+      usageSignal?.msSincePrevious === null
+    ) {
+      const { contextualFlowTip } = await import("./tips");
+      const suitePath = localFilePath.replace(/\.md$/i, ".eval.ts");
+      const tip = contextualFlowTip({
+        cwd: this.cwd,
+        flowPath: localFilePath,
+        firstSuccessfulRun: true,
+        hasEval: existsSync(suitePath),
+      });
+      if (tip) this.writeStderr(`\nTip: ${tip}`);
     }
 
     logger.info({ exitCode: runResult.exitCode, retryCount }, "Session ended");

@@ -14,11 +14,10 @@ gate prompt revisions with behavioral evals.
 npx mdflow init
 ```
 
-Your agent CLI (claude, codex, copilot, ...) opens pre-loaded with the mdflow
-setup guide: it reads your repo, proposes flows tailored to it, writes
-`./flows` + `.mdflow.yaml` once you approve, and verifies everything with free
-dry runs. No agent CLI handy — or scripting it? `npx mdflow init --yes`
-scaffolds the starter roster with zero engine invocations.
+One command safely creates a starter `./flows` roster and `.mdflow.yaml` with
+zero engine invocations; repeat runs leave an existing roster untouched. Then
+bare `md` opens the Flow Workbench. Want a repo-tailored setup conversation?
+Run `md init --guided` to launch an installed agent CLI with the setup guide.
 
 ---
 
@@ -58,6 +57,10 @@ guard declared behavior. Feedback can drive reviewable, regression-gated prompt 
   Translated per engine (claude/pi flags, codex `model_instructions_file` /
   `developer_instructions` config, gemini `GEMINI_SYSTEM_MD`). Engines with
   no mechanism fail the run instead of silently dropping your prompt.
+  Interactive specialists that should wait for a task use `_task: ""` and a
+  body of exactly `{{ _task }}`; identity/rules belong in the two instruction
+  keys. Static `User task:` wrappers or body-level context would become an
+  immediately submitted first turn.
 - **New engines:** `cursor-agent` and `agy` (Google Antigravity, the gemini
   CLI successor; the old gemini adapter remains for Code Assist
   Standard/Enterprise).
@@ -184,12 +187,22 @@ first.
 ## Quick Start
 
 ```bash
-# Initialize a flow roster (an installed agent CLI guides you; -y to scaffold)
+# Safely scaffold a starter roster (`--guided` for a repo-tailored session)
 npx mdflow init
 
-# Run with filename-inferred engine
-mdflow task.claude.md
-mdflow task.codex.md
+# Open the Flow Workbench
+md
+
+# Or create and run a project flow directly
+md create "Review staged changes for bugs"
+md review-staged-changes-for-bugs
+
+# Create a personal flow you can run from any project
+md create "Turn meeting notes into an action plan" --global
+md turn-meeting-notes-into-an-action-plan
+
+# Preview without spending an engine invocation
+md review-staged-changes-for-bugs --_dry-run
 
 # Override the engine explicitly
 mdflow task.md --engine claude
@@ -206,6 +219,22 @@ mdflow task.claude.md --verbose --debug
 > **Note:** Both `mdflow` and `md` commands are available.
 >
 > For the full command and frontmatter contract, see [`docs/public-api.md`](docs/public-api.md).
+
+### The Flow Workbench
+
+Run bare `md` for the everyday surface. It works in a new project with zero
+flows and in an established project with a full roster:
+
+- Browse and filter flows with a live Markdown and lifecycle preview.
+- Press `Enter` to run, `d` to dry-run for free, or `e` to edit in `$EDITOR`.
+- Press `n` to turn a plain-language outcome into a new `flows/<slug>.md`.
+- Press `f` to save durable feedback, then `i` to move through evidence → eval
+  → proposal → an explicit apply or rollback decision.
+
+Every action displays its exact shell equivalent and whether it is free,
+invokes an engine, or writes locally. The Workbench never auto-applies a prompt
+revision. `a` and `r` open a dedicated `LOCAL WRITE` confirmation screen;
+`Enter`/`c` confirms the displayed command and `Esc` returns without writing.
 
 ---
 
@@ -727,13 +756,14 @@ Environment variables are available:
 
 ```
 Usage: md <file.md> [flags for the command]
+       md                              # Open the Flow Workbench
        md <command> [options]
        md.COMMAND "prompt" [flags]      # Ad-hoc execution (no file needed)
 
 Commands:
-  md init [--engine <e>] [-y]   Initialize a flow roster for this project
-                                (guided by an installed agent CLI; -y scaffolds)
-  md create [name] [flags]      Create a new agent file
+  md init [--guided] [-y]       Safely scaffold a starter flow roster
+                                (--guided tailors it with an installed agent CLI)
+  md create "<intent>"          Create a project flow (--global for a personal flow)
   md explain <agent.md>         Show resolved config without executing
   md eval <flow.md> [--plan]    Run or cost-preview the flow's eval suite
   md feedback <flow.md> "msg"   Record durable evolution evidence (free)
@@ -757,11 +787,10 @@ Ad-hoc execution (one-shot mode):
   md.i.claude "Start a chat"                  # Interactive mode
   md.claude "Explain: @error.log" --model opus  # With @imports and flags
 
-Create options:
-  md create                     Interactive agent creator
-  md create task.claude.md      Create with name (auto-detects command)
-  md create -n task -p          Create in project .mdflow/ folder
-  md create -g --model gpt-4    Create globally with frontmatter
+Create flows:
+  md create "Review staged changes for bugs"               # project: ./flows/
+  md create "Turn notes into an action plan" --global       # personal: ~/.mdflow/
+  md                              Then browse, run, edit, or improve them
 
 Engine resolution (most explicit wins):
   1. --engine flag (deprecated aliases: --_command/-_c, --tool)
@@ -774,10 +803,11 @@ Engine resolution (most explicit wins):
 
 Agent file discovery (in priority order):
   1. Explicit path:      md ./path/to/agent.md
-  2. Project agents:     ./.mdflow/
-  3. User agents:        ~/.mdflow/
-  4. $PATH directories
-  5. Current directory:  ./
+  2. Project flows:      ./flows/
+  3. Legacy project:     ./.mdflow/
+  4. Personal flows:     ~/.mdflow/
+  5. $PATH directories
+  6. Current directory:  ./
 
 All non-system frontmatter keys are passed as CLI flags to the command.
 Global defaults can be set in ~/.mdflow/config.yaml
@@ -811,7 +841,7 @@ Examples:
   md https://example.com/agent.claude.md --_trust   # Skip trust prompt
 
 Without arguments:
-  md              Interactive agent picker (from ./.mdflow/, ~/.mdflow/, etc.)
+  md              Open the Flow Workbench: browse, create, run, and improve flows
 ```
 
 ### Environment Variables

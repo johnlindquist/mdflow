@@ -1,78 +1,167 @@
 /**
- * Interactive command to create new agent files
- * Usage: md create [options]
+ * Create a project flow from plain-language intent.
+ *
+ * The default path is deliberately the same one used by the Flow Workbench:
+ * a canonical `flows/<slug>.md` file plus additive project support files.
  */
 
-import { input, select, confirm } from "@inquirer/prompts";
-import { existsSync, mkdirSync } from "fs";
-import { join, resolve } from "path";
+import { input } from "@inquirer/prompts";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import yaml from "js-yaml";
-import { getProjectAgentsDir, getUserAgentsDir } from "./cli";
+import { getUserAgentsDir } from "./cli";
 import { openInEditor } from "./file-selector";
-import { mdflowVersion } from "./compat";
-import { ensureFlowIdentity } from "./evolution-core";
+import { parseRawFrontmatter } from "./parse";
+import { contextualFlowTip } from "./tips";
+import {
+  applyFlowDraft,
+  draftFlowFromIntent,
+  resolveWorkbenchTarget,
+  slugifyFlowIntent,
+} from "./workbench-model";
+import type { FlowDraft, WorkbenchTarget } from "./workbench-model";
 
-interface CreateOptions {
+type CreateLocation = "project" | "cwd" | "user" | "custom";
+
+export interface CreateOptions {
+  intent?: string;
   name?: string;
-  command?: string;
-  location?: "cwd" | "project" | "user" | "custom";
+  engine?: string;
+  location: CreateLocation;
   customDir?: string;
   content?: string;
+  description?: string;
+  dryRun: boolean;
+  open: boolean;
+  help: boolean;
   frontmatter: Record<string, unknown>;
 }
 
-/**
- * Parse CLI args into create options and frontmatter
- */
-function parseCreateArgs(args: string[]): CreateOptions {
+export type CreateCommandResult =
+  | { status: "help" }
+  | { status: "preview"; draft: FlowDraft; flowPath: string }
+  | {
+      status: "created";
+      draft: FlowDraft;
+      flowPath: string;
+      created: string[];
+      skipped: string[];
+    }
+  | { status: "conflict"; draft: FlowDraft; flowPath: string };
+
+/** Small dependency seam used by tests and other non-process callers. */
+export interface CreateRuntime {
+  cwd?: string;
+  promptIntent?: () => Promise<string>;
+  log?: (message: string) => void;
+  openFile?: (path: string) => boolean;
+}
+
+function flagValue(
+  args: readonly string[],
+  index: number,
+  inlineValue: string | undefined,
+  flag: string
+): { value: string; nextIndex: number } {
+  if (inlineValue !== undefined) return { value: inlineValue, nextIndex: index };
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("-")) {
+    throw new Error(`${flag} requires a value.`);
+  }
+  return { value, nextIndex: index + 1 };
+}
+
+function inferredValue(value: string): string | number | boolean {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (value.trim() !== "" && !Number.isNaN(Number(value))) return Number(value);
+  return value;
+}
+
+/** Parse both the intent-first command and the useful v2 create aliases. */
+export function parseCreateArgs(args: readonly string[]): CreateOptions {
   const options: CreateOptions = {
+    location: "project",
+    dryRun: false,
+    open: false,
+    help: false,
     frontmatter: {},
   };
+  const intentParts: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (!arg) continue;
-
-    // Handle positional arg as name if it's the first arg and not a flag
-    if (i === 0 && !arg.startsWith("-")) {
-      options.name = arg;
+    const raw = args[i];
+    if (!raw) continue;
+    if (raw === "--") {
+      intentParts.push(...args.slice(i + 1));
+      break;
+    }
+    if (!raw.startsWith("-")) {
+      intentParts.push(raw);
       continue;
     }
 
-    if (!arg.startsWith("-")) continue;
+    const equals = raw.indexOf("=");
+    const flag = equals === -1 ? raw : raw.slice(0, equals);
+    const inlineValue = equals === -1 ? undefined : raw.slice(equals + 1);
 
-    // Handle known flags
-    if (arg === "--name" || arg === "-n") {
-      options.name = args[++i];
-    } else if (arg === "--_command" || arg === "-_c") {
-      options.command = args[++i];
-    } else if (arg === "--location" || arg === "-l") {
-      const loc = args[++i] ?? "";
-      if (["cwd", "project", "user"].includes(loc)) {
-        options.location = loc as "cwd" | "project" | "user";
-      }
-    } else if (arg === "--dir" || arg === "-d") {
-      options.location = "custom";
-      options.customDir = args[++i];
-    } else if (arg === "--content" || arg === "--body") {
-      options.content = args[++i];
-    } else if (arg === "--global" || arg === "-g") {
-      options.location = "user";
-    } else if (arg === "--project" || arg === "-p") {
+    if (flag === "--help" || flag === "-h") {
+      options.help = true;
+    } else if (flag === "--dry-run" || flag === "--preview" || flag === "--_dry-run") {
+      options.dryRun = true;
+    } else if (flag === "--open") {
+      options.open = true;
+    } else if (flag === "--yes" || flag === "-y" || flag === "--json") {
+      // `create <intent>` is already an explicit apply action. Keep these
+      // automation/global-output flags consumable without leaking them into
+      // flow frontmatter.
+    } else if (flag === "--project" || flag === "-p") {
       options.location = "project";
+    } else if (flag === "--global" || flag === "-g") {
+      options.location = "user";
+    } else if (flag === "--name" || flag === "-n" || flag === "--slug") {
+      const parsed = flagValue(args, i, inlineValue, flag);
+      options.name = parsed.value;
+      i = parsed.nextIndex;
+    } else if (
+      flag === "--engine" ||
+      flag === "--command" ||
+      flag === "--tool" ||
+      flag === "--_command" ||
+      flag === "-_c"
+    ) {
+      const parsed = flagValue(args, i, inlineValue, flag);
+      options.engine = parsed.value;
+      i = parsed.nextIndex;
+    } else if (flag === "--location" || flag === "-l") {
+      const parsed = flagValue(args, i, inlineValue, flag);
+      if (!(["cwd", "project", "user"] as string[]).includes(parsed.value)) {
+        throw new Error(`Unknown create location: ${parsed.value}`);
+      }
+      options.location = parsed.value as Exclude<CreateLocation, "custom">;
+      i = parsed.nextIndex;
+    } else if (flag === "--dir" || flag === "-d") {
+      const parsed = flagValue(args, i, inlineValue, flag);
+      options.location = "custom";
+      options.customDir = parsed.value;
+      i = parsed.nextIndex;
+    } else if (flag === "--content" || flag === "--body") {
+      const parsed = flagValue(args, i, inlineValue, flag);
+      options.content = parsed.value;
+      i = parsed.nextIndex;
+    } else if (flag === "--description") {
+      const parsed = flagValue(args, i, inlineValue, flag);
+      options.description = parsed.value;
+      i = parsed.nextIndex;
     } else {
-      // Treat as frontmatter
-      const key = arg.replace(/^-+/, "");
-      // If next arg is a value (not a flag), use it. Otherwise true.
-      const nextArg = args[i + 1];
-
-      if (nextArg && !nextArg.startsWith("-")) {
-        // Simple type inference for cleaner YAML
-        if (nextArg === "true") options.frontmatter[key] = true;
-        else if (nextArg === "false") options.frontmatter[key] = false;
-        else if (!isNaN(Number(nextArg)) && nextArg.trim() !== "")
-          options.frontmatter[key] = Number(nextArg);
-        else options.frontmatter[key] = nextArg;
+      // Preserve the old create command's convenient "unknown flags become
+      // frontmatter" contract.
+      const key = flag.replace(/^-+/, "");
+      const next = args[i + 1];
+      if (inlineValue !== undefined) {
+        options.frontmatter[key] = inferredValue(inlineValue);
+      } else if (next !== undefined && !next.startsWith("-")) {
+        options.frontmatter[key] = inferredValue(next);
         i++;
       } else {
         options.frontmatter[key] = true;
@@ -80,169 +169,225 @@ function parseCreateArgs(args: string[]): CreateOptions {
     }
   }
 
+  if (intentParts.length === 1 && /\.md$/i.test(intentParts[0]!) && !options.name) {
+    // v2 accepted a filename as its sole positional argument. Treat it as a
+    // naming hint while still producing the v3 engine-neutral flow shape.
+    options.name = intentParts[0];
+  } else if (intentParts.length > 0) {
+    options.intent = intentParts.join(" ").trim();
+  }
+
   return options;
 }
 
-/**
- * Run the create wizard
- */
-export async function runCreate(args: string[]): Promise<void> {
-  // Handle help flag specially
-  if (args.includes("--help") || args.includes("-h")) {
-    console.log(`
-Usage: md create [name] [flags]
+interface LegacyName {
+  intent: string;
+  slug: string;
+  engine?: string;
+  interactive: boolean;
+}
 
-Create a new markdown agent. Any unknown flags are added to frontmatter.
-
-Options:
-  --name, -n         Agent name (e.g. 'task')
-  --_command, -_c    Tool to run (claude, gpt, python, etc)
-  --project, -p      Save to project agents (.mdflow/)
-  --global, -g       Save to global agents (~/.mdflow/)
-  --content          Initial prompt content
-
-Examples:
-  md create task --_command claude
-  md create search -g --model perplexity
-`);
-    return;
-  }
-
-  const options = parseCreateArgs(args);
-
-  // 1. Name
-  if (!options.name) {
-    options.name = await input({
-      message: "Agent name:",
-      default: "task.claude.md",
-      validate: (value) => value.length > 0 || "Name is required",
-    });
-  }
-
-  // Ensure extension
-  if (!options.name.endsWith(".md")) {
-    options.name += ".md";
-  }
-
-  // 2. Command (if not specified and not obvious from name)
-  const nameParts = options.name.split(".");
-  // Matches name.command.md pattern
-  const inferredCommand =
-    nameParts.length >= 3 ? nameParts[nameParts.length - 2] : undefined;
-
-  if (!options.command && !inferredCommand) {
-    // Check if frontmatter has a model, often implies a specific tool
-    const defaultCmd = options.frontmatter.model ? "claude" : "claude";
-
-    options.command = await input({
-      message: "Command to wrap (e.g. claude, python, bash):",
-      default: defaultCmd,
-    });
-  }
-
-  // 3. Location
-  if (!options.location) {
-    options.location = await select({
-      message: "Where should we create this agent?",
-      choices: [
-        { name: `Current Directory (${process.cwd()})`, value: "cwd" },
-        {
-          name: "Project (.mdflow/)",
-          value: "project",
-          description: "Shared with team",
-        },
-        {
-          name: "User (~/.mdflow/)",
-          value: "user",
-          description: "Personal global agents",
-        },
-      ],
-    });
-  }
-
-  // Determine target directory
-  let targetDir = process.cwd();
-  if (options.location === "project") {
-    targetDir = getProjectAgentsDir();
-  } else if (options.location === "user") {
-    targetDir = getUserAgentsDir();
-  } else if (options.location === "custom" && options.customDir) {
-    targetDir = resolve(options.customDir);
-  }
-
-  // 4. Content - empty by default
-  if (options.content === undefined) {
-    options.content = "";
-  }
-
-  // Prepare frontmatter - what the user provided, plus the creation-version
-  // stamp (`_mdflow_version`) the compat system uses to track compatibility.
-  const finalFrontmatter = { _mdflow_version: mdflowVersion(), ...options.frontmatter };
-
-  // Construct YAML
-  let fileContent = "";
-  if (Object.keys(finalFrontmatter).length > 0) {
-    fileContent += "---\n";
-    fileContent += yaml.dump(finalFrontmatter);
-    fileContent += "---\n\n";
-  }
-
-  fileContent += options.content;
-
-  // Append newline
-  if (!fileContent.endsWith("\n")) {
-    fileContent += "\n";
-  }
-
-  // Ensure directory exists
-  if (!existsSync(targetDir)) {
-    mkdirSync(targetDir, { recursive: true });
-  }
-
-  const targetPath = join(targetDir, options.name);
-
-  if (existsSync(targetPath)) {
-    const overwrite = await confirm({
-      message: `File ${options.name} already exists in ${targetDir}. Overwrite?`,
-      default: false,
-    });
-    if (!overwrite) {
-      console.log("Cancelled.");
-      return;
+function interpretName(name: string): LegacyName {
+  const stem = basename(name.trim()).replace(/\.md$/i, "");
+  const pieces = stem.split(".").filter(Boolean);
+  let engine: string | undefined;
+  let interactive = false;
+  if (pieces.length > 1) {
+    engine = pieces.pop();
+    if (pieces.at(-1) === "i") {
+      pieces.pop();
+      interactive = true;
     }
   }
+  const subject = pieces.join(" ") || stem || "new flow";
+  return {
+    intent: subject.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim(),
+    slug: slugifyFlowIntent(pieces.join("-") || stem),
+    ...(engine ? { engine } : {}),
+    interactive,
+  };
+}
 
-  await Bun.write(targetPath, ensureFlowIdentity(fileContent));
+function mergeFrontmatter(draft: FlowDraft, extra: Record<string, unknown>): FlowDraft {
+  if (Object.keys(extra).length === 0) return draft;
+  const parsed = parseRawFrontmatter(draft.markdown);
+  const existing =
+    typeof parsed.frontmatter === "object" && parsed.frontmatter !== null && !Array.isArray(parsed.frontmatter)
+      ? (parsed.frontmatter as Record<string, unknown>)
+      : {};
+  const frontmatter = yaml.dump({ ...existing, ...extra }, { lineWidth: -1, noRefs: true }).trimEnd();
+  const body = parsed.body.trimEnd();
+  return {
+    ...draft,
+    markdown: `---\n${frontmatter}\n---\n\n${body}${body.endsWith("\n") ? "" : "\n"}`,
+  };
+}
 
-  console.log(`\n✅ Created agent: ${targetPath}`);
+function previewMessage(draft: FlowDraft, flowPath: string, engine: string | undefined): string {
+  return [
+    "",
+    "Flow preview",
+    `  Intent: ${draft.intent}`,
+    `  File:   ${flowPath}`,
+    `  Engine: ${engine ?? "project default (pi if unset)"}`,
+    "  Effect: FREE — no files written",
+    "",
+    draft.markdown.trimEnd(),
+    "",
+    `Apply it: md create ${shellQuote(draft.intent)}`,
+  ].join("\n");
+}
 
-  // Suggest renaming if command isn't embedded and wasn't explicit
-  if (
-    options.command &&
-    !inferredCommand &&
-    !options.name.includes(`.${options.command}.`)
-  ) {
-    console.log(
-      `\nTip: Consider naming your file "${options.name.replace(".md", "")}.${options.command}.md" to auto-detect the command.`
-    );
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "EEXIST"
+  );
+}
+
+function applyLegacyLocation(draft: FlowDraft, directory: string): "created" | "conflict" {
+  mkdirSync(directory, { recursive: true });
+  try {
+    writeFileSync(join(directory, draft.filename), draft.markdown, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o644,
+    });
+    return "created";
+  } catch (error) {
+    if (isAlreadyExists(error)) return "conflict";
+    throw error;
+  }
+}
+
+function helpText(): string {
+  return `
+Usage: md create [intent...] [options]
+
+Create a runnable Markdown flow in the nearest project's flows/ roster.
+An intent on the command line applies immediately; --dry-run is read-only.
+
+Options:
+  --name, -n <slug>       Override the generated filename
+  --engine <name>         Persist an engine choice (default: project config / pi)
+  --content, --body       Override the Markdown prompt body
+  --description <text>    Override the roster description
+  --dry-run, --preview    Print the exact draft and target; write nothing
+  --open                  Open the new flow in $EDITOR
+  --project, -p           Use the canonical project flows/ roster (default)
+  --global, -g            Create a personal flow in ~/.mdflow/ (user scope)
+  --dir, -d <path>        Legacy: create directly in a custom directory
+
+Unknown flags are retained as flow frontmatter for compatibility.
+Deprecated --_command/-_c and --tool aliases still select --engine.
+
+Examples:
+  md create Review staged changes for correctness
+  md create "Draft release notes from recent commits" --engine codex
+  md create "Turn meeting notes into an action plan" --global
+  md create "Summarize this repo" --name repo-summary --dry-run
+`;
+}
+
+/**
+ * Create a flow. The returned receipt is useful to embedded callers; the CLI
+ * continues to ignore it and relies on the human-readable output.
+ */
+export async function runCreate(
+  args: string[],
+  runtime: CreateRuntime = {}
+): Promise<CreateCommandResult> {
+  const options = parseCreateArgs(args);
+  const log = runtime.log ?? console.log;
+  const cwd = resolve(runtime.cwd ?? process.cwd());
+
+  if (options.help) {
+    log(helpText());
+    return { status: "help" };
   }
 
-  // Show run command
-  const relativePath =
-    options.location === "cwd" ? `./${options.name}` : options.name;
-  let runCmd = `md ${relativePath}`;
+  const legacyName = options.name ? interpretName(options.name) : undefined;
+  const promptIntent =
+    runtime.promptIntent ??
+    (() =>
+      input({
+        message: "What should this flow do?",
+        validate: (value) => value.trim().length > 0 || "Describe the flow in a few words",
+      }));
+  const intent = options.intent?.trim() || legacyName?.intent || (await promptIntent()).trim();
+  if (!intent) throw new Error("Flow intent cannot be empty.");
 
-  // If we had to supply a command explicitly and it's not in the filename
-  if (
-    options.command &&
-    !inferredCommand &&
-    !options.name.includes(`.${options.command}.`)
-  ) {
-    runCmd += ` --_command ${options.command}`;
+  const engine = options.engine?.trim() || legacyName?.engine;
+  if (options.engine !== undefined && !engine) throw new Error("Create engine cannot be empty.");
+
+  let draft = draftFlowFromIntent(intent, {
+    ...(legacyName ? { slug: legacyName.slug } : {}),
+    ...(options.description ? { description: options.description } : {}),
+    ...(options.content !== undefined ? { body: options.content } : {}),
+  });
+  draft = mergeFrontmatter(draft, {
+    ...options.frontmatter,
+    ...(engine ? { engine } : {}),
+    ...(legacyName?.interactive ? { _interactive: true } : {}),
+  });
+
+  const canonical = options.location === "project";
+  let target: WorkbenchTarget | undefined;
+  let legacyDirectory: string | undefined;
+  if (canonical) {
+    target = resolveWorkbenchTarget(cwd);
+  } else if (options.location === "cwd") {
+    legacyDirectory = cwd;
+  } else if (options.location === "user") {
+    legacyDirectory = getUserAgentsDir();
+  } else {
+    legacyDirectory = resolve(cwd, options.customDir!);
+  }
+  const flowPath = canonical
+    ? join(target!.flowsDir, draft.filename)
+    : join(legacyDirectory!, draft.filename);
+
+  if (options.dryRun) {
+    log(previewMessage(draft, flowPath, engine));
+    return { status: "preview", draft, flowPath };
   }
 
-  console.log(`\nRun it with:\n  ${runCmd}\n`);
+  let created: string[];
+  let skipped: string[];
+  let conflict = false;
+  if (canonical) {
+    const result = applyFlowDraft(draft, {
+      target: target!,
+      ...(engine ? { engine } : {}),
+    });
+    conflict = result.status === "conflict";
+    created = result.created;
+    skipped = result.skipped;
+  } else {
+    const status = applyLegacyLocation(draft, legacyDirectory!);
+    conflict = status === "conflict";
+    created = status === "created" ? [flowPath] : [];
+    skipped = [];
+  }
 
-  // Open in editor
-  openInEditor(targetPath);
+  if (conflict) {
+    log(`\nFlow already exists: ${flowPath}\nNothing was changed. Choose another name with --name <slug>.`);
+    return { status: "conflict", draft, flowPath };
+  }
+
+  log(`\nCreated flow: ${flowPath}`);
+  const supportFiles = created.filter((path) => path !== flowPath);
+  if (supportFiles.length > 0) log(`Added project support: ${supportFiles.join(", ")}`);
+  const tip = contextualFlowTip({ cwd, flowPath, created: true });
+  if (tip) log(`Tip: ${tip}`);
+
+  if (options.open) (runtime.openFile ?? openInEditor)(flowPath);
+
+  return { status: "created", draft, flowPath, created, skipped };
 }

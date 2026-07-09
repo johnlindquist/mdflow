@@ -63,6 +63,9 @@ export interface FileSystem {
    */
   exists(path: string): Promise<boolean>;
 
+  /** Check whether a path is an existing directory. */
+  isDirectory(path: string): Promise<boolean>;
+
   /**
    * Get file size in bytes
    * @param path - Absolute path to the file
@@ -209,6 +212,15 @@ export class BunSystemEnvironment implements SystemEnvironment {
     async exists(path: string): Promise<boolean> {
       const file = Bun.file(path);
       return file.exists();
+    },
+
+    async isDirectory(path: string): Promise<boolean> {
+      try {
+        const fs = await import("node:fs/promises");
+        return (await fs.stat(path)).isDirectory();
+      } catch {
+        return false;
+      }
     },
 
     async size(path: string): Promise<number> {
@@ -450,6 +462,14 @@ export class InMemorySystemEnvironment implements SystemEnvironment {
 
     exists: async (path: string): Promise<boolean> => {
       return this.files.has(path);
+    },
+
+    isDirectory: async (path: string): Promise<boolean> => {
+      const prefix = path.endsWith("/") ? path : `${path}/`;
+      for (const filePath of this.files.keys()) {
+        if (filePath.startsWith(prefix)) return true;
+      }
+      return false;
     },
 
     size: async (path: string): Promise<number> => {

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { CliRunner, createCliRunner } from "./cli-runner";
+import { CliRunner, createCliRunner, promptPositionals } from "./cli-runner";
 import { createTestEnvironment, InMemorySystemEnvironment } from "./system-environment";
 import { clearConfigCache } from "./config";
 import type { RunContext, RunResult } from "./command";
@@ -73,6 +73,40 @@ Test content from file`);
       // but the file read happens first - we verify the file was read
       const result = await runner.run(["node", "md", "/test/read.echo.md", "--_dry-run"]);
       // Dry run should succeed, proving file was read
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("resolves extensionless names from the canonical flows roster", async () => {
+      env.addFile("/test/flows/review.md", `---
+description: review staged changes
+engine: echo
+---
+Review the current change.`);
+
+      const runner = new CliRunner({
+        env,
+        isStdinTTY: true,
+        cwd: "/test",
+      });
+
+      const result = await runner.run(["node", "md", "review", "--_dry-run"]);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("resolves extensionless roster names from a nested working directory", async () => {
+      env.addFile("/test/flows/review.md", `---
+description: review staged changes
+engine: echo
+---
+Review the current change.`);
+
+      const runner = new CliRunner({
+        env,
+        isStdinTTY: true,
+        cwd: "/test/packages/app/src",
+      });
+
+      const result = await runner.run(["node", "md", "review", "--_dry-run"]);
       expect(result.exitCode).toBe(0);
     });
 
@@ -188,6 +222,52 @@ Start an interactive session.`);
       expect(captured?.args).not.toContain("exec");
       expect(captured?.args).not.toContain("--ephemeral");
       expect(captured?.args).not.toContain("--ignore-user-config");
+      expect(captured?.positionals).toEqual(["Start an interactive session."]);
+    });
+
+    it("opens a configured Codex TUI without submitting an empty prompt", async () => {
+      env.addFile("/test/interactive-empty.md", `---
+description: Interactive Codex without an initial task
+engine: codex
+_task: ""
+_system-prompt: You are the configured specialist.
+_append-system-prompt: Use only verified tool evidence.
+---
+{{ _task }}`);
+
+      let captured: RunContext | undefined;
+      const runCommandFn = async (ctx: RunContext): Promise<RunResult> => {
+        captured = ctx;
+        return {
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          output: "",
+          process: null as unknown as ReturnType<typeof Bun.spawn>,
+        };
+      };
+      const runner = new CliRunner({
+        env,
+        isStdinTTY: true,
+        isStdoutTTY: true,
+        cwd: "/test",
+        runCommandFn,
+      });
+
+      const result = await runner.run([
+        "node",
+        "md",
+        "/test/interactive-empty.md",
+        "--_interactive",
+        "--_task",
+        "",
+      ]);
+
+      expect(result.exitCode).toBe(0);
+      expect(captured?.interactive).toBe(true);
+      expect(captured?.positionals).toEqual([]);
+      expect(captured?.args.some((arg) => arg.startsWith("model_instructions_file="))).toBe(true);
+      expect(captured?.args).toContain("developer_instructions=Use only verified tool evidence.");
     });
   });
 
@@ -471,5 +551,14 @@ _output:
         rmSync(tempDir, { recursive: true, force: true });
       }
     });
+  });
+});
+
+describe("promptPositionals", () => {
+  it("omits only blank interactive prompts", () => {
+    expect(promptPositionals("", true)).toEqual([]);
+    expect(promptPositionals("  \n", true)).toEqual([]);
+    expect(promptPositionals("inspect the repo", true)).toEqual(["inspect the repo"]);
+    expect(promptPositionals("", false)).toEqual([""]);
   });
 });

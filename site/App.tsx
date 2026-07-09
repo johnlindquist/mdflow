@@ -6,6 +6,7 @@ import { Terminal } from './components/Terminal';
 import { ManPage } from './components/ManPage';
 import { AgentPrompts } from './components/AgentPrompts';
 import { FlowsRoster } from './components/FlowsRoster';
+import { FlowWorkbenchDemo } from './components/FlowWorkbenchDemo';
 import { Evolve } from './components/Evolve';
 import { ShaderGuide } from './components/ShaderGuide';
 import { ShaderHints } from './components/ShaderHints';
@@ -280,6 +281,9 @@ export default function App() {
 
         {/* The concrete mental model: ./flows is your repo's agent roster */}
         <FlowsRoster />
+
+        {/* Bare md as the interactive lifecycle workbench, rendered with wterm */}
+        <FlowWorkbenchDemo />
 
         {/* The hero's promise, mechanized: evidence-gated proposals */}
         <Evolve />

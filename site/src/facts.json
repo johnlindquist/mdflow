@@ -45,13 +45,13 @@
   "commands": [
     {
       "name": "init",
-      "usage": "init [--engine <e>] [-y]",
-      "description": "bootstrap a flow roster (agent-guided; -y scaffolds deterministically)"
+      "usage": "init [--guided] [-y]",
+      "description": "safely scaffold a roster, then open it with bare md"
     },
     {
       "name": "create",
-      "usage": "create [name] [flags]",
-      "description": "create a new flow file"
+      "usage": "create \"<intent>\"",
+      "description": "create a project flow from plain-language intent"
     },
     {
       "name": "explain",

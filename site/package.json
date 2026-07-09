@@ -7,13 +7,16 @@
     "dev": "portless run --name mdflow vite",
     "dev:raw": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun test ./components/workbench-demo/model.test.ts ./components/workbench-demo/screens.test.ts",
     "build": "vite build && node scripts/build-content.mjs",
-    "verify": "bun run typecheck && bun run build",
+    "verify": "bun run test && bun run typecheck && bun run build",
     "preview": "vite preview",
     "og-image": "node scripts/generate-og-image.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.32.0",
+    "@wterm/dom": "0.3.0",
+    "@wterm/react": "0.3.0",
     "framer-motion": "^12.23.25",
     "lucide-react": "^0.556.0",
     "react": "^19.2.1",

@@ -12,6 +12,7 @@ mdflow (`md`) executes AI agents defined as markdown files ("flows"). A flow is 
 - Imports inline content at run time: `@./path/to/file.md` inlines a file, `@./src/**/*.ts` a glob, `@./file.ts:10-50` a line range, and a line like !`git diff --cached` inlines that command's output. Import paths resolve relative to the FLOW FILE, so a flow in `flows/` references repo-root files as `@../path` (inline !`cmd` commands, by contrast, run from the invocation cwd).
 - Flow filenames are case-insensitive-collision-prone on macOS: don't name a flow `readme.md` next to the roster `README.md`.
 - Print mode is the default (one-shot, non-interactive). A `.i.` filename marker (`pair.i.md`) or `_interactive: true` makes it interactive.
+- **Interactive wait contract:** when an interactive specialist should accept an optional seed task but open and wait when none is supplied, put its identity in `_system-prompt`, its operating rules and stable trusted context in `_append-system-prompt`, declare `_task: ""`, and make the entire body exactly `{{ _task }}`. Do not add `User task:`, headings, whitespace-bearing placeholders, imports, or fallback prose around it: any non-empty rendered body becomes a positional prompt and immediately submits the first turn. Never move agent instructions into the user body to work around this rule.
 - ENGINE CONTEXT ISOLATION IS THE DEFAULT where the selected engine supports it: ambient skills, MCP servers, instruction files, plugins, and session persistence are stripped with engine-native flags. This is not a host sandbox: filesystem access, network access, environment variables, and inline commands remain available to the engine or flow. Design flows accordingly: inline the context they need with imports (`@./file`, !`cmd`), declare required capabilities explicitly in frontmatter (e.g. claude: `mcp-config:`/`plugin-dir:`/`add-dir:`; gemini: `extensions: [name]`), and never put untrusted command imports in a flow. Reach for `_isolated: false` only when a flow genuinely depends on the user's ambient setup — and say so in its `description:`. Dry-run shows command imports without executing them.
 - FREE verification: `md <flow> --_dry-run` prints the command plan and which ladder rung picked the engine without launching the engine or executing inline `!command` imports/code fences. It still reads file imports and may resolve URL/context-provider imports. `md explain <flow>` is also free. Use only these.
 - Evals: a colocated `<flow>.eval.ts` exporting a statically resolvable default `EvalCase[]` gives a flow a behavioral test suite. Preview its exact paid-invocation count with `md eval <flow>.md --plan`; the static preview does not import suite code, and an actual run requires interactive confirmation or `--yes`. Eval modules are executable code, so review them before running.
@@ -32,6 +33,7 @@ Follow these steps in order. Steps 1–2 you do silently; step 3 is a conversati
    - `flows/<name>.eval.ts` with 1–3 focused behavioral cases for each flow. Prefer deterministic invariants over exact prose. If a case reproduces recorded feedback, set `evidence: ["fb_..."]`; only that linkage can support a verified-improvement claim.
    - `flows/README.md` — the roster index: a table of flow, description, and run command, so every teammate (human or AI) can see the roster at a glance.
    - `.mdflow.yaml` at the repo root with `engine: <confirmed default>` and `evolve.mode: suggest`. Suggest mode surfaces evidence after normal and workflow runs but never spends an engine invocation or edits a flow on its own.
+   - For every interactive specialist, explicitly classify it as either seeded (a deliberate default first turn) or waiting. Waiting specialists MUST use the exact interactive wait contract above; do not invent a seed prompt.
 
 5. **Verify — free only.** For each flow, run `md flows/<name>.md --_dry-run` and `md eval flows/<name>.md --plan`. Show the command plan, engine-resolution rung, eval case count, and paid-invocation estimate. Call out inline commands that were deliberately skipped. If a dry run fails, fix the flow and re-verify. NEVER do a real flow or eval run.
 
@@ -43,6 +45,8 @@ Follow these steps in order. Steps 1–2 you do silently; step 3 is a conversati
 - Never execute a real engine or eval run. `--_dry-run`, `md explain`, `md eval --plan`, and `md evolve plan` are the only mdflow invocations you may make.
 - Do not write files until the user approves the roster in step 3.
 - If `flows/` already exists, read it first and treat this session as additive: propose complements, and never overwrite an existing flow without explicit permission.
+- Never synthesize an initial user turn for a waiting interactive flow. Its body must render to the empty string when `_task` is empty, while `_system-prompt` and `_append-system-prompt` still carry the complete agent contract.
+- Before handoff, inspect every waiting interactive flow and reject it if the body contains anything except `{{ _task }}`. Verify with `md explain <flow>` and `md <flow> --_interactive --_dry-run`: both instruction layers must be present, the final prompt must be blank, and the command must have no empty or placeholder positional prompt.
 - Be terse and concrete. This is a working session, not a demo.
 
 # Anatomy of a flow
@@ -58,6 +62,24 @@ Review this diff for bugs. Be terse, cite file:line.
 ```
 
 Run: `md flows/review.md` (engine from `.mdflow.yaml`) — or `git add -p && md flows/review.md` as a pre-commit habit.
+
+An interactive specialist that opens configured and waits for the user's first prompt has this exact shape:
+
+```markdown
+---
+description: repository specialist that waits for a task
+_interactive: true
+_task: ""
+_system-prompt: |-
+  You are the repository specialist.
+_append-system-prompt: |-
+  Put the complete operating contract and stable trusted context here.
+---
+
+{{ _task }}
+```
+
+If `_task` is supplied, it is the initial user turn. If it is empty, mdflow launches the configured interactive engine with no positional prompt and waits.
 
 # Catalog — inspiration, adapt or ignore
 

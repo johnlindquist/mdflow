@@ -1,15 +1,15 @@
 /**
  * md init — bootstrap a flow roster for the current project.
  *
- * The headline path launches an installed engine CLI *interactively*,
- * pre-loaded with the bundled setup guide (assets/init/guide.md). The agent
- * explores the repo, proposes a project-specific roster, converses with the
- * user, writes flows/ + .mdflow.yaml, and verifies with --_dry-run only.
- * Afterward init runs a deterministic post-flight check over whatever the
- * session wrote.
+ * The headline path is deliberately boring: create the starter roster without
+ * an engine invocation, never overwrite existing files, then point people at
+ * the bare `md` workbench. If a project already has a flow roster, plain init
+ * is a no-op.
  *
- * The fallback (no engine CLI, no TTY, declined consent, or --yes) scaffolds
- * the starter catalog deterministically — zero engine invocations.
+ * The previous project-aware setup session remains available with --guided
+ * (and, for backwards compatibility, whenever --engine is explicitly passed).
+ * It explores the repo, proposes a project-specific roster, converses with the
+ * user, writes flows/ + .mdflow.yaml, and verifies with --_dry-run only.
  *
  * The guide prompt is passed to the engine verbatim: it deliberately does NOT
  * go through the import/template pipeline, since it is full of `{{ _var }}`
@@ -32,6 +32,7 @@ import { parseFrontmatter } from "./parse";
 import { stampCreatedVersion } from "./compat";
 import type { AgentFrontmatter } from "./types";
 import { ensureFlowIdentity } from "./evolution-core";
+import { resolveProjectRoot } from "./project-root";
 
 const ASSETS_DIR = join(import.meta.dir, "..", "assets", "init");
 const PROJECT_CONFIG_FILE = ".mdflow.yaml";
@@ -39,6 +40,7 @@ const PROJECT_CONFIG_FILE = ".mdflow.yaml";
 interface InitOptions {
   engine?: string;
   yes: boolean;
+  guided: boolean;
   help: boolean;
 }
 
@@ -49,7 +51,7 @@ interface CatalogEntry {
 }
 
 function parseInitArgs(args: string[]): InitOptions {
-  const options: InitOptions = { yes: false, help: false };
+  const options: InitOptions = { yes: false, guided: false, help: false };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (!arg) continue;
@@ -57,6 +59,8 @@ function parseInitArgs(args: string[]): InitOptions {
       options.engine = args[++i];
     } else if (arg === "--yes" || arg === "-y") {
       options.yes = true;
+    } else if (arg === "--guided" || arg === "-g") {
+      options.guided = true;
     } else if (arg === "--help" || arg === "-h") {
       options.help = true;
     }
@@ -137,7 +141,11 @@ export function buildGuidePrompt(engine: string, detected: string[], catalog: Ca
  * Reuses the adapter machinery (defaults → interactive transform → args) so
  * each engine gets its correct interactive invocation shape.
  */
-export async function launchGuidedSession(engine: string, guidePrompt: string): Promise<number> {
+export async function launchGuidedSession(
+  engine: string,
+  guidePrompt: string,
+  cwd: string = process.cwd(),
+): Promise<number> {
   const adapter = getEngineAdapter(engine);
   const userDefaults = (await getCommandDefaults(engine)) ?? {};
   let frontmatter = applyDefaults(userDefaults as AgentFrontmatter, adapter.getDefaults());
@@ -158,6 +166,7 @@ export async function launchGuidedSession(engine: string, guidePrompt: string): 
     positionals: [guidePrompt],
     positionalMappings,
     captureOutput: false,
+    cwd,
   });
   return result.exitCode;
 }
@@ -250,8 +259,11 @@ export function scaffoldStarterFlows(cwd: string, engine: string): string[] {
       `# Flow roster
 
 Flows are AI agents defined as markdown, run with [mdflow](https://mdflow.dev).
+Open the Flow Workbench with \`md\` to browse, run, create, and improve them.
+Create another flow with \`md create "describe what it should do"\`.
+
 Each real run launches one paid flow invocation. Preview any flow for free with
-\`md flows/<name>.md --_dry-run\`.
+\`md <name> --_dry-run\`.
 
 | Flow | Description | Run | Verify plan |
 | ---- | ----------- | --- | ----------- |
@@ -284,24 +296,80 @@ evolve:
   return lines;
 }
 
+/**
+ * True once a project has at least one canonical flow. Plain `md init` uses
+ * this guard to stay idempotent: it does not inject starter flows into a roster
+ * someone already owns. Explicit --yes and guided setup remain additive.
+ */
+export function hasFlowRoster(cwd: string): boolean {
+  const flowsDir = join(cwd, "flows");
+  if (!existsSync(flowsDir)) return false;
+  return readdirSync(flowsDir).some((file) => file.endsWith(".md") && file.toLowerCase() !== "readme.md");
+}
+
+/** A compact, copy-pasteable handoff shared by every deterministic init path. */
+export function buildInitReceipt(
+  changes: string[],
+  options: { alreadyInitialized?: boolean } = {},
+): string[] {
+  if (options.alreadyInitialized) {
+    return [
+      "mdflow is ready — found an existing flows/ roster; nothing changed.",
+      "Next: md",
+      'New flow: md create "describe what it should do"',
+    ];
+  }
+
+  const created = changes.filter((line) => line.trimStart().startsWith("created ")).length;
+  const preserved = changes.filter((line) => line.trimStart().startsWith("skipped ")).length;
+  const summary = [`mdflow is ready — ${created} ${created === 1 ? "file" : "files"} created for this project.`];
+  if (preserved > 0) {
+    summary.push(`${preserved} existing ${preserved === 1 ? "file was" : "files were"} preserved.`);
+  }
+  summary.push("Next: md");
+  summary.push('New flow: md create "describe what it should do"');
+  return summary;
+}
+
+function printInitReceipt(changes: string[], alreadyInitialized = false): void {
+  for (const line of buildInitReceipt(changes, { alreadyInitialized })) console.log(line);
+}
+
+async function printGuidedReceipt(cwd: string): Promise<void> {
+  const report = await postFlightReport(cwd);
+  const flowCount = report.filter((line) => line.trimStart().startsWith("flows/")).length;
+  const failures = report.filter((line) => line.includes("FAILED") || line.startsWith("No flows/") || line.includes("contains no flows"));
+
+  for (const failure of failures) console.log(failure);
+  if (failures.length === 0) console.log(`mdflow is ready — ${flowCount} ${flowCount === 1 ? "flow" : "flows"} checked.`);
+  console.log("Next: md");
+  console.log('New flow: md create "describe what it should do"');
+}
+
 function printHelp(): void {
   console.log(`
 Usage: md init [flags]
 
 Initialize a flow roster for the current project.
 
-By default, init launches an installed engine CLI (claude, codex, copilot, ...)
-interactively, pre-loaded with the mdflow setup guide. The agent reads your
-repo, proposes flows tailored to it, and writes flows/ + .mdflow.yaml after
-you approve — verifying with free dry runs only.
+By default, init safely scaffolds starter flows without launching an engine.
+It never overwrites existing files, and is a no-op when flows/ already has a
+roster. Then run bare \`md\` to browse, create, run, and improve flows.
+
+Use --guided for the project-aware setup session. It launches an installed
+engine CLI with the mdflow setup guide, proposes flows tailored to your repo,
+and writes only after you approve. Passing --engine preserves the previous
+guided behavior unless --yes is also present.
 
 Flags:
   --engine, -e <name>   Engine CLI to guide the session (and project default)
+  --guided, -g          Launch the project-aware guided setup session
   --yes, -y             Skip the guided session; scaffold starter flows directly
   --help, -h            Show this help
 
 Examples:
-  npx mdflow init                 # guided, interactive
+  npx mdflow init                 # instant, deterministic starter roster
+  md init --guided               # project-aware interactive setup
   md init --engine claude        # guided by claude
   md init --yes --engine claude  # non-interactive scaffold (agents use this)
 `);
@@ -314,9 +382,14 @@ export async function runInit(args: string[]): Promise<number> {
     return 0;
   }
 
-  const cwd = process.cwd();
+  // Resolve the project boundary once so every init branch agrees on where
+  // the roster lives and where a guided engine inspects the repository.
+  const projectRoot = resolveProjectRoot(process.cwd()).projectRoot;
   const detected = detectInstalledEngines();
   const isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  // An explicit engine historically meant "guide setup with this engine".
+  // Keep that contract while making plain `md init` deterministic.
+  const guided = !options.yes && (options.guided || Boolean(options.engine));
 
   // Resolve the engine preference: flag > single detected > prompt > default.
   let engine = options.engine;
@@ -326,17 +399,14 @@ export async function runInit(args: string[]): Promise<number> {
     return 1;
   }
 
-  // Non-interactive contexts (agents, CI, pipes) and --yes take the
-  // deterministic path: no consent to give, no conversation to have.
-  if (options.yes || !isTTY) {
-    if (!options.yes) {
-      console.error("No TTY detected — scaffolding starter flows (use `md init` in a terminal for the guided session).");
-    }
-    const scaffoldEngine = engine ?? detected[0] ?? DEFAULT_ENGINE;
-    console.log(`Scaffolding starter flows (engine: ${scaffoldEngine}):`);
-    for (const line of scaffoldStarterFlows(cwd, scaffoldEngine)) console.log(line);
-    console.log("");
-    for (const line of await postFlightReport(cwd)) console.log(line);
+  // Plain init, --yes, and every non-interactive context take the zero-engine
+  // path. Plain init will not add catalog entries to an existing roster;
+  // explicit --yes keeps its established additive behavior.
+  if (!guided || !isTTY) {
+    const scaffoldEngine = engine ?? DEFAULT_ENGINE;
+    const alreadyInitialized = !options.yes && hasFlowRoster(projectRoot);
+    const changes = alreadyInitialized ? [] : scaffoldStarterFlows(projectRoot, scaffoldEngine);
+    printInitReceipt(changes, alreadyInitialized);
     return 0;
   }
 
@@ -363,13 +433,12 @@ export async function runInit(args: string[]): Promise<number> {
         return 0;
       }
       console.log(`Scaffolding starter flows (engine: ${DEFAULT_ENGINE}):`);
-      for (const line of scaffoldStarterFlows(cwd, DEFAULT_ENGINE)) console.log(line);
-      console.log("");
-      for (const line of await postFlightReport(cwd)) console.log(line);
+      const changes = scaffoldStarterFlows(projectRoot, DEFAULT_ENGINE);
+      printInitReceipt(changes);
       return 0;
     }
 
-    if (existsSync(join(cwd, "flows"))) {
+    if (existsSync(join(projectRoot, "flows"))) {
       console.log("flows/ already exists — the guide will read it and propose additions.");
     }
 
@@ -388,17 +457,16 @@ export async function runInit(args: string[]): Promise<number> {
         return 0;
       }
       console.log(`Scaffolding starter flows (engine: ${engine}):`);
-      for (const line of scaffoldStarterFlows(cwd, engine)) console.log(line);
-      console.log("");
-      for (const line of await postFlightReport(cwd)) console.log(line);
+      const changes = scaffoldStarterFlows(projectRoot, engine);
+      printInitReceipt(changes);
       return 0;
     }
 
     const guidePrompt = buildGuidePrompt(engine, detected, loadCatalog());
-    const exitCode = await launchGuidedSession(engine, guidePrompt);
+    const exitCode = await launchGuidedSession(engine, guidePrompt, projectRoot);
 
     console.log("");
-    for (const line of await postFlightReport(cwd)) console.log(line);
+    await printGuidedReceipt(projectRoot);
     return exitCode;
   } catch (err) {
     // Inquirer throws on Ctrl+C — treat as a clean cancel, not a crash.

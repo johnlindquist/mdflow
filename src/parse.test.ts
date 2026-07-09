@@ -94,6 +94,22 @@ Body content`;
     expect(result.body).toBe("Body content");
   });
 
+  test("keeps indented frontmatter fences inside multiline instruction text", () => {
+    const content = `---
+_append-system-prompt: |-
+  Note format:
+  ---
+  title: Title
+  ---
+---
+{{ _task }}`;
+    const result = parseFrontmatter(content);
+    expect(result.frontmatter["_append-system-prompt"]).toBe(
+      "Note format:\n---\ntitle: Title\n---"
+    );
+    expect(result.body).toBe("{{ _task }}");
+  });
+
   test("handles shebang without frontmatter", () => {
     const content = `#!/usr/bin/env md
 Just some content`;

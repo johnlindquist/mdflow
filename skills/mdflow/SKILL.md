@@ -61,6 +61,33 @@ Rules:
 5. Pin the project's default engine in `.mdflow.yaml` (`engine: pi`,
    `engine: claude`, whatever CLI the user has). Individual flows only pin an
    engine when the job demands a specific one.
+6. For an interactive specialist that accepts an optional initial task, choose
+   deliberately between a seeded session and a waiting session. A waiting
+   session MUST put identity in `_system-prompt`, operating rules plus stable
+   trusted context in `_append-system-prompt`, declare `_task: ""`, and use a
+   body consisting of exactly `{{ _task }}`. Never add `User task:`, headings,
+   imports, placeholder prose, or instructions to that body: any non-empty
+   rendered body becomes a submitted first user turn instead of waiting.
+
+The required waiting-specialist shape is:
+
+```markdown
+---
+description: specialist that waits for the user's task
+_interactive: true
+_task: ""
+_system-prompt: |-
+  You are the specialist.
+_append-system-prompt: |-
+  Put the complete operating contract and stable trusted context here.
+---
+
+{{ _task }}
+```
+
+Do not move stable agent instructions or migrated contract material into the
+user body. If the user supplies `_task`, it becomes the initial user turn; if
+they do not, mdflow must launch the configured engine with no positional prompt.
 
 ## Engines: the resolution ladder
 
@@ -171,6 +198,8 @@ unattended apply: it is intentionally not available.
 1. Scaffold `./flows` if missing (directory, README.md index, `.mdflow.yaml`).
 2. Write `flows/<job>.md`: `description:` frontmatter, tight prompt body,
    rich imports for the context the job needs.
+   - If it is a waiting interactive specialist, apply the exact shape above;
+     keep all stable context in the instruction layers and the body task-only.
 3. Measure for free: `md flows/<job>.md --_context` for the token breakdown,
    `--_dry-run` for the command plan and safe prompt preview. Inline commands
    and executable code fences are shown but not executed; file, URL, and
@@ -179,6 +208,12 @@ unattended apply: it is intentionally not available.
 5. Update `flows/README.md`.
 6. Show `md eval flows/<job>.md --plan`, then offer the separate paid flow and
    eval runs. Never infer consent for one from consent for the other.
+
+For every waiting interactive specialist, also run `md explain <flow>` and
+`md <flow> --_interactive --_dry-run`. Reject the generated flow unless both
+instruction layers are present, the final prompt is blank without `_task`, and
+the command has no empty or placeholder positional prompt. Inspect the source
+body too: after frontmatter it must contain only `{{ _task }}`.
 
 ## Migrating v2 files
 

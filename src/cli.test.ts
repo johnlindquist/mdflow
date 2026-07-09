@@ -3,10 +3,11 @@ import {
   parseCliArgs,
   findAgentFiles,
   getProjectAgentsDir,
+  getProjectFlowsDir,
   getUserAgentsDir,
   clearDescriptionCache,
 } from "./cli";
-import { mkdirSync, writeFileSync, rmSync, existsSync, mkdtempSync, symlinkSync } from "fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync, mkdtempSync, realpathSync, symlinkSync } from "fs";
 import { join } from "path";
 import { homedir, tmpdir } from "os";
 
@@ -76,6 +77,10 @@ describe("agent directory paths", () => {
     expect(dir).toBe(join(process.cwd(), ".mdflow"));
   });
 
+  test("getProjectFlowsDir returns the canonical flows directory", () => {
+    expect(getProjectFlowsDir()).toBe(join(process.cwd(), "flows"));
+  });
+
   test("getUserAgentsDir returns ~/.mdflow", () => {
     const dir = getUserAgentsDir();
     expect(dir).toBe(join(homedir(), ".mdflow"));
@@ -125,6 +130,30 @@ describe("findAgentFiles", () => {
       // Cleanup
       if (existsSync(testFile)) rmSync(testFile);
       if (existsSync(mdflowDir)) rmSync(mdflowDir, { recursive: true, force: true });
+    }
+  });
+
+  test("finds canonical project flows and skips the roster README", async () => {
+    const flowsDir = join(process.cwd(), "flows");
+    const testName = `workbench-${Date.now()}.md`;
+    const testFile = join(flowsDir, testName);
+    const readmePath = join(flowsDir, "README.md");
+    const hadFlowsDir = existsSync(flowsDir);
+    const hadReadme = existsSync(readmePath);
+
+    try {
+      mkdirSync(flowsDir, { recursive: true });
+      writeFileSync(testFile, "---\ndescription: workbench flow\n---\nRun it");
+      if (!existsSync(readmePath)) writeFileSync(readmePath, "# Flow roster\n");
+
+      const files = await findAgentFiles();
+      const projectFlows = files.filter((file) => file.source === "flows");
+      expect(projectFlows.some((file) => file.name === testName)).toBe(true);
+      expect(projectFlows.some((file) => file.name.toLowerCase() === "readme.md")).toBe(false);
+    } finally {
+      if (existsSync(testFile)) rmSync(testFile);
+      if (!hadReadme && existsSync(readmePath)) rmSync(readmePath);
+      if (!hadFlowsDir && existsSync(flowsDir)) rmSync(flowsDir, { recursive: true, force: true });
     }
   });
 
@@ -211,5 +240,25 @@ describe("findAgentFiles edge cases", () => {
 
     const files = await findAgentFiles();
     expect(files.some((file) => file.name === presentName)).toBe(true);
+  });
+
+  test("discovers the nearest project roster from a nested working directory", async () => {
+    const flowName = "nested-project-review.md";
+    const flowPath = join(isolatedDir, "flows", flowName);
+    const nested = join(isolatedDir, "packages", "app", "src");
+    mkdirSync(join(isolatedDir, ".git"));
+    mkdirSync(join(isolatedDir, "flows"));
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(flowPath, "---\ndescription: root flow\n---\nReview it");
+    process.chdir(nested);
+
+    const resolvedRoot = realpathSync(isolatedDir);
+    expect(getProjectFlowsDir()).toBe(join(resolvedRoot, "flows"));
+    const files = await findAgentFiles();
+    expect(files.find((file) => file.name === flowName)).toMatchObject({
+      path: join(resolvedRoot, "flows", flowName),
+      source: "flows",
+      description: "root flow",
+    });
   });
 });

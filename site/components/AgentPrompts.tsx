@@ -12,9 +12,10 @@ const SETUP_PROMPT = `Start my repo's agent roster with mdflow:
 
 1. Run \`npx mdflow init --yes\` in this repo. It scaffolds ./flows (starter flows, starter evals, README roster) and .mdflow.yaml with evolve.mode: suggest, spending zero engine invocations.
 2. Tailor the generated flows to THIS repo: the right test command, diff scope, vocabulary, and engine.
-3. Replace each generic starter eval with 1 to 3 behavioral cases that check invariants, not exact wording.
-4. Verify for free: run \`md flows/review.md --_dry-run\` and \`md eval flows/review.md --plan\`. Show the command plan, engine-resolution rung, case count, repetitions, and paid invocation estimate.
-5. Do NOT do a real flow or eval run until I separately approve it. Never infer consent for one from the other.`;
+3. Enforce this for every interactive specialist that should wait when no initial task is supplied: identity in \`_system-prompt\`, complete operating rules/stable context in \`_append-system-prompt\`, \`_task: ""\`, and a body exactly \`{{ _task }}\`. Never add \`User task:\`, headings, imports, placeholder prose, or instructions to that body; any non-empty body auto-submits a first turn.
+4. Replace each generic starter eval with 1 to 3 behavioral cases that check invariants, not exact wording.
+5. Verify waiting specialists with \`md explain <flow>\` and \`md <flow> --_interactive --_dry-run\`: both instruction layers present, blank final prompt, and no positional prompt. Verify eval plans separately.
+6. Do NOT do a real flow or eval run until I separately approve it. Never infer consent for one from the other.`;
 
 const SKILL_COMMAND = `npx skills add johnlindquist/mdflow`;
 
@@ -33,7 +34,8 @@ const MIGRATE_PROMPT = `Migrate my legacy mdflow v2 files to the current format:
 1. Move loose agent .md files into ./flows and add a flows/README.md roster index.
 2. Frontmatter \`tool:\` / \`_tool:\` becomes \`engine:\`. The \`--_command\` / \`--tool\` flags become \`--engine\`.
 3. Rename *.gemini.md flows to *.agy.md (Google sunset the gemini CLI for individuals; agy is the successor, and --yolo is gone there).
-4. Verify each file with \`md explain <file>\` and \`md <file> --_dry-run\` (both free). Make no other changes.`;
+4. For every interactive specialist that should wait without an initial task, migrate identity to \`_system-prompt\`, the complete operating contract/stable context to \`_append-system-prompt\`, declare \`_task: ""\`, and make the body exactly \`{{ _task }}\`. Delete synthetic \`User task:\` wrappers and never leave instructions/imports in the user body, because they auto-submit the first turn.
+5. Verify each waiting specialist with \`md explain <file>\` and \`md <file> --_interactive --_dry-run\`: both instruction layers present, blank final prompt, and no positional prompt. Make no other changes.`;
 
 export const AgentPrompts: React.FC = () => {
     return (

@@ -36,7 +36,10 @@ export function parseRawFrontmatter(content: string): RawParsedMarkdown {
 
   let endIndex = -1;
   for (let i = 1; i < lines.length; i++) {
-    if (lines[i]?.trim() === "---") {
+    const line = lines[i] ?? "";
+    // Frontmatter fences are document delimiters only at column zero.
+    // Indented `---` lines are valid content inside YAML block scalars.
+    if (line.startsWith("---") && line.trim() === "---") {
       endIndex = i;
       break;
     }

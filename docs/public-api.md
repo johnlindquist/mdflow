@@ -7,6 +7,7 @@ This document defines the stable user-facing API for `mdflow` CLI usage.
 Run `mdflow` or `md` with one of these forms:
 
 ```bash
+md                                # interactive Flow Workbench
 md <agent.md> [flags...]
 md <subcommand> [options...]
 md.<command> "prompt" [flags...]   # ad-hoc, no file required
@@ -16,8 +17,9 @@ Supported subcommands:
 
 | Command | Description |
 | --- | --- |
-| `md init [--engine <e>] [--yes]` | Initialize a flow roster for the current project. Default: launches an installed agent CLI interactively, pre-loaded with the bundled setup guide (uses your engine session; asks for consent first). `--yes` (or no TTY) scaffolds the starter catalog deterministically — zero engine invocations. |
-| `md create [name]` | Create a new agent file. |
+| `md` | Open the interactive Flow Workbench, including the zero-flow state. Browse/filter with a Markdown and lifecycle preview; run, dry-run, edit, create, record feedback, or enter the proposal-first evolution path. Every action shows its shell equivalent and `FREE`, `ENGINE`, or `LOCAL WRITE` effect before execution. Apply and rollback require a second `Enter`/`c` confirmation on a dedicated local-write screen. |
+| `md init [--guided] [--engine <e>] [--yes]` | Safely scaffold a starter flow roster with zero engine invocations. Plain init is a no-op when `flows/` already has a roster. `--guided` launches an installed agent CLI with the bundled setup guide for a repo-tailored session; an explicit `--engine` preserves that guided behavior unless `--yes` is also present. |
+| `md create "<intent>"` | Create a stable-identity project flow at `flows/<slug>.md` from plain-language intent. Pass `--global` to create a personal, user-scoped flow at `~/.mdflow/<slug>.md` that is available from any project. Uses create-only writes and never overwrites an existing flow. With no intent in a TTY, asks one question. |
 | `md explain <agent.md>` | Print resolved config and prompt without execution. |
 | `md eval <flow.md> [--plan] [--yes] [--filter <text>] [--json]` | Preview or run the flow's executable colocated eval suite (`<flow>.eval.ts`). Cost includes repetitions and is printed before consent. |
 | `md feedback <flow.md> "<message>"` | Record durable, private evidence with a stable ID (free). `list`, `show`, `distill`, `dismiss`, `reopen`, and explicit permanent `forget <id> --yes` manage its lifecycle/privacy. |

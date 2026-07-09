@@ -46,8 +46,8 @@ discovered.add("help"); // handled as a flag in src/cli.ts
 
 /** Display order + copy. Every discovered subcommand MUST appear here. */
 const COMMAND_DOCS: Record<string, { usage: string; description: string }> = {
-  init: { usage: "init [--engine <e>] [-y]", description: "bootstrap a flow roster (agent-guided; -y scaffolds deterministically)" },
-  create: { usage: "create [name] [flags]", description: "create a new flow file" },
+  init: { usage: "init [--guided] [-y]", description: "safely scaffold a roster, then open it with bare md" },
+  create: { usage: 'create "<intent>"', description: "create a project flow from plain-language intent" },
   explain: { usage: "explain <flow.md>", description: "show resolved config without executing (free)" },
   eval: { usage: "eval <flow.md> [--plan]", description: "run or cost-preview the executable eval suite" },
   feedback: { usage: 'feedback <flow.md> "msg"', description: "record durable feedback with a stable ID (free)" },
