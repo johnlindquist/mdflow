@@ -1,3 +1,18 @@
+# [4.3.0](https://github.com/johnlindquist/mdflow/compare/v4.2.0...v4.3.0) (2026-07-09)
+
+
+### Bug Fixes
+
+* **events:** keep NDJSON protocol-pure past pipe-buffer limits and slow consumers ([053b2ef](https://github.com/johnlindquist/mdflow/commit/053b2ef02f3678fd7c5900f06183ce9408c6b0d2))
+
+
+### Features
+
+* **events:** add md <flow> --events NDJSON run event stream ([d92f207](https://github.com/johnlindquist/mdflow/commit/d92f207715f85ebf1f3d1f5a8be76c03a8270ea5))
+* **explain:** add --json mode serializing the resolved explanation ([f1b3a82](https://github.com/johnlindquist/mdflow/commit/f1b3a8223f786558fe20b4645342dcc7222c1a4f))
+* **roster:** add md roster --json (Flow UX Protocol v1) ([6ce903f](https://github.com/johnlindquist/mdflow/commit/6ce903f44e5b3eba87a36c70de9746ed0a023911))
+* **runtime:** add stream capture mode and workflow step hooks ([48c83a8](https://github.com/johnlindquist/mdflow/commit/48c83a82c9552085deee064baf9420adc8540ae4))
+
 # [4.2.0](https://github.com/johnlindquist/mdflow/compare/v4.1.0...v4.2.0) (2026-07-09)
 
 
