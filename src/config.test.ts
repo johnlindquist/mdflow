@@ -2,7 +2,6 @@ import { expect, test, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import {
   loadGlobalConfig,
   getCommandDefaults,
-  applyDefaults,
   applyInteractiveMode,
   clearConfigCache,
   findGitRoot,
@@ -41,21 +40,9 @@ describe("config", () => {
     expect(defaults).toBeUndefined();
   });
 
-  test("applyDefaults merges defaults with frontmatter (frontmatter wins)", () => {
-    const frontmatter = { model: "opus", $1: "custom" };
-    const defaults = { $1: "prompt", verbose: true };
-    const result = applyDefaults(frontmatter, defaults);
-
-    expect(result.model).toBe("opus");
-    expect(result.$1).toBe("custom"); // frontmatter wins
-    expect(result.verbose).toBe(true); // default applied
-  });
-
-  test("applyDefaults returns frontmatter unchanged when no defaults", () => {
-    const frontmatter = { model: "opus" };
-    const result = applyDefaults(frontmatter, undefined);
-    expect(result).toEqual(frontmatter);
-  });
+  // NOTE: Pure merge-logic tests (identity, right-bias, associativity) have been
+  // replaced by property-based tests in config-monoid.test.ts. See docs/mutation-proof.md
+  // for the equivalence proof showing property tests catch a strict superset of bugs.
 });
 
 describe("findGitRoot", () => {

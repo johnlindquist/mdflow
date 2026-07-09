@@ -465,6 +465,10 @@ function deepCloneConfig(config: GlobalConfig): GlobalConfig {
 /**
  * Deep merge two configs (second takes priority)
  * Returns a new object - does not modify either input.
+ *
+ * Per-command merging delegates to concatFrontmatter, so the same
+ * right-biased merge operation is used at every level of the
+ * precedence chain.
  */
 export function mergeConfigs(base: GlobalConfig, override: GlobalConfig): GlobalConfig {
   // Start with a deep clone of base
@@ -481,10 +485,10 @@ export function mergeConfigs(base: GlobalConfig, override: GlobalConfig): Global
   if (override.commands) {
     result.commands = result.commands ? { ...result.commands } : {};
     for (const [cmd, defaults] of Object.entries(override.commands)) {
-      result.commands[cmd] = {
-        ...(result.commands[cmd] || {}),
-        ...defaults,
-      };
+      result.commands[cmd] = concatFrontmatter(
+        (result.commands[cmd] || {}) as AgentFrontmatter,
+        defaults as AgentFrontmatter,
+      ) as CommandDefaults;
     }
   }
 
@@ -500,8 +504,32 @@ export async function getCommandDefaults(command: string): Promise<CommandDefaul
 }
 
 /**
+ * Right-biased merge for AgentFrontmatter objects.
+ *
+ * This is the monoid operation for the frontmatter merge chain:
+ *   built-in ⊕ global ⊕ git-root ⊕ cwd ⊕ frontmatter ⊕ CLI flags
+ *
+ * Laws:
+ *   Identity:      concatFrontmatter({}, x) ≡ x
+ *                  concatFrontmatter(x, {}) ≡ x
+ *   Right-bias:    for any key k in both a and b, result[k] === b[k]
+ *   Associativity: concatFrontmatter(a, concatFrontmatter(b, c))
+ *                  ≡ concatFrontmatter(concatFrontmatter(a, b), c)
+ *
+ * Returns a new object; does not modify either input.
+ */
+export function concatFrontmatter(
+  base: AgentFrontmatter,
+  override: AgentFrontmatter
+): AgentFrontmatter {
+  return { ...base, ...override };
+}
+
+/**
  * Apply command defaults to frontmatter
  * Frontmatter values take priority over defaults
+ *
+ * Thin wrapper around concatFrontmatter for backward compatibility.
  */
 export function applyDefaults(
   frontmatter: AgentFrontmatter,
@@ -510,15 +538,7 @@ export function applyDefaults(
   if (!defaults) {
     return frontmatter;
   }
-
-  // Defaults go first, frontmatter overrides
-  const result = { ...defaults } as AgentFrontmatter;
-
-  for (const [key, value] of Object.entries(frontmatter)) {
-    result[key] = value;
-  }
-
-  return result;
+  return concatFrontmatter(defaults as AgentFrontmatter, frontmatter);
 }
 
 /**
