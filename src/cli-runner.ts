@@ -8,13 +8,14 @@
 
 import { parseFrontmatter } from "./parse";
 import { parseCliArgs, handleMaCommands } from "./cli";
+import { subcommandHelpText, COMMAND_LIST_LINE } from "./command-help";
 import type {
   AgentFrontmatter,
   CommandDefaults,
   FormInputs,
   StructuredOutputConfig,
 } from "./types";
-import { detectAdhocCommand, createVirtualAgentContent, createVirtualFilename } from "./adhoc-command";
+import type { AdhocCommandResult } from "./adhoc-command";
 import {
   isFormInputs,
   isLegacyInputs,
@@ -23,13 +24,11 @@ import {
   getMissingRequiredInputs,
 } from "./form-inputs";
 import { substituteTemplateVars, extractTemplateVars } from "./template";
-import { isRemoteUrl, fetchRemote, cleanupRemote } from "./remote";
 import {
   resolveEngine, type EngineSource, buildArgs, runCommand, extractPositionalMappings,
   extractEnvVars, killCurrentChildProcess, hasInteractiveMarker,
 } from "./command";
-import { parseWorkflow, executeWorkflow, type WorkflowResult } from "./workflow";
-import { startSpinner } from "./spinner";
+import type { ParsedWorkflow, WorkflowResult } from "./workflow";
 import { getProcessManager } from "./process-manager";
 import {
   expandImports, hasImports,
@@ -52,7 +51,7 @@ import {
 import { extractSystemPromptSpec, applySystemPromptToFrontmatter } from "./system-prompt";
 import {
   initLogger, getParseLogger, getTemplateLogger, getCommandLogger,
-  getImportLogger, getCurrentLogPath,
+  getImportLogger, getCurrentLogPath, getLogger, resetLogger,
 } from "./logger";
 import { isDomainTrusted, promptForTrust, addTrustedDomain, extractDomain } from "./trust";
 import { basename, dirname, resolve, join, delimiter, sep } from "path";
@@ -65,19 +64,36 @@ import {
   MarkdownAgentError, EarlyExitRequest, UserCancelledError, FileNotFoundError,
   NetworkError, SecurityError, ConfigurationError, TemplateError, ImportError,
 } from "./errors";
-import { recordRun, type RunRecord } from "./telemetry";
+import type { RunRecord } from "./telemetry";
 import { compatNotice, isCompatOnlyFrontmatter, stampCompatFile } from "./compat";
 import type { SystemEnvironment } from "./system-environment";
-import { editPrompt } from "./edit-prompt";
 import { maskArgsArray } from "./secrets";
 import { resolveProjectRootWith } from "./project-root";
 
-// Lazy-load @inquirer/prompts input function
-let _input: typeof import("@inquirer/prompts").input | null = null;
+function isRemoteUrl(path: string): boolean {
+  return path.startsWith("http://") || path.startsWith("https://");
+}
+
+async function cleanupRemoteFile(localFilePath: string): Promise<void> {
+  const { cleanupRemote } = await import("./remote");
+  await cleanupRemote(localFilePath);
+}
+
+function isAdhocInvocationCandidate(argv: string[]): boolean {
+  return [argv[1], argv[0]].some((value) => {
+    if (!value) return false;
+    const name = basename(value).replace(/\.(ts|js|mjs|cjs)$/, "");
+    return /^md(?:\.i)?\.[a-z][a-z0-9-]*$/i.test(name);
+  });
+}
+
+// Lazy-load the controlled input prompt so CLI startup does not pay for the
+// interactive prompt stack and Tab can never leak into text answers.
+let _input: typeof import("./workbench-input").tabSafeInput | null = null;
 async function getInputPrompt() {
   if (!_input) {
-    const mod = await import("@inquirer/prompts");
-    _input = mod.input;
+    const mod = await import("./workbench-input");
+    _input = mod.tabSafeInput;
   }
   return _input;
 }
@@ -243,6 +259,19 @@ export class CliRunner {
   private printErrorWithLogPath(message: string, logPath: string | null): void {
     this.writeStderr(`\n${message}`);
     if (logPath) this.writeStderr(`   Detailed logs: ${logPath}`);
+  }
+
+  // A bare token like `md reviw` is more likely a mistyped command or flow
+  // name than a file path, so the error should point at both namespaces.
+  private fileNotFoundMessage(requested: string, resolved: string): string {
+    const looksLikeName =
+      !requested.includes("/") &&
+      !requested.includes("\\") &&
+      !/\.md$/i.test(requested);
+    if (looksLikeName) {
+      return `No command or flow named "${requested}". Run 'md help' for commands, or 'md roster --json' to list flows.`;
+    }
+    return `File not found: ${resolved}`;
   }
 
   /**
@@ -471,6 +500,7 @@ export class CliRunner {
     };
 
     try {
+      const { recordRun } = await import("./telemetry");
       await recordRun(runRecord);
       getCommandLogger().debug(
         {
@@ -518,7 +548,7 @@ export class CliRunner {
     const jsonMode = argv.includes("--json");
     const subcommand = parseCliArgs(argv).filePath;
     const nativeJsonSubcommand = subcommand !== undefined
-      && ["eval", "evolve", "feedback", "complain", "roster", "explain"].includes(subcommand);
+      && ["eval", "evolve", "feedback", "complain", "roster", "explain", "render"].includes(subcommand);
     let logPath: string | null = null;
     // Structured lifecycle commands own their JSON schema. Letting the generic
     // flow wrapper capture them would double-encode their payload in `stdout`.
@@ -579,15 +609,33 @@ export class CliRunner {
     setLogPath: (lp: string | null) => void
   ): Promise<CliRunResult> {
     // Check for ad-hoc command invocation (md.claude, md.gemini, etc.)
-    const adhocResult = detectAdhocCommand(argv);
-    if (adhocResult.isAdhoc) {
-      return this.runAdhocCommand(adhocResult, setLogPath);
+    if (isAdhocInvocationCandidate(argv)) {
+      const { detectAdhocCommand } = await import("./adhoc-command");
+      const adhocResult = detectAdhocCommand(argv);
+      if (adhocResult.isAdhoc) {
+        return this.runAdhocCommand(adhocResult, setLogPath);
+      }
     }
 
     const cliArgs = parseCliArgs(argv);
     const subcommand = cliArgs.filePath;
     const jsonModeRequested = cliArgs.passthroughArgs.includes("--json");
     const registryArgs = this.parseRegistryArgs(cliArgs.passthroughArgs);
+
+    // Central --help gate: management commands must print usage and exit 0
+    // before any filesystem, network, registry, or prompt work. Commands with
+    // their own safe help renderers (create, init, eval, evolve, feedback,
+    // complain) return undefined here and handle --help themselves.
+    if (
+      cliArgs.passthroughArgs.includes("--help") ||
+      cliArgs.passthroughArgs.includes("-h")
+    ) {
+      const helpText = subcommandHelpText(subcommand);
+      if (helpText) {
+        this.writeStdout(helpText);
+        return { exitCode: 0 };
+      }
+    }
 
     // Handle subcommands
     if (subcommand === "init") {
@@ -596,10 +644,21 @@ export class CliRunner {
     }
     if (subcommand === "create") {
       const { runCreate } = await import("./create");
-      const createResult = await runCreate(cliArgs.passthroughArgs);
+      const createResult = await runCreate(cliArgs.passthroughArgs, {
+        isStdinTTY: this.isStdinTTY,
+        cwd: this.cwd,
+      });
       return { exitCode: createResult.status === "conflict" ? 1 : 0 };
     }
     if (subcommand === "setup") {
+      // Setup is an interactive wizard end to end; without a TTY it would
+      // emit inquirer control sequences into a pipe instead of prompting.
+      if (!this.isStdinTTY || !this.isStdoutTTY) {
+        this.writeStderr("md setup requires an interactive terminal (TTY_REQUIRED).");
+        this.writeStderr("It edits shell config files and always confirms first, so it cannot run in a pipe.");
+        this.writeStderr("Run 'md setup' in a terminal, or see 'md setup --help'.");
+        return { exitCode: 1 };
+      }
       const { runSetup } = await import("./setup");
       await runSetup();
       return { exitCode: 0 };
@@ -675,6 +734,19 @@ export class CliRunner {
       await runExplain(cliArgs.passthroughArgs);
       return { exitCode: 0 };
     }
+    if (subcommand === "render") {
+      const { runRender } = await import("./render");
+      return { exitCode: await runRender(cliArgs.passthroughArgs, this.cwd) };
+    }
+    if (subcommand === "hooks") {
+      const { runHooksCli } = await import("./hooks-cli");
+      return {
+        exitCode: await runHooksCli(cliArgs.passthroughArgs, {
+          cwd: this.cwd,
+          isTTY: this.isStdinTTY && this.isStdoutTTY,
+        }),
+      };
+    }
     if (subcommand === "roster") {
       const { runRoster } = await import("./roster");
       return { exitCode: await runRoster(cliArgs.passthroughArgs, this.cwd) };
@@ -712,8 +784,9 @@ export class CliRunner {
       if (jsonModeRequested && !filePath && subcommand !== "help") {
         this.writeStderr("Usage: md <file.md> [flags for command]");
         this.writeStderr("       md <command> [options]");
-        this.writeStderr("\nCommands: init, create, setup, logs, explain, eval, evolve, feedback, complain, install, remove, list, help");
-        this.writeStderr("Run 'md help' for more info");
+        this.writeStderr(`\n${COMMAND_LIST_LINE}`);
+        this.writeStderr("Run 'md help' for more info, 'md roster --json' to list flows,");
+        this.writeStderr("or 'md' with no arguments to open the Flow Workbench");
         throw new ConfigurationError("No agent file specified", 1);
       }
       const result = await handleMaCommands(cliArgs);
@@ -726,8 +799,9 @@ export class CliRunner {
       } else if (!result.handled) {
         this.writeStderr("Usage: md <file.md> [flags for command]");
         this.writeStderr("       md <command> [options]");
-        this.writeStderr("\nCommands: init, create, setup, logs, explain, eval, evolve, feedback, complain, install, remove, list, help");
-        this.writeStderr("Run 'md help' for more info");
+        this.writeStderr(`\n${COMMAND_LIST_LINE}`);
+        this.writeStderr("Run 'md help' for more info, 'md roster --json' to list flows,");
+        this.writeStderr("or 'md' with no arguments to open the Flow Workbench");
         throw new ConfigurationError("No agent file specified", 1);
       }
     }
@@ -751,7 +825,7 @@ export class CliRunner {
    * Creates a virtual agent from the raw prompt and runs it through the normal flow.
    */
   private async runAdhocCommand(
-    adhocResult: ReturnType<typeof detectAdhocCommand>,
+    adhocResult: AdhocCommandResult,
     setLogPath: (lp: string | null) => void
   ): Promise<CliRunResult> {
     const { command, body, passthroughArgs = [], interactive = false } = adhocResult;
@@ -770,6 +844,7 @@ export class CliRunner {
     }
 
     // Create virtual agent content and filename
+    const { createVirtualAgentContent, createVirtualFilename } = await import("./adhoc-command");
     const virtualContent = createVirtualAgentContent(command, body, interactive);
     const virtualFilename = createVirtualFilename(command, interactive);
 
@@ -798,23 +873,35 @@ export class CliRunner {
     const pm = getProcessManager();
     pm.initialize();
 
-    const logger = initLogger(virtualFilename);
-    const logPath = getCurrentLogPath();
-    setLogPath(logPath);
-    logger.info({ virtualFilename, adhoc: true }, "Ad-hoc session started");
+    // Parse md-owned flags before creating a file logger so previews remain
+    // side-effect free and never load Pino.
+    const parsed = this.parseFlags(passthroughArgs);
+    resetLogger();
+    let logPath: string | null = null;
+    setLogPath(null);
+    const startLogger = (): void => {
+      const logger = initLogger(virtualFilename);
+      logPath = getCurrentLogPath();
+      setLogPath(logPath);
+      logger.info({ virtualFilename, adhoc: true }, "Ad-hoc session started");
+    };
 
     const { frontmatter: baseFrontmatter, body: rawBody } = parseFrontmatter(content);
     getParseLogger().debug({ frontmatter: baseFrontmatter, bodyLength: rawBody.length, adhoc: true }, "Virtual frontmatter parsed");
 
-    // Parse CLI flags
-    const parsed = this.parseFlags(passthroughArgs);
-
     const { command, frontmatter, templateVars, finalBody, args, positionalMappings, interactiveMode } =
-      await this.processAgent(virtualFilename, baseFrontmatter, rawBody, () => this.readStdinOnce(), parsed);
+      await this.processAgent(
+        virtualFilename,
+        baseFrontmatter,
+        rawBody,
+        () => this.readStdinOnce(),
+        parsed,
+        parsed.dryRun ? undefined : startLogger,
+      );
 
     // Dry run
     if (parsed.dryRun) {
-      return this.handleDryRun(command, frontmatter, args, [finalBody], positionalMappings, logger, false, virtualFilename, logPath);
+      return this.handleDryRun(command, frontmatter, args, [finalBody], positionalMappings, false, virtualFilename);
     }
 
     // Edit before execute
@@ -834,9 +921,10 @@ export class CliRunner {
 
     let promptToRun = finalBody;
     if (parsed.editFlag && !parsed.jsonMode) {
+      const { editPrompt } = await import("./edit-prompt");
       const editResult = await editPrompt(finalBody);
       if (!editResult.confirmed || editResult.prompt === null) {
-        logger.info({ editCancelled: true }, "Edit cancelled by user");
+        getLogger().info({ editCancelled: true }, "Edit cancelled by user");
         throw new UserCancelledError("Edit cancelled by user");
       }
       promptToRun = editResult.prompt;
@@ -857,6 +945,7 @@ export class CliRunner {
     // Start spinner with command preview
     if (!parsed.jsonMode && !interactiveMode) {
       const preview = formatCommandPreview(command, finalRunArgs);
+      const { startSpinner } = await import("./spinner");
       startSpinner(preview);
     }
 
@@ -925,7 +1014,7 @@ export class CliRunner {
       }
     }
 
-    logger.info({ exitCode: runResult.exitCode, adhoc: true }, "Ad-hoc session ended");
+    getLogger().info({ exitCode: runResult.exitCode, adhoc: true }, "Ad-hoc session ended");
     return { exitCode: runResult.exitCode, logPath };
   }
 
@@ -946,6 +1035,7 @@ export class CliRunner {
     }
 
     if (isRemoteUrl(filePath)) {
+      const { fetchRemote } = await import("./remote");
       const remoteResult = await fetchRemote(filePath, { noCache: noCacheFlag });
       if (!remoteResult.success) {
         throw new NetworkError(`Failed to fetch remote file: ${remoteResult.error}`);
@@ -963,27 +1053,32 @@ export class CliRunner {
 
     // Register cleanup callback for remote file cleanup
     if (isRemote) {
-      pm.onCleanup(() => cleanupRemote(localFilePath));
+      pm.onCleanup(() => cleanupRemoteFile(localFilePath));
     }
 
     if (!(await this.env.fs.exists(localFilePath))) {
-      throw new FileNotFoundError(`File not found: ${localFilePath}`);
+      throw new FileNotFoundError(this.fileNotFoundMessage(filePath, localFilePath));
     }
+
+    // Parse md-owned flags before creating a file logger so help-like paths,
+    // context inspection, and dry-run remain side-effect free.
+    const parsed = this.parseFlags(passthroughArgs);
+    resetLogger();
+    let logPath: string | null = null;
+    setLogPath(null);
+    const startLogger = (): void => {
+      const logger = initLogger(localFilePath);
+      logPath = getCurrentLogPath();
+      setLogPath(logPath);
+      logger.info({ filePath: localFilePath }, "Session started");
+    };
 
     const fileDir = dirname(resolve(localFilePath));
     await loadEnvFiles(fileDir);
 
-    const logger = initLogger(localFilePath);
-    const logPath = getCurrentLogPath();
-    setLogPath(logPath);
-    logger.info({ filePath: localFilePath }, "Session started");
-
     const content = await this.env.fs.readText(localFilePath);
     const { frontmatter: baseFrontmatter, body: rawBody } = parseFrontmatter(content);
     getParseLogger().debug({ frontmatter: baseFrontmatter, bodyLength: rawBody.length }, "Frontmatter parsed");
-
-    // Parse CLI flags
-    const parsed = this.parseFlags(passthroughArgs);
 
     // Remote execution trust must be decided before any import expansion.
     // processAgent() materializes content and command inlines, so placing the
@@ -1014,12 +1109,20 @@ export class CliRunner {
       } else {
         this.writeStderr("No imports found in this agent file.");
       }
-      if (isRemote) await cleanupRemote(localFilePath);
+      if (isRemote) await cleanupRemoteFile(localFilePath);
       throw new EarlyExitRequest();
     }
 
     const { command, frontmatter, templateVars, finalBody, args, positionalMappings, interactiveMode } =
-      await this.processAgent(localFilePath, baseFrontmatter, rawBody, () => this.readStdinOnce(), parsed);
+      await this.processAgent(
+        localFilePath,
+        baseFrontmatter,
+        rawBody,
+        () => this.readStdinOnce(),
+        parsed,
+        parsed.dryRun ? undefined : startLogger,
+        isRemote,
+      );
 
     // Show context dashboard before execution (unless --_quiet)
     if (!parsed.quiet && shouldShowDashboard(rawBody)) {
@@ -1029,6 +1132,7 @@ export class CliRunner {
 
     const workflowSteps = frontmatter._steps;
     if (workflowSteps !== undefined) {
+      const { parseWorkflow, executeWorkflow } = await import("./workflow");
       const workflow = parseWorkflow(workflowSteps);
 
       let workflowRunArgs = args;
@@ -1048,7 +1152,6 @@ export class CliRunner {
           command,
           workflowRunArgs,
           workflow,
-          logger,
           isRemote,
           localFilePath
         );
@@ -1115,7 +1218,7 @@ export class CliRunner {
         }
       }
 
-      if (isRemote) await cleanupRemote(localFilePath);
+      if (isRemote) await cleanupRemoteFile(localFilePath);
 
       if (workflowResult.exitCode !== 0) {
         this.printErrorWithLogPath(`Agent exited with code ${workflowResult.exitCode}`, logPath);
@@ -1125,9 +1228,9 @@ export class CliRunner {
               .reverse()
               .map((id) => workflowResult.steps[id])
               .find((step) => step && !step.skipped && step.exitCode !== 0);
-            const { confirm, input } = await import("@inquirer/prompts");
+            const { confirm } = await import("@inquirer/prompts");
             if (await confirm({ message: "Report this workflow failure as feedback?", default: false })) {
-              const message = await input({ message: "What should this workflow have done instead?" });
+              const message = await this.promptInput("What should this workflow have done instead?");
               if (message.trim()) {
                 const { recordEvidence } = await import("./evolution-store");
                 const feedback = recordEvidence({
@@ -1156,8 +1259,7 @@ export class CliRunner {
             const menuResult = await showPostRunMenu(lastWorkflowOutput);
             if (menuResult && menuResult.action !== "exit") {
               if (menuResult.action === "feedback" && !isRemote) {
-                const { input } = await import("@inquirer/prompts");
-                const message = await input({ message: "What went wrong?" });
+                const message = await this.promptInput("What went wrong?");
                 if (message.trim()) {
                   const { recordEvidence } = await import("./evolution-store");
                   const feedback = recordEvidence({
@@ -1196,7 +1298,7 @@ export class CliRunner {
         if (tip) this.writeStderr(`\nTip: ${tip}`);
       }
 
-      logger.info({
+      getLogger().info({
         exitCode: workflowResult.exitCode,
         workflowSteps: workflowResult.stepOrder.length,
         resume: parsed.resume,
@@ -1212,10 +1314,8 @@ export class CliRunner {
         args,
         promptPositionals(finalBody, interactiveMode),
         positionalMappings,
-        logger,
         isRemote,
-        localFilePath,
-        logPath
+        localFilePath
       );
     }
 
@@ -1236,10 +1336,11 @@ export class CliRunner {
 
     let promptToRun = finalBody;
     if (parsed.editFlag && !parsed.jsonMode) {
+      const { editPrompt } = await import("./edit-prompt");
       const editResult = await editPrompt(finalBody);
       if (!editResult.confirmed || editResult.prompt === null) {
-        if (isRemote) await cleanupRemote(localFilePath);
-        logger.info({ editCancelled: true }, "Edit cancelled by user");
+        if (isRemote) await cleanupRemoteFile(localFilePath);
+        getLogger().info({ editCancelled: true }, "Edit cancelled by user");
         throw new UserCancelledError("Edit cancelled by user");
       }
       promptToRun = editResult.prompt;
@@ -1281,6 +1382,7 @@ export class CliRunner {
       // Start spinner with command preview (will be stopped when first output arrives)
       if (!parsed.jsonMode && !interactiveMode) {
         const preview = formatCommandPreview(command, finalRunArgs);
+        const { startSpinner } = await import("./spinner");
         startSpinner(preview);
       }
 
@@ -1335,8 +1437,7 @@ export class CliRunner {
           getCommandLogger().info({ retryCount, fixMode: true }, "Retrying with AI fix");
           continue;
         } else if (menuResult.action === "report") {
-          const { input } = await import("@inquirer/prompts");
-          const message = await input({ message: "What should this flow have done instead?" });
+          const message = await this.promptInput("What should this flow have done instead?");
           if (message.trim() && !isRemote) {
             const { recordEvidence } = await import("./evolution-store");
             const feedback = recordEvidence({
@@ -1412,7 +1513,7 @@ export class CliRunner {
       }
     }
 
-    if (isRemote) await cleanupRemote(localFilePath);
+    if (isRemote) await cleanupRemoteFile(localFilePath);
 
     if (runResult.exitCode !== 0) {
       this.printErrorWithLogPath(`Agent exited with code ${runResult.exitCode}`, logPath);
@@ -1425,8 +1526,7 @@ export class CliRunner {
         const menuResult = await showPostRunMenu(runResult.stdout);
         if (menuResult && menuResult.action !== "exit") {
           if (menuResult.action === "feedback" && !isRemote) {
-            const { input } = await import("@inquirer/prompts");
-            const message = await input({ message: "What went wrong?" });
+            const message = await this.promptInput("What went wrong?");
             if (message.trim()) {
               const { recordEvidence } = await import("./evolution-store");
               const feedback = recordEvidence({
@@ -1464,7 +1564,7 @@ export class CliRunner {
       if (tip) this.writeStderr(`\nTip: ${tip}`);
     }
 
-    logger.info({ exitCode: runResult.exitCode, retryCount }, "Session ended");
+    getLogger().info({ exitCode: runResult.exitCode, retryCount }, "Session ended");
     return { exitCode: runResult.exitCode, logPath };
   }
 
@@ -1511,7 +1611,7 @@ export class CliRunner {
     try {
       const localFilePath = await this.resolveFilePath(filePath);
       if (!(await this.env.fs.exists(localFilePath))) {
-        return fail(`File not found: ${localFilePath}`);
+        return fail(this.fileNotFoundMessage(filePath, localFilePath));
       }
 
       const pm = getProcessManager();
@@ -1613,6 +1713,7 @@ export class CliRunner {
 
       const workflowSteps = frontmatter._steps;
       if (workflowSteps !== undefined) {
+        const { parseWorkflow, executeWorkflow } = await import("./workflow");
         const workflow = parseWorkflow(workflowSteps);
         const workflowTemplateVars = Object.fromEntries(
           Object.entries(templateVars).filter(([key]) => !key.startsWith("__"))
@@ -1863,6 +1964,7 @@ export class CliRunner {
     let cwdFromCli: string | undefined;
     let isolatedFromCli: boolean | undefined;
     let systemPromptFromCli: string | undefined;
+    let hooksFromCli: string | undefined;
     const appendSystemPromptFromCli: string[] = [];
 
     // --engine is the v3 flag; --_command/-_c and --tool are deprecated aliases.
@@ -1881,8 +1983,14 @@ export class CliRunner {
       if (!commandFromCli) commandFromCli = remainingArgs[toolIdx + 1];
       remainingArgs.splice(toolIdx, 2);
     }
-    const dryIdx = remainingArgs.indexOf("--_dry-run");
-    if (dryIdx !== -1) { dryRun = true; remainingArgs.splice(dryIdx, 1); }
+    dryRun = remainingArgs.some(
+      (arg) => arg === "--_dry-run" || arg === "--dry-run",
+    );
+    if (dryRun) {
+      remainingArgs = remainingArgs.filter(
+        (arg) => arg !== "--_dry-run" && arg !== "--dry-run",
+      );
+    }
     const editIdx = remainingArgs.indexOf("--_edit");
     if (editIdx !== -1) { editFlag = true; remainingArgs.splice(editIdx, 1); }
     const trustIdx = remainingArgs.indexOf("--_trust");
@@ -1941,8 +2049,14 @@ export class CliRunner {
       appendSystemPromptFromCli.push(remainingArgs[appendIdx + 1]!);
       remainingArgs.splice(appendIdx, 2);
     }
+    // --_hooks <path|false> — override or disable the flow's hooks file.
+    const hooksIdx = remainingArgs.indexOf("--_hooks");
+    if (hooksIdx !== -1 && hooksIdx + 1 < remainingArgs.length) {
+      hooksFromCli = remainingArgs[hooksIdx + 1];
+      remainingArgs.splice(hooksIdx, 2);
+    }
 
-    return { remainingArgs, commandFromCli, dryRun, editFlag, trustFlag, interactiveFromCli, cwdFromCli, noCache, rawOutput, contextOnly, quiet, noMenu, noHistory, noEvolve, resume, jsonMode, isolatedFromCli, systemPromptFromCli, appendSystemPromptFromCli };
+    return { remainingArgs, commandFromCli, dryRun, editFlag, trustFlag, interactiveFromCli, cwdFromCli, noCache, rawOutput, contextOnly, quiet, noMenu, noHistory, noEvolve, resume, jsonMode, isolatedFromCli, systemPromptFromCli, appendSystemPromptFromCli, hooksFromCli };
   }
 
   private async processAgent(
@@ -1950,7 +2064,9 @@ export class CliRunner {
     baseFrontmatter: Record<string, unknown>,
     rawBody: string,
     readStdin: () => Promise<string>,
-    parsed: ReturnType<typeof this.parseFlags>
+    parsed: ReturnType<typeof this.parseFlags>,
+    startLogger?: () => void,
+    isRemoteFlow = false,
   ) {
     const { remainingArgs, commandFromCli, interactiveFromCli, cwdFromCli, noHistory, jsonMode } = parsed;
     let remaining = [...remainingArgs];
@@ -1962,14 +2078,12 @@ export class CliRunner {
     let engineSource: EngineSource = "cli";
     if (commandFromCli) {
       command = commandFromCli;
-      getCommandLogger().debug({ command, source: "cli" }, "Engine from --engine flag");
     } else {
       const resolved = resolveEngine(localFilePath, baseFrontmatter as AgentFrontmatter, {
         configEngine: fullConfig.engine,
       });
       command = resolved.engine;
       engineSource = resolved.source;
-      getCommandLogger().debug({ command, source: engineSource }, "Engine resolved");
       if (resolved.deprecatedKey) {
         this.writeStderr(
           `Warning [ENGINE_KEY_DEPRECATED]: frontmatter "${resolved.deprecatedKey}:" is deprecated; use "engine: ${command}".`
@@ -1995,6 +2109,14 @@ export class CliRunner {
       this.writeStdout(await this.env.fs.readText(localFilePath));
       throw new EarlyExitRequest();
     }
+
+    // Logging is a real-run concern. Defer it until the document rule has
+    // established that this invocation will execute a flow.
+    startLogger?.();
+    getCommandLogger().debug(
+      { command, source: engineSource },
+      commandFromCli ? "Engine from --engine flag" : "Engine resolved",
+    );
 
     // Implicit resolution is allowed but never silent: say which engine won
     // and which rung of the ladder chose it.
@@ -2071,6 +2193,67 @@ export class CliRunner {
       getProcessManager().onCleanup(applied.cleanup);
     }
 
+    // Lifecycle hooks (v3): a sibling `<flow>.hooks.ts` (or explicit
+    // `_hooks:` path) is discovered, its handled events read, and the
+    // adapter translates them into engine-native hook config. Discovery is
+    // convention-first and free when no file exists; a hooks file that
+    // exists but cannot run (missing, rejected path, invalid, or
+    // unsupported engine) fails the run loudly — silently dropped hooks
+    // would be a different flow.
+    //
+    // CONSENT BOUNDARY: event discovery is STATIC (text parse) so that
+    // browsing/explaining/dry-running a flow never executes hook code.
+    // Executing the file (`--mdflow-list-events`) is a fallback allowed
+    // only when the flow itself is about to execute — same consent.
+    {
+      const { resolveHooksFile, listHandledEvents, listHandledEventsStatic, applyHooksToFrontmatter, formatHooksStderrLine } =
+        await import("./hooks");
+      const resolvedHooks = resolveHooksFile({
+        flowPath: localFilePath,
+        frontmatterValue: frontmatter._hooks,
+        cliValue: parsed.hooksFromCli,
+        isRemote: isRemoteFlow,
+      });
+      if (resolvedHooks.kind === "file") {
+        if (resolvedHooks.rejected) {
+          throw new ConfigurationError(`Hooks error: ${resolvedHooks.rejected}`, 1);
+        }
+        if (resolvedHooks.missing) {
+          throw new ConfigurationError(
+            `Hooks file not found: ${resolvedHooks.path} (from ${resolvedHooks.source}). ` +
+              `Create it with \`md hooks add ${basename(localFilePath)}\` or remove the _hooks override.`,
+            1
+          );
+        }
+        let listed = listHandledEventsStatic(resolvedHooks.path);
+        if (!listed.ok && !parsed.dryRun) {
+          // The flow is about to execute, so interrogating its hook program
+          // adds no privilege; a dry run stays execution-free and errors
+          // instead.
+          listed = await listHandledEvents(resolvedHooks.path);
+        }
+        if (!listed.ok) {
+          throw new ConfigurationError(`Hooks error: ${listed.error}`, 1);
+        }
+        frontmatter = applyHooksToFrontmatter(engineAdapter, command, frontmatter, {
+          hooksFile: resolve(resolvedHooks.path),
+          events: listed.events,
+          isolated: isolationMode.isolated,
+          // Dry runs are passive: show the real env, prepare nothing.
+          prepareEnvironment: !parsed.dryRun,
+        });
+        if (!parsed.quiet && !jsonMode) {
+          const dim = process.stderr.isTTY ? ["\x1b[2m", "\x1b[0m"] : ["", ""];
+          this.writeStderr(`${dim[0]}${formatHooksStderrLine(resolvedHooks.path, listed.events)}${dim[1]}`);
+        }
+      } else if (frontmatter._hooks !== undefined) {
+        // `_hooks: false` resolved to disabled — consume the key so it never
+        // reaches template-var extraction or the engine CLI.
+        frontmatter = { ...frontmatter };
+        delete frontmatter._hooks;
+      }
+    }
+
     const envVars = extractEnvVars(frontmatter);
     if (envVars) Object.entries(envVars).forEach(([k, v]) => { this.processEnv[k] = v; });
 
@@ -2081,7 +2264,7 @@ export class CliRunner {
     // Variables starting with _ are template variables (except internal keys)
     const internalKeys = new Set([
       "_interactive", "_i", "_cwd", "_subcommand", "_steps", "_output",
-      "_isolated", "_system-prompt", "_append-system-prompt",
+      "_isolated", "_system-prompt", "_append-system-prompt", "_hooks",
     ]);
     const namedVarFields = Object.keys(frontmatter).filter((k) => k.startsWith("_") && !internalKeys.has(k));
     for (const key of namedVarFields) {
@@ -2291,7 +2474,7 @@ export class CliRunner {
   private async handleDryRun(
     command: string, frontmatter: Record<string, unknown>, args: string[],
     positionals: string[], positionalMappings: Map<number, string>,
-    logger: ReturnType<typeof initLogger>, isRemote: boolean, localFilePath: string, logPath: string | null
+    isRemote: boolean, localFilePath: string
   ): Promise<CliRunResult> {
     this.writeStdout("═══════════════════════════════════════════════════════════");
     this.writeStdout("DRY RUN - Command will NOT be executed");
@@ -2321,20 +2504,19 @@ export class CliRunner {
     this.writeStdout("───────────────────────────────────────────────────────────");
     this.writeStdout(positionals[0] ?? "");
     this.writeStdout("───────────────────────────────────────────────────────────\n");
-    // Use async token counting to avoid loading tokenizer eagerly
-    const tokenCount = await countTokensAsync(positionals[0] ?? "");
+    // The UI labels this as an estimate, so keep the dry-run path on the
+    // dependency-free char/4 heuristic instead of loading gpt-tokenizer.
+    const tokenCount = estimateTokens(positionals[0] ?? "");
     this.writeStdout(`Estimated tokens: ~${tokenCount.toLocaleString()}`);
 
-    if (isRemote) await cleanupRemote(localFilePath);
-    logger.info({ dryRun: true }, "Dry run completed");
+    if (isRemote) await cleanupRemoteFile(localFilePath);
     throw new EarlyExitRequest();
   }
 
   private async handleWorkflowDryRun(
     command: string,
     args: string[],
-    workflow: ReturnType<typeof parseWorkflow>,
-    logger: ReturnType<typeof initLogger>,
+    workflow: ParsedWorkflow,
     isRemote: boolean,
     localFilePath: string
   ): Promise<CliRunResult> {
@@ -2354,8 +2536,7 @@ export class CliRunner {
       }
     }
 
-    if (isRemote) await cleanupRemote(localFilePath);
-    logger.info({ dryRun: true, workflow: true, steps: workflow.steps.length }, "Workflow dry run completed");
+    if (isRemote) await cleanupRemoteFile(localFilePath);
     throw new EarlyExitRequest();
   }
 
@@ -2368,13 +2549,13 @@ export class CliRunner {
 
     if (!trusted) {
       if (!this.isStdinTTY || jsonMode) {
-        await cleanupRemote(localFilePath);
+        await cleanupRemoteFile(localFilePath);
         throw new SecurityError(`Untrusted remote domain: ${domain}. Use --_trust flag to bypass this check in non-interactive mode, or run interactively to add the domain to known_hosts.`);
       }
 
       const trustResult = await promptForTrust(filePath, command, baseFrontmatter as AgentFrontmatter, rawBody);
       if (!trustResult.approved) {
-        await cleanupRemote(localFilePath);
+        await cleanupRemoteFile(localFilePath);
         throw new UserCancelledError("Execution cancelled by user");
       }
       if (trustResult.rememberDomain) {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -549,6 +549,124 @@ _output:
         expect(saved).toEqual({ status: "ok", count: 1 });
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("management subcommand --help contract", () => {
+    // Every management command must print usage to stdout and exit 0 on
+    // --help/-h without touching the filesystem, network, registry, or an
+    // interactive prompt — even in a pipe. Agents probe capabilities this way.
+    const HELP_COMMANDS = [
+      "init",
+      "create",
+      "setup",
+      "logs",
+      "explain",
+      "roster",
+      "eval",
+      "evolve",
+      "feedback",
+      "complain",
+      "install",
+      "remove",
+      "list",
+    ];
+
+    for (const command of HELP_COMMANDS) {
+      for (const flag of ["--help", "-h"]) {
+        it(`'md ${command} ${flag}' exits 0 and prints usage`, async () => {
+          const logSpy = spyOn(console, "log").mockImplementation(() => {});
+          const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+          try {
+            const runner = new CliRunner({
+              env,
+              isStdinTTY: false,
+              isStdoutTTY: false,
+            });
+            const result = await runner.run(["node", "md", command, flag]);
+            expect(result.exitCode).toBe(0);
+            const stdout = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+            expect(stdout).toMatch(/Usage:/);
+            const stderr = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+            expect(stderr).not.toContain("Agent failed");
+            expect(stderr).not.toContain("ENOENT");
+          } finally {
+            logSpy.mockRestore();
+            errorSpy.mockRestore();
+          }
+        });
+      }
+    }
+  });
+
+  describe("non-TTY determinism", () => {
+    it("setup without a TTY exits 1 with TTY_REQUIRED instead of prompting", async () => {
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const runner = new CliRunner({
+          env,
+          isStdinTTY: false,
+          isStdoutTTY: false,
+        });
+        const result = await runner.run(["node", "md", "setup"]);
+        expect(result.exitCode).toBe(1);
+        const stderr = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+        expect(stderr).toContain("TTY_REQUIRED");
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it("bare create without a TTY exits 1 with INTENT_REQUIRED instead of prompting", async () => {
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const runner = new CliRunner({
+          env,
+          isStdinTTY: false,
+          isStdoutTTY: false,
+        });
+        const result = await runner.run(["node", "md", "create"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.errorMessage).toContain("INTENT_REQUIRED");
+        expect(result.errorMessage).toContain("md create");
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+  });
+
+  describe("unknown token feedback", () => {
+    it("suggests commands and the roster for a bare token that is not a flow", async () => {
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const runner = new CliRunner({
+          env,
+          isStdinTTY: false,
+          isStdoutTTY: false,
+        });
+        const result = await runner.run(["node", "md", "definitely-not-a-command"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.errorMessage).toContain('No command or flow named "definitely-not-a-command"');
+        expect(result.errorMessage).toContain("md roster --json");
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it("keeps the plain file-not-found message for explicit paths", async () => {
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const runner = new CliRunner({
+          env,
+          isStdinTTY: false,
+          isStdoutTTY: false,
+        });
+        const result = await runner.run(["node", "md", "/does/not/exist.claude.md"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.errorMessage).toContain("File not found");
+      } finally {
+        errorSpy.mockRestore();
       }
     });
   });

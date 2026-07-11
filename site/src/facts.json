@@ -59,6 +59,16 @@
       "description": "show resolved config without executing (free)"
     },
     {
+      "name": "render",
+      "usage": "render <flow.md> [--open|--out <path>|--json]",
+      "description": "render prompt + full config as a shareable HTML page (free)"
+    },
+    {
+      "name": "hooks",
+      "usage": "hooks add|list|remove <flow.md> [event…]",
+      "description": "manage the flow's lifecycle hooks file (free)"
+    },
+    {
       "name": "eval",
       "usage": "eval <flow.md> [--plan]",
       "description": "run or cost-preview the executable eval suite"
@@ -121,7 +131,11 @@
     },
     {
       "flag": "--_dry-run",
-      "description": "preview without executing"
+      "description": "preview without executing (--dry-run is an alias)"
+    },
+    {
+      "flag": "--_hooks",
+      "description": "override or disable the flow's hooks file"
     },
     {
       "flag": "--_edit",

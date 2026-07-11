@@ -49,6 +49,8 @@ const COMMAND_DOCS: Record<string, { usage: string; description: string }> = {
   init: { usage: "init [--guided] [-y]", description: "safely scaffold a roster, then open it with bare md" },
   create: { usage: 'create "<intent>"', description: "create a project flow from plain-language intent" },
   explain: { usage: "explain <flow.md>", description: "show resolved config without executing (free)" },
+  render: { usage: "render <flow.md> [--open|--out <path>|--json]", description: "render prompt + full config as a shareable HTML page (free)" },
+  hooks: { usage: "hooks add|list|remove <flow.md> [event…]", description: "manage the flow's lifecycle hooks file (free)" },
   eval: { usage: "eval <flow.md> [--plan]", description: "run or cost-preview the executable eval suite" },
   feedback: { usage: 'feedback <flow.md> "msg"', description: "record durable feedback with a stable ID (free)" },
   complain: { usage: 'complain <flow.md> "msg"', description: "alias for feedback" },
@@ -90,7 +92,8 @@ const ladder = [
 
 const mdFlags = [
   { flag: "--engine", description: "specify the engine to run" },
-  { flag: "--_dry-run", description: "preview without executing" },
+  { flag: "--_dry-run", description: "preview without executing (--dry-run is an alias)" },
+  { flag: "--_hooks", description: "override or disable the flow's hooks file" },
   { flag: "--_edit", description: "edit prompt in $EDITOR" },
   { flag: "--_context", description: "show context tree" },
   { flag: "--raw", description: "raw output (for piping)" },
