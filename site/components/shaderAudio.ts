@@ -95,6 +95,8 @@ interface NoteOpts {
   delay?: number;
   /** 0..1 send into the reverb bus (celebration space). */
   wet?: number;
+  /** 0 = ambient (admission-capped); 1+ always schedules (celebrate/payoff). */
+  priority?: number;
 }
 
 class ShaderAudioEngine {
@@ -296,9 +298,37 @@ class ShaderAudioEngine {
     return mul;
   }
 
+  // Global voice admission: strike damping quiets repeated keys, but a CTA
+  // storm still schedules dozens of oscillators. Cap starts per window and
+  // live voices so the audio graph can't hitch the main thread.
+  private voiceStarts: number[] = [];
+  private liveVoices = 0;
+  private static readonly MAX_STARTS_PER_SEC = 48;
+  private static readonly MAX_LIVE_VOICES = 36;
+
+  private admitVoice(priority = 0): boolean {
+    if (!this.ctx) return false;
+    const now = this.ctx.currentTime;
+    // drop starts older than 1s
+    const cutoff = now - 1;
+    while (this.voiceStarts.length && this.voiceStarts[0] < cutoff) {
+      this.voiceStarts.shift();
+    }
+    if (this.voiceStarts.length >= ShaderAudioEngine.MAX_STARTS_PER_SEC && priority < 1) {
+      return false;
+    }
+    if (this.liveVoices >= ShaderAudioEngine.MAX_LIVE_VOICES && priority < 1) {
+      return false;
+    }
+    this.voiceStarts.push(now);
+    return true;
+  }
+
   private note(freq: number, opts: NoteOpts = {}) {
     if (!this.ready()) return;
-    const { type = 'triangle', gain = 0.12, attack = 0.005, decay = 0.5, delay = 0, wet = 0 } = opts;
+    const { type = 'triangle', gain = 0.12, attack = 0.005, decay = 0.5, delay = 0, wet = 0, priority = 0 } = opts;
+    // Priority 1+ (celebrate / payoff / direct pluck) always schedules.
+    if (!this.admitVoice(priority)) return;
     const ctx = this.ctx!;
     const t0 = ctx.currentTime + delay;
     const o = ctx.createOscillator();
@@ -316,6 +346,8 @@ class ShaderAudioEngine {
       g.connect(w);
       w.connect(this.reverb);
     }
+    this.liveVoices++;
+    o.onended = () => { this.liveVoices = Math.max(0, this.liveVoices - 1); };
     o.start(t0);
     o.stop(t0 + attack + decay + 0.05);
   }
@@ -1089,8 +1121,8 @@ class ShaderAudioEngine {
   celebrate(freqs: number[]) {
     if (!this.ready()) return;
     freqs.forEach((f, i) => {
-      this.note(f * 2, { type: 'sine', gain: 0.06, decay: 1.6, delay: i * 0.07, wet: 0.9 });
-      this.note(f * 3, { type: 'sine', gain: 0.02, decay: 1.0, delay: i * 0.07, wet: 0.9 });
+      this.note(f * 2, { type: 'sine', gain: 0.06, decay: 1.6, delay: i * 0.07, wet: 0.9, priority: 1 });
+      this.note(f * 3, { type: 'sine', gain: 0.02, decay: 1.0, delay: i * 0.07, wet: 0.9, priority: 1 });
     });
     const together = freqs.length * 0.07 + 0.22;
     freqs.forEach(f =>

@@ -21,6 +21,15 @@ import { shaderAudio, NOTE_COLUMNS, NOTE_ROWS, BPM } from './shaderAudio';
  * Physics runs on the CPU each frame and is fed to the fragment shader via
  * uniform arrays. Renders black + mix-blend-screen, so it only adds light.
  *
+ * Performance (storm-proofing):
+ *  - Source-aware shock kinds (hero / droplet / letter) with short lives for
+ *    micro events, so CTA landing storms don't pin full-rate draw for 4.5s.
+ *  - Celebration broker coalesces N particle landings → one signed wave +
+ *    one chord accent (target flare still updates per landing).
+ *  - Frag early-outs: far-from-ring skips, wall shadows + tremble only on heroes.
+ *  - 60Hz draw cap, hysteretic quality ladder (admission caps + render scale).
+ *  - `?shaderDebug=1` HUD · `?shaderStress=cta` synthetic storm.
+ *
  * Disabled for small screens, prefers-reduced-motion, and missing WebGL.
  */
 
@@ -34,13 +43,37 @@ const MAX_MONSTERS = 6;   // sprite slots: up to 3 monsters + heart pickups
 const MONSTER_CAP = 3;    // concurrent pixel monsters (the capture game)
 const MAX_HEARTS = 5;     // the defense game: hearts the aliens raid
 const CHARGE_RANGE = 900; // px of stretch for a full slingshot charge
-const SHOCK_LIFE = 4.5;   // seconds a ripple lives; long enough to exit the screen
+// Source-aware ripple lifetimes: only hero waves need full-screen travel.
+// Micro landings / letter ticks used to pin full-rate draw for 4.5s each.
+const SHOCK_LIFE_HERO = 4.5;
+const SHOCK_LIFE_DROPLET = 1.35;
+const SHOCK_LIFE_LETTER = 0.75;
+const SHOCK_LIFE = SHOCK_LIFE_HERO; // ghost-wall retention still tracks the longest wave
+// Shock kind codes uploaded to the fragment shader (u_shockMeta.y):
+// 0 = letter tick, 1 = droplet (landings/hover), 2 = hero (clicks, payoffs)
+const SK_LETTER = 0;
+const SK_DROPLET = 1;
+const SK_HERO = 2;
 // Everything drawn is a soft glow, so supersampling on retina buys nothing:
 // render BELOW CSS resolution and let the browser upscale — at 0.75x the
 // fragment workload drops to ~56% and the bloom hides the difference.
 const MAX_DPR = 1;
 const RENDER_SCALE = 0.75;
+// Hysteretic quality ladder (render scale). Degrade on frame overruns; recover
+// only while idle so canvas reallocations never hitch mid-storm.
+const QUALITY_SCALES = [0.50, 0.58, 0.67, 0.75] as const;
+const QUALITY_CAPS = [
+  { hero: 3, droplet: 3, letter: 2 }, // Q0
+  { hero: 4, droplet: 4, letter: 2 }, // Q1
+  { hero: 5, droplet: 6, letter: 3 }, // Q2
+  { hero: 6, droplet: 8, letter: 4 }, // Q3
+] as const;
 const IDLE_AFTER_MS = 2500; // no input for this long -> render at half rate
+const DRAW_MIN_MS = 1000 / 60; // cap GPU draws at 60Hz on high-refresh displays
+const LAND_CLUSTER_MS = 80;    // coalesce CTA landings into one celebration
+// Max tremble displacement (css-ish px): u_tremble * (6 + 2.5) when |saw|=1.
+// Keep in sync with the frag gate below (asserted in debug builds).
+const TREMBLE_MAX_PX = 8.5;
 
 const VERT_SRC = `
 attribute vec2 a_pos;
@@ -70,11 +103,12 @@ uniform vec4  u_credit;     // crafted-by credit rect: center xy, half-extents z
 uniform sampler2D u_mask2;  // rasterized credit glyphs + eggo silhouette (red)
 uniform vec3  u_egg;        // eggo mark: center xy, radius (device px)
 uniform vec4  u_shock[${MAX_SHOCKS}];     // xy device px, birth (s), amplitude
+uniform vec2  u_shockMeta[${MAX_SHOCKS}]; // x = lifetime (s), y = kind (0 letter / 1 droplet / 2 hero)
 uniform vec4  u_part[${MAX_PARTICLES}];   // xy device px, size (css px), heat
 uniform vec4  u_drag;       // anchor xy (device px), charge 0..1, active 0..1
 uniform vec4  u_path[${MAX_PATH}];        // drag stroke: xy device px, z alive
 uniform float u_trailFade;  // stroke visibility 0..1
-uniform float u_tremble;    // 0..1 — every ripple shivers (workshop hover)
+uniform float u_tremble;    // 0..1 — hero ripples shiver (workshop hover)
 uniform vec4  u_mon[${MAX_MONSTERS}];     // pixel monster: xy device px, half-size css px, seed
 uniform vec4  u_monPop[${MAX_MONSTERS}];  // alive fade, capture dissolve, hue, wobble phase
 uniform float u_px;         // device pixel ratio
@@ -252,45 +286,51 @@ void main() {
   // genuinely interfere — constructive fringes flare, destructive ones
   // cancel — crests render orange, troughs blue. (Compacted; break early.)
   // Amplitude is SIGNED: negative ripples (snare hits) lead with a trough.
+  // Per-shock meta: x = lifetime, y = kind (2 = hero gets walls + tremble).
   float wave = 0.0;
   for (int i = 0; i < ${MAX_SHOCKS}; i++) {
     vec4 sk = u_shock[i];
     if (abs(sk.w) <= 0.001) break;
+    vec2 meta = u_shockMeta[i];
+    float life = max(meta.x, 0.05);
+    float kind = meta.y;
     float age = u_time - sk.z;
-    if (age < 0.0 || age > ${SHOCK_LIFE}) continue;
+    if (age < 0.0 || age > life) continue;
     vec2 relS = uv - sk.xy;
     float r = length(relS) / px;
-    float d = r - (26.0 + age * 500.0);
-    // anticipation tremble: the ring fronts turn into shaking SAWTOOTH
-    // waves — 16 jagged teeth per revolution racing around each ring while
-    // the whole serration judders, each ripple phased by its birth time
-    if (u_tremble > 0.003) {
+    float front = 26.0 + age * 500.0;
+    float w = 9.0 + age * 30.0;
+    float dRough = r - front;
+    // Cheap center flash (first ~0.2s) without the full envelope path.
+    col += exp(-r / 40.0) * exp(-age * 14.0) * abs(sk.w) * 0.8 * AMBER;
+    // Far from the expanding ring: skip envelope / tremble / walls.
+    // Tremble can push the front by ~${TREMBLE_MAX_PX}px — gate includes that.
+    if (abs(dRough) > w * 3.5 + ${TREMBLE_MAX_PX} && r > 55.0) continue;
+    float d = dRough;
+    // Anticipation tremble only on hero waves near the ring front.
+    if (u_tremble > 0.003 && kind > 1.5 && abs(dRough) < w * 3.5 + ${TREMBLE_MAX_PX}) {
       float th = atan(relS.y, relS.x);
       float sawW = fract(th * 2.5465 + u_time * 2.3 + sk.z) * 2.0 - 1.0;
       d += u_tremble * sawW * (6.0 + 2.5 * sin(u_time * 41.0 + sk.z * 9.0));
     }
-    float w = 9.0 + age * 30.0;
-    // linger: stays visible until the front has crossed the screen
-    float fade = pow(max(1.0 - age / ${SHOCK_LIFE}, 0.0), 1.6);
+    float fade = pow(max(1.0 - age / life, 0.0), 1.6);
     float env = exp(-(d * d) / (2.0 * w * w)) * fade * sk.w;
     if (abs(env) > 0.004) {
-      // walls cast wave shadows — but only if the wall was ALIVE when this
-      // ripple's front actually crossed it. Dead walls keep shadowing the
-      // waves they blocked (ghost slots), so removing a wall never
-      // resurrects a wave that already hit it.
+      // Wall-history shadows only for hero waves (droplets/letters skip the
+      // O(walls) segment tests — the biggest per-pixel storm cost).
       float open = 1.0;
-      for (int j = 0; j < ${MAX_WALLS}; j++) {
-        vec2 span = u_wallSpan[j];
-        if (span.y <= 0.0) break;
-        float hitT = segCrossT(sk.xy, uv, u_wall[j].xy, u_wall[j].zw);
-        if (hitT < 0.0) continue;
-        float passT = sk.z + max(hitT * r - 26.0, 0.0) / 500.0;
-        if (passT > span.x && passT < span.y) open *= 0.15;
+      if (kind > 1.5) {
+        for (int j = 0; j < ${MAX_WALLS}; j++) {
+          vec2 span = u_wallSpan[j];
+          if (span.y <= 0.0) break;
+          float hitT = segCrossT(sk.xy, uv, u_wall[j].xy, u_wall[j].zw);
+          if (hitT < 0.0) continue;
+          float passT = sk.z + max(hitT * r - 26.0, 0.0) / 500.0;
+          if (passT > span.x && passT < span.y) open *= 0.15;
+        }
       }
       wave += cos(d * 0.12) * env * open;
     }
-    // bright flash at the very start
-    col += exp(-r / 40.0) * exp(-age * 14.0) * abs(sk.w) * 0.8 * AMBER;
   }
   vec3 CYAN = vec3(0.30, 0.80, 1.00);
   float crest = max(wave, 0.0);
@@ -648,6 +688,7 @@ export const ShaderGuide: React.FC = () => {
     // (EVOLVE's translucent-window fill only applies with this class on)
     document.documentElement.classList.add('shader-fx');
     const uShock = gl.getUniformLocation(program, 'u_shock');
+    const uShockMeta = gl.getUniformLocation(program, 'u_shockMeta');
     const uPart = gl.getUniformLocation(program, 'u_part');
     const uDrag = gl.getUniformLocation(program, 'u_drag');
     const uPath = gl.getUniformLocation(program, 'u_path');
@@ -657,18 +698,68 @@ export const ShaderGuide: React.FC = () => {
     const uMonPop = gl.getUniformLocation(program, 'u_monPop');
     const uPx = gl.getUniformLocation(program, 'u_px');
 
+    // Quality / instrumentation (query-gated so production stays quiet).
+    const qs = (() => {
+      try { return new URLSearchParams(window.location.search); }
+      catch { return new URLSearchParams(); }
+    })();
+    const debugOn = qs.has('shaderDebug');
+    const stressMode = qs.get('shaderStress'); // e.g. "cta"
+    let qualityTier = QUALITY_SCALES.length - 1; // start at full quality
+    let renderScale = QUALITY_SCALES[qualityTier];
+    let appliedScale = renderScale; // last scale actually written to the canvas
+    let frameEma = 16.7;
+    let overrunStreak = 0;
+    let stableMs = 0;
+    let lastDrawAt = 0;
+    let lastResizeAt = 0;
+    let draws = 0;
+    let droppedDraws = 0;
+    let mergeCount = 0;
+    let dropCount = 0;
+    let landClusterFlushes = 0;
+    const frameSamples: number[] = [];
+    let dbgEl: HTMLDivElement | null = null;
+    if (debugOn) {
+      dbgEl = document.createElement('div');
+      dbgEl.setAttribute('aria-hidden', 'true');
+      Object.assign(dbgEl.style, {
+        position: 'fixed', top: '8px', left: '8px', zIndex: '9999',
+        font: '11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace',
+        color: '#e8ffe8', background: 'rgba(0,0,0,0.72)',
+        padding: '8px 10px', borderRadius: '6px', pointerEvents: 'none',
+        whiteSpace: 'pre', maxWidth: '340px',
+      } as CSSStyleDeclaration);
+      document.body.appendChild(dbgEl);
+    }
+
     // "device px per css px" for every coordinate conversion — includes the
     // sub-native render scale, so all math stays consistent automatically
-    let dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR) * RENDER_SCALE;
-    const resize = () => {
-      dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR) * RENDER_SCALE;
-      canvas.width = Math.round(window.innerWidth * dpr);
-      canvas.height = Math.round(window.innerHeight * dpr);
+    let dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR) * renderScale;
+    const resize = (force = false) => {
+      const next = Math.min(window.devicePixelRatio || 1, MAX_DPR) * renderScale;
+      const w = Math.round(window.innerWidth * next);
+      const h = Math.round(window.innerHeight * next);
+      if (!force && w === canvas.width && h === canvas.height && Math.abs(next - dpr) < 1e-6) return;
+      dpr = next;
+      appliedScale = renderScale;
+      canvas.width = w;
+      canvas.height = h;
       gl.viewport(0, 0, canvas.width, canvas.height);
       gl.uniform1f(uPx, dpr); // only changes with the canvas size
+      lastResizeAt = performance.now();
     };
-    resize();
-    window.addEventListener('resize', resize);
+    const setQualityTier = (tier: number, _reason: string) => {
+      const t = Math.max(0, Math.min(QUALITY_SCALES.length - 1, tier));
+      if (t === qualityTier) return;
+      qualityTier = t;
+      renderScale = QUALITY_SCALES[qualityTier];
+      // Canvas reallocation is applied on the next idle frame (or window
+      // resize). Admission caps use qualityTier immediately.
+    };
+    const onWindowResize = () => resize(true);
+    resize(true);
+    window.addEventListener('resize', onWindowResize);
 
     // ---- Cursor state: smoothed position, velocity, movement energy ----
     const mouse = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
@@ -690,29 +781,198 @@ export const ShaderGuide: React.FC = () => {
     const start = performance.now();
     const shaderNow = () => (performance.now() - start) / 1000;
 
-    // ---- Shockwaves (ring buffer) ----
+    // ---- Shockwaves (source-aware pool) ----
+    // kind: SK_LETTER | SK_DROPLET | SK_HERO. Parallel life/kind arrays keep
+    // the GPU path cheap (walls+tremble only on hero) and stop micro events
+    // from pinning full-rate draw for the full 4.5s hero travel time.
     const shockData = new Float32Array(MAX_SHOCKS * 4);
+    const shockLifeArr = new Float32Array(MAX_SHOCKS);
+    const shockKindArr = new Float32Array(MAX_SHOCKS);
     const shockUpload = new Float32Array(MAX_SHOCKS * 4);
-    // Evict by importance (|amp| x remaining life), never round-robin — a
-    // burst of landing pops must not cancel a big ripple mid-expansion.
-    const addShock = (x: number, y: number, amp: number) => {
+    const shockMetaUpload = new Float32Array(MAX_SHOCKS * 2);
+    const lifeForKind = (kind: number) =>
+      kind >= SK_HERO ? SHOCK_LIFE_HERO
+        : kind >= SK_DROPLET ? SHOCK_LIFE_DROPLET
+          : SHOCK_LIFE_LETTER;
+    const kindScore = (kind: number) =>
+      kind >= SK_HERO ? 3 : kind >= SK_DROPLET ? 2 : 1;
+    const countLiveKind = (kind: number, now: number) => {
+      let n = 0;
+      for (let i = 0; i < MAX_SHOCKS; i++) {
+        const a = Math.abs(shockData[i * 4 + 3]);
+        if (a <= 0.001) continue;
+        if (shockKindArr[i] !== kind) continue;
+        if (now - shockData[i * 4 + 2] > shockLifeArr[i]) continue;
+        n++;
+      }
+      return n;
+    };
+    // Evict by importance (|amp| × remaining life × kind weight). Never
+    // round-robin — a landing storm must not cancel a hero wave mid-travel.
+    const addShock = (x: number, y: number, amp: number, kind: number = SK_HERO) => {
+      if (Math.abs(amp) <= 0.001) return;
       const now = shaderNow();
+      const life = lifeForKind(kind);
+      const mergeR = kind === SK_LETTER ? 42 : kind === SK_DROPLET ? 58 : 28;
+      const mergeT = kind === SK_HERO ? 0.045 : 0.09;
+      // Spatial/temporal merge of compatible shocks (same kind + sign).
+      for (let i = 0; i < MAX_SHOCKS; i++) {
+        const a0 = shockData[i * 4 + 3];
+        if (Math.abs(a0) <= 0.001) continue;
+        if (shockKindArr[i] !== kind) continue;
+        if (Math.sign(a0) !== Math.sign(amp)) continue;
+        const age = now - shockData[i * 4 + 2];
+        if (age < 0 || age > mergeT) continue;
+        const ox = shockData[i * 4 + 0] / dpr;
+        const oy = (canvas.height - shockData[i * 4 + 1]) / dpr;
+        if (Math.hypot(ox - x, oy - y) > mergeR) continue;
+        const w0 = Math.abs(a0);
+        const w1 = Math.abs(amp);
+        const wt = w0 + w1;
+        const nx = (ox * w0 + x * w1) / wt;
+        const ny = (oy * w0 + y * w1) / wt;
+        const o = i * 4;
+        shockData[o + 0] = nx * dpr;
+        shockData[o + 1] = canvas.height - ny * dpr;
+        // Keep the earlier birth so the ring front doesn't jump.
+        // Log-ish saturation: two equal hits ≈ 1.55×, not 2×.
+        const merged = Math.sign(a0) * Math.min(2.2, w0 + w1 * 0.55);
+        shockData[o + 3] = merged;
+        shockLifeArr[i] = Math.max(shockLifeArr[i], life);
+        mergeCount++;
+        return;
+      }
+      // Class admission: soft-cap by quality tier. Heroes always try to
+      // enter (evict weaker heroes); low-amp droplets/letters may drop.
+      const caps = QUALITY_CAPS[qualityTier];
+      const cap = kind >= SK_HERO ? caps.hero
+        : kind >= SK_DROPLET ? caps.droplet
+          : caps.letter;
+      if (countLiveKind(kind, now) >= cap) {
+        // Prefer replacing the weakest live slot of this kind.
+        let weak = -1;
+        let weakScore = Infinity;
+        for (let i = 0; i < MAX_SHOCKS; i++) {
+          const a = Math.abs(shockData[i * 4 + 3]);
+          if (a <= 0.001 || shockKindArr[i] !== kind) continue;
+          const remain = a * Math.max(0, shockLifeArr[i] - (now - shockData[i * 4 + 2]));
+          if (remain < weakScore) { weakScore = remain; weak = i; }
+        }
+        const incoming = Math.abs(amp) * life * kindScore(kind);
+        if (weak >= 0 && incoming * 0.85 < weakScore && kind < SK_HERO) {
+          dropCount++;
+          return; // not worth displacing
+        }
+        if (weak >= 0) {
+          const o = weak * 4;
+          shockData[o + 0] = x * dpr;
+          shockData[o + 1] = canvas.height - y * dpr;
+          shockData[o + 2] = now;
+          shockData[o + 3] = amp;
+          shockLifeArr[weak] = life;
+          shockKindArr[weak] = kind;
+          return;
+        }
+      }
       let slot = 0;
       let worst = Infinity;
       for (let i = 0; i < MAX_SHOCKS; i++) {
         const a = Math.abs(shockData[i * 4 + 3]);
-        const remain = a <= 0.001 ? -1 : a * Math.max(0, SHOCK_LIFE - (now - shockData[i * 4 + 2]));
+        const lifeI = shockLifeArr[i] || SHOCK_LIFE_HERO;
+        const remain = a <= 0.001
+          ? -1
+          : a * Math.max(0, lifeI - (now - shockData[i * 4 + 2])) * kindScore(shockKindArr[i]);
         if (remain < worst) {
           worst = remain;
           slot = i;
-          if (remain < 0) break; // empty/expired slot — take it
+          if (remain < 0) break;
         }
+      }
+      // Never let a letter tick stomp a live hero wave.
+      if (worst > 0 && kind < SK_HERO
+          && shockKindArr[slot] >= SK_HERO
+          && Math.abs(shockData[slot * 4 + 3]) > 0.001
+          && now - shockData[slot * 4 + 2] < shockLifeArr[slot]) {
+        dropCount++;
+        return;
       }
       const o = slot * 4;
       shockData[o + 0] = x * dpr;
       shockData[o + 1] = canvas.height - y * dpr;
       shockData[o + 2] = now;
       shockData[o + 3] = amp;
+      shockLifeArr[slot] = life;
+      shockKindArr[slot] = kind;
+    };
+
+    // ---- Celebration broker: N CTA landings → one authored shock + chord ----
+    interface LandCluster {
+      count: number;
+      sumX: number;
+      sumY: number;
+      freqs: number[];
+      openAt: number; // performance.now()
+      t: TrackedTarget | null;
+      cx01: number;
+      cy01: number;
+    }
+    let landCluster: LandCluster | null = null;
+    let lastLetterShockT = 0;
+    const flushLandCluster = () => {
+      const c = landCluster;
+      landCluster = null;
+      if (!c || c.count <= 0) return;
+      landClusterFlushes++;
+      const cx = c.sumX / c.count;
+      const cy = c.sumY / c.count;
+      // Log-saturated amplitude: denser storms feel bigger without N rings.
+      const amp = Math.min(1.45, 0.28 + Math.log2(1 + c.count) * 0.24);
+      addShock(cx, cy, amp, SK_DROPLET);
+      if (c.count >= 6) {
+        window.setTimeout(() => addShock(cx, cy, -0.5 * Math.min(1, amp), SK_DROPLET), 110);
+      }
+      // One musical accent for the cluster (not N ringNotes).
+      if (c.freqs.length >= 2) {
+        const uniq: number[] = [];
+        for (const f of c.freqs) {
+          if (!uniq.some(u => Math.abs(u - f) < 0.5)) uniq.push(f);
+          if (uniq.length >= 4) break;
+        }
+        shaderAudio.celebrate(uniq);
+      } else if (c.freqs.length === 1) {
+        shaderAudio.ringNote(c.freqs[0]);
+      } else {
+        shaderAudio.chime(c.cx01, c.cy01);
+      }
+    };
+    const noteLanding = (
+      x: number, y: number, freq: number, t: TrackedTarget | null,
+      cx01: number, cy01: number,
+    ) => {
+      const now = performance.now();
+      if (!landCluster
+          || now - landCluster.openAt > LAND_CLUSTER_MS
+          || landCluster.t !== t) {
+        flushLandCluster();
+        landCluster = {
+          count: 0, sumX: 0, sumY: 0, freqs: [],
+          openAt: now, t, cx01, cy01,
+        };
+      }
+      landCluster.count++;
+      landCluster.sumX += x;
+      landCluster.sumY += y;
+      if (freq > 0) landCluster.freqs.push(freq);
+      landCluster.cx01 = cx01;
+      landCluster.cy01 = cy01;
+    };
+    const letterTick = (x: number, y: number, note: number) => {
+      // Pitch always plays (glockenspiel run). Visuals coalesce hard.
+      shaderAudio.letterPing(note);
+      const now = performance.now();
+      if (now - lastLetterShockT < 45) return;
+      lastLetterShockT = now;
+      addShock(x, y, 0.14, SK_LETTER);
     };
 
     // ---- Spark particles (fixed pool) + chord volley bookkeeping ----
@@ -737,7 +997,7 @@ export const ShaderGuide: React.FC = () => {
             detail: { target: volley.t.el.dataset.shaderTarget || '' },
           }));
         }
-        if (volley.cx || volley.cy) addShock(volley.cx, volley.cy, 1.3);
+        if (volley.cx || volley.cy) addShock(volley.cx, volley.cy, 1.3, SK_HERO);
         shaderAudio.celebrate(volley.freqs);
       }
       volley = null;
@@ -788,10 +1048,10 @@ export const ShaderGuide: React.FC = () => {
     // long press digs a deep swell — no two clicks ripple the same.
     const burst = (x: number, y: number, power = 0, heldMs = 250) => {
       const tap = Math.min(1, heldMs / 250); // sub-250ms taps stay shallow
-      addShock(x, y, 0.35 + tap * 0.55 + power * 1.25);
+      addShock(x, y, 0.35 + tap * 0.55 + power * 1.25, SK_HERO);
       // held clicks dig: a chasing trough follows, deeper the longer held
       if (power > 0.2) {
-        window.setTimeout(() => addShock(x, y, -1.0 * power), 140);
+        window.setTimeout(() => addShock(x, y, -1.0 * power, SK_HERO), 140);
       }
       if (power > 0.5) energyTarget = 1;
       // pluck sounds a tone relative to the target harmony (chord tone at
@@ -800,7 +1060,11 @@ export const ShaderGuide: React.FC = () => {
       const octave = power > 0.66 ? 0.25 : power > 0.33 ? 0.5 : 1;
       const clickNote = shaderAudio.pluck(
         x / window.innerWidth, y / window.innerHeight, octave);
-      const count = 10 + Math.floor(Math.random() * 4) + Math.round(power * 8);
+      // Low quality tiers compress ambient spray; gameplay carriers untouched.
+      const ambient = qualityTier <= 1 ? 0.62 : qualityTier === 2 ? 0.82 : 1;
+      const count = Math.max(4, Math.round(
+        (10 + Math.floor(Math.random() * 4) + Math.round(power * 8)) * ambient,
+      ));
       for (let k = 0; k < count; k++) {
         const a = Math.random() * Math.PI * 2;
         const s = (260 + Math.random() * 420) * (1 - 0.35 * power);
@@ -898,7 +1162,7 @@ export const ShaderGuide: React.FC = () => {
       hd.pop = 0.001;
       hearts = Math.min(MAX_HEARTS, hearts + 1);
       emitHearts('gain');
-      addShock(hd.x, hd.y, 0.6);
+      addShock(hd.x, hd.y, 0.6, SK_DROPLET);
       shaderAudio.heartGet();
       for (let k = 0; k < 6; k++) {
         const a = (k / 6) * Math.PI * 2 + Math.random() * 0.4;
@@ -932,7 +1196,7 @@ export const ShaderGuide: React.FC = () => {
         raiding: false,
         boss: false,
       });
-      addShock(x, y, 0.35);
+      addShock(x, y, 0.35, SK_DROPLET);
       shaderAudio.monsterSpawn(seed);
       if (!heartsShown) emitHearts('show'); // the HUD arrives with the invaders
       // teleport shimmer: a ring of sparks collapses into the arrival point
@@ -962,14 +1226,14 @@ export const ShaderGuide: React.FC = () => {
         raiding: false,
         boss: true,
       });
-      addShock(x, 60, 1.2);
-      later(() => addShock(x, 120, -0.8), 200);
+      addShock(x, 60, 1.2, SK_HERO);
+      later(() => addShock(x, 120, -0.8, SK_HERO), 200);
       shaderAudio.bossSpawn(seed);
       emitHearts('boss');
     };
     const captureMonster = (mn: Monster) => {
       mn.pop = 0.001; // the dissolve animation takes it from here
-      addShock(mn.x, mn.y, mn.boss ? 1.6 : 1.1);
+      addShock(mn.x, mn.y, mn.boss ? 1.6 : 1.1, SK_HERO);
       energyTarget = 1;
       shaderAudio.monsterCaught(mn.seed);
       // the creature bursts into chord-tone sparks that ring on landing
@@ -1040,7 +1304,7 @@ export const ShaderGuide: React.FC = () => {
       const now = performance.now();
       if (!chain || now - chain.lastAt > 8000) {
         chain = { pts: [{ x, y }], lastAt: now };
-        addShock(x, y, 0.3);
+        addShock(x, y, 0.3, SK_DROPLET);
         shaderAudio.gliss(x / window.innerWidth, y / window.innerHeight);
         return;
       }
@@ -1054,7 +1318,7 @@ export const ShaderGuide: React.FC = () => {
         addWall(x, y, start.x, start.y);
         const cx = chain.pts.reduce((s, p) => s + p.x, x) / (chain.pts.length + 1);
         const cy = chain.pts.reduce((s, p) => s + p.y, y) / (chain.pts.length + 1);
-        addShock(cx, cy, 1.2);
+        addShock(cx, cy, 1.2, SK_HERO);
         window.dispatchEvent(new CustomEvent('mdflow:shape')); // puzzle hook
         // THE GATE: the closed shape is a capture net — every pixel
         // monster inside the polygon dissolves; near-misses bolt away
@@ -1097,7 +1361,7 @@ export const ShaderGuide: React.FC = () => {
       const cx = r.left + r.width / 2;
       const cy = r.top + r.height / 2;
       t.glitch = 1;
-      addShock(cx, cy, -0.5);
+      addShock(cx, cy, -0.5, SK_DROPLET);
       const f = shaderAudio.noteAt(cx / window.innerWidth, cy / window.innerHeight);
       const rad = Math.max(r.width, r.height) / 2 + 130;
       for (let k = 0; k < 12; k++) {
@@ -1224,7 +1488,7 @@ export const ShaderGuide: React.FC = () => {
       setDragGuards(true);
       window.addEventListener('wheel', onWheel, { passive: false });
       lastEventT = performance.now();
-      addShock(e.clientX, e.clientY, 0.22); // light press feedback — the
+      addShock(e.clientX, e.clientY, 0.22, SK_DROPLET); // light press feedback —
       // release ripple carries the real depth (scaled by how long you held)
       // ignition: the instant the button goes down (hold OR drag — both
       // charges start here), energy visibly GATHERS: a ring of sparks
@@ -1268,7 +1532,7 @@ export const ShaderGuide: React.FC = () => {
         // grinding saw), then pull — the volley fires the big heavy dots
         const holdPower = Math.min(1, Math.max(0, (performance.now() - drag.t0 - 250) / 4000));
         const baseAngle = Math.atan2(dy, dx);
-        addShock(e.clientX, e.clientY, 0.5 + 0.6 * charge);
+        addShock(e.clientX, e.clientY, 0.5 + 0.6 * charge, SK_HERO);
 
         // the drag defines a chord: root at the anchor, top voice at the
         // release point. Every spark in this volley carries one chord tone.
@@ -1377,9 +1641,9 @@ export const ShaderGuide: React.FC = () => {
       lastEventT = performance.now();
       energyTarget = 1;
       shaderAudio.payoff();
-      addShock(x, y, 1.6);
-      window.setTimeout(() => addShock(x, y, 1.2), 150);
-      window.setTimeout(() => addShock(x, y, -1.0), 300);
+      addShock(x, y, 1.6, SK_HERO);
+      window.setTimeout(() => addShock(x, y, 1.2, SK_HERO), 150);
+      window.setTimeout(() => addShock(x, y, -1.0, SK_HERO), 300);
       const chord = shaderAudio.currentChord();
       for (let k = 0; k < 16; k++) {
         const a = (k / 16) * Math.PI * 2;
@@ -1410,7 +1674,7 @@ export const ShaderGuide: React.FC = () => {
       }>).detail;
       lastEventT = performance.now();
       if (d.phase === 'grab') {
-        addShock(d.x, d.y, 0.3);
+        addShock(d.x, d.y, 0.3, SK_DROPLET);
       } else if (d.phase === 'pull') {
         energyTarget = Math.min(1, energyTarget + 0.1 + d.p * 0.2);
         const a = Math.random() * Math.PI * 2;
@@ -1421,8 +1685,8 @@ export const ShaderGuide: React.FC = () => {
           0.4, 0, 0, 0, 0.7 + d.p,
         );
       } else {
-        addShock(d.x, d.y, 0.45 + d.p * 1.0);
-        if (d.p > 0.6) window.setTimeout(() => addShock(d.x, d.y, -0.6 * d.p), 120);
+        addShock(d.x, d.y, 0.45 + d.p * 1.0, SK_HERO);
+        if (d.p > 0.6) window.setTimeout(() => addShock(d.x, d.y, -0.6 * d.p, SK_HERO), 120);
         const ang = Math.atan2(-d.dy, -d.dx);
         const note = shaderAudio.chordToneAt(
           d.x / window.innerWidth, d.y / window.innerHeight);
@@ -1454,11 +1718,11 @@ export const ShaderGuide: React.FC = () => {
       const H = window.innerHeight;
       switch (d.type) {
         case 'shock':
-          addShock(d.x ?? W / 2, d.y ?? H / 2, d.amp ?? 0.6);
+          addShock(d.x ?? W / 2, d.y ?? H / 2, d.amp ?? 0.6, SK_HERO);
           break;
         case 'burst': {
           const n = d.n ?? 10;
-          addShock(d.x, d.y, d.amp ?? 0.5);
+          addShock(d.x, d.y, d.amp ?? 0.5, SK_HERO);
           for (let k = 0; k < n; k++) {
             const a = (k / n) * Math.PI * 2 + Math.random() * 0.4;
             const s = (d.speed ?? 420) * (0.7 + Math.random() * 0.6);
@@ -1492,8 +1756,8 @@ export const ShaderGuide: React.FC = () => {
         case 'quake': {
           for (let k = 0; k < 6; k++) {
             later(() => {
-              addShock(Math.random() < 0.5 ? -10 : W + 10, Math.random() * H, 0.5 + Math.random() * 0.5);
-              addShock(Math.random() * W, Math.random() < 0.5 ? -10 : H + 10, -(0.4 + Math.random() * 0.4));
+              addShock(Math.random() < 0.5 ? -10 : W + 10, Math.random() * H, 0.5 + Math.random() * 0.5, SK_HERO);
+              addShock(Math.random() * W, Math.random() < 0.5 ? -10 : H + 10, -(0.4 + Math.random() * 0.4), SK_HERO);
             }, k * 160);
           }
           energyTarget = 1;
@@ -1502,14 +1766,14 @@ export const ShaderGuide: React.FC = () => {
         case 'lightning': {
           const x = d.x ?? W / 2;
           for (let k = 0; k < 7; k++) {
-            later(() => addShock(x + (Math.random() - 0.5) * 60, (k / 6) * H, k === 6 ? 1.3 : 0.5), k * 40);
+            later(() => addShock(x + (Math.random() - 0.5) * 60, (k / 6) * H, k === 6 ? 1.3 : 0.5, SK_HERO), k * 40);
           }
           break;
         }
         case 'sweep': {
           const down = d.dir === 'down';
           for (let k = 0; k < 6; k++) {
-            later(() => addShock(W / 2, down ? (k / 5) * H : H - (k / 5) * H, 0.55), k * 90);
+            later(() => addShock(W / 2, down ? (k / 5) * H : H - (k / 5) * H, 0.55, SK_DROPLET), k * 90);
           }
           break;
         }
@@ -1682,6 +1946,33 @@ export const ShaderGuide: React.FC = () => {
     let last = performance.now();
     let lastAttractT = 0; // idle guide-comet timer
 
+    // Synthetic CTA storm for profiling (?shaderStress=cta).
+    let stressAcc = 0;
+    const runStress = (dt: number) => {
+      if (stressMode !== 'cta') return;
+      stressAcc += dt;
+      if (stressAcc < 0.12) return;
+      stressAcc = 0;
+      const W = window.innerWidth;
+      const H = window.innerHeight;
+      // Prefer the install / workshop CTA if visible; else viewport center.
+      let tx = W * 0.5, ty = H * 0.45;
+      for (const t of targets) {
+        const r = t.el.getBoundingClientRect();
+        if (r.bottom < 0 || r.top > H) continue;
+        tx = r.left + r.width / 2;
+        ty = r.top + r.height / 2;
+        break;
+      }
+      for (let k = 0; k < 8; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 280 + Math.random() * 380;
+        spawnSpark(tx + Math.cos(a) * 40, ty + Math.sin(a) * 30,
+          Math.cos(a) * s, Math.sin(a) * s, 1.4, 0, 0, 0.15);
+      }
+      lastEventT = performance.now();
+    };
+
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
       if (document.hidden) return;
@@ -1689,14 +1980,26 @@ export const ShaderGuide: React.FC = () => {
       // rate (20fps). Live particles, ripples, and the trail keep full rate
       // via the flags below.
       frameCount++;
+      // Flush coalesced landings even on idle ticks so celebrations don't stall.
+      if (landCluster && now - landCluster.openAt > LAND_CLUSTER_MS) {
+        flushLandCluster();
+      }
       const idle = now - lastEventT > IDLE_AFTER_MS
         && !anyParticles && !anyShocks && !anyMonsters && !drag.held && trailFade < 0.02
         && !liveSegs.some(s => s.life > 0) // humming walls animate (ghosts don't)
-        && targetProx < 0.3;               // groove playing → halo throbs on the beat
+        && targetProx < 0.3               // groove playing → halo throbs on the beat
+        && !landCluster;
       if (idle && frameCount % 3 !== 0) return;
+      // Apply pending quality scale while calm (canvas reallocation is free then).
+      if (idle && Math.abs(appliedScale - QUALITY_SCALES[qualityTier]) > 1e-6) {
+        renderScale = QUALITY_SCALES[qualityTier];
+        resize(true);
+      }
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       if (dt <= 0) return;
+      const cpuT0 = performance.now();
+      runStress(dt);
 
       // touch has no hover: between touches the virtual cursor rests at
       // the viewport's focal point, so SCROLLING drives proximity — halos,
@@ -1802,7 +2105,7 @@ export const ShaderGuide: React.FC = () => {
         holdPulseAcc += dt;
         if (holdP > 0 && holdPulseAcc > 0.55 - holdP * 0.35) {
           holdPulseAcc = 0;
-          addShock(drag.x0, drag.y0, 0.18 + holdP * 0.45);
+          addShock(drag.x0, drag.y0, 0.18 + holdP * 0.45, SK_DROPLET);
           const a = Math.random() * Math.PI * 2;
           const r = 150 + holdP * 160;
           const sp = 320 + holdP * 420;
@@ -1948,17 +2251,15 @@ export const ShaderGuide: React.FC = () => {
           p.vx += (nx * pull - ny * sw) * dt;
           p.vy += (ny * pull + nx * sw) * dt;
 
-          // landed on the target: flare it and pop a mini-ripple
+          // landed on the target: flare immediately; ripple/audio coalesce
+          // via the celebration broker so N dots → one authored wave.
           if (p.maxLife - p.life >= p.grace
               && Math.abs(p.x - best.cx) < best.hw + 14 && Math.abs(p.y - best.cy) < best.hh + 14) {
             best.t.excite = Math.min(1.5, best.t.excite + 0.4);
-            addShock(p.x, p.y, 0.35);
-            if (p.freq > 0) {
-              // ring the tone this spark carried (chord tone or click note)
-              shaderAudio.ringNote(p.freq);
-            } else {
-              shaderAudio.chime(best.cx / window.innerWidth, best.cy / window.innerHeight);
-            }
+            noteLanding(
+              p.x, p.y, p.freq, best.t,
+              best.cx / window.innerWidth, best.cy / window.innerHeight,
+            );
             if (volley && p.volleyId === volley.id) {
               volley.cx = best.cx;
               volley.cy = best.cy;
@@ -2028,7 +2329,7 @@ export const ShaderGuide: React.FC = () => {
               mn.raiding = false; // a hit breaks a small raider's charge
               mn.raidAt = now + 6000 + Math.random() * 6000;
             }
-            addShock(p.x, p.y, mn.boss ? 0.7 : 0.5);
+            addShock(p.x, p.y, mn.boss ? 0.7 : 0.5, mn.boss ? SK_HERO : SK_DROPLET);
             p.active = false;
             volleySparkResolved(p, false);
             if (mn.hp <= 0) captureMonster(mn);
@@ -2092,15 +2393,15 @@ export const ShaderGuide: React.FC = () => {
               // scale step (in the groove's key). Same-letter rattles are
               // throttled, but a NEW letter always sounds, so a dot skating
               // across "John Lindquist" plays an actual melodic run.
+              // Visual ripples coalesce harder than audio (letterTick).
               if (B.note !== lastLetterNote || nowHit - lastLetterT > 90) {
                 lastLetterT = nowHit;
                 lastLetterNote = B.note;
-                addShock(p.x, p.y, 0.14);
-                shaderAudio.letterPing(B.note);
+                letterTick(p.x, p.y, B.note);
               }
             } else if (nowHit - lastBounceFxT > 90) {
               lastBounceFxT = nowHit;
-              addShock(p.x, p.y, 0.14);
+              addShock(p.x, p.y, 0.14, SK_LETTER);
               // bigger bumper = deeper boing (the eggo thunks)
               shaderAudio.twang(B.circle ? 180 : 300);
             }
@@ -2166,7 +2467,7 @@ export const ShaderGuide: React.FC = () => {
           // the turn: it stops playing coy and goes for your hearts
           mn.raiding = true;
           shaderAudio.monsterChirp(mn.seed);
-          addShock(mn.x, mn.y, 0.3);
+          addShock(mn.x, mn.y, 0.3, SK_DROPLET);
         }
         if (dancing) {
           // they won: line up center-stage and taunt-bop on the beat —
@@ -2210,7 +2511,7 @@ export const ShaderGuide: React.FC = () => {
             hearts = mn.boss ? 0 : hearts - 1;
             emitHearts('steal');
             shaderAudio.heartSteal(mn.seed);
-            addShock(anchor.x, anchor.y, mn.boss ? -1.4 : -0.8);
+            addShock(anchor.x, anchor.y, mn.boss ? -1.4 : -0.8, SK_HERO);
             mn.raiding = false;
             mn.raidAt = nowMs + 12000 + Math.random() * 10000;
             // victory hop: it bolts off with the loot
@@ -2289,7 +2590,7 @@ export const ShaderGuide: React.FC = () => {
             spawnSpark(mn.x, mn.y - mn.size,
               (Math.random() - 0.5) * 240, -260 - Math.random() * 220,
               0.7, 0, 0, 1, 0.8);
-            if (danceDeep && mn.boss) addShock(mn.x, mn.y + mn.size, 0.5);
+            if (danceDeep && mn.boss) addShock(mn.x, mn.y + mn.size, 0.5, SK_DROPLET);
           } else if (partying) {
             // jolly: quicker chatter while it dances with the eggo
             mn.chirpAt = nowMs + 1400 + Math.random() * 1400;
@@ -2395,7 +2696,7 @@ export const ShaderGuide: React.FC = () => {
       if (bestProxIdx >= 0) {
         exciteData[bestProxIdx] = Math.min(2, exciteData[bestProxIdx] + shaderAudio.beatPulse());
         for (const type of hits) {
-          addShock(bestCx, bestCy, type === 'kick' ? 0.45 : -0.4);
+          addShock(bestCx, bestCy, type === 'kick' ? 0.45 : -0.4, SK_DROPLET);
         }
         // the button you're approaching picks the tune: its own drums and
         // bassline take over at the next bar line
@@ -2409,7 +2710,7 @@ export const ShaderGuide: React.FC = () => {
         hoverRippleAcc += dt;
         if (hoverRippleAcc > 0.65) {
           hoverRippleAcc = 0;
-          addShock(wcx, wcy, 0.35);
+          addShock(wcx, wcy, 0.35, SK_DROPLET);
         }
       } else {
         hoverRippleAcc = 0.5; // primed: the first ripple fires right away
@@ -2432,20 +2733,53 @@ export const ShaderGuide: React.FC = () => {
       }
       anyParticles = np > 0;
 
-      // compact live shockwaves the same way
+      // compact live shockwaves: heroes first so the expensive path dominates
+      // the early slots the GPU is most likely to evaluate fully.
+      if (landCluster && performance.now() - landCluster.openAt > LAND_CLUSTER_MS) {
+        flushLandCluster();
+      }
       const shaderT = shaderNow();
       shockUpload.fill(0);
+      shockMetaUpload.fill(0);
       let ns = 0;
-      for (let i = 0; i < MAX_SHOCKS; i++) {
-        const amp = shockData[i * 4 + 3];
-        if (Math.abs(amp) <= 0.001 || shaderT - shockData[i * 4 + 2] > SHOCK_LIFE) continue;
-        shockUpload[ns * 4 + 0] = shockData[i * 4 + 0];
-        shockUpload[ns * 4 + 1] = shockData[i * 4 + 1];
-        shockUpload[ns * 4 + 2] = shockData[i * 4 + 2];
-        shockUpload[ns * 4 + 3] = amp;
-        ns++;
-      }
+      let nHero = 0, nDrop = 0, nLetter = 0;
+      const packKind = (want: number) => {
+        for (let i = 0; i < MAX_SHOCKS; i++) {
+          const amp = shockData[i * 4 + 3];
+          if (Math.abs(amp) <= 0.001) continue;
+          if (shockKindArr[i] !== want) continue;
+          const life = shockLifeArr[i] || lifeForKind(want);
+          if (shaderT - shockData[i * 4 + 2] > life) continue;
+          if (ns >= MAX_SHOCKS) break;
+          shockUpload[ns * 4 + 0] = shockData[i * 4 + 0];
+          shockUpload[ns * 4 + 1] = shockData[i * 4 + 1];
+          shockUpload[ns * 4 + 2] = shockData[i * 4 + 2];
+          shockUpload[ns * 4 + 3] = amp;
+          shockMetaUpload[ns * 2 + 0] = life;
+          shockMetaUpload[ns * 2 + 1] = want;
+          ns++;
+          if (want >= SK_HERO) nHero++;
+          else if (want >= SK_DROPLET) nDrop++;
+          else nLetter++;
+        }
+      };
+      packKind(SK_HERO);
+      packKind(SK_DROPLET);
+      packKind(SK_LETTER);
       anyShocks = ns > 0;
+
+      // Cap GPU draws at 60Hz; physics above still runs every scheduled frame.
+      const sinceDraw = now - lastDrawAt;
+      const skipDraw = lastDrawAt > 0 && sinceDraw < DRAW_MIN_MS * 0.92;
+      if (skipDraw) {
+        droppedDraws++;
+        if (debugOn && dbgEl && frameCount % 30 === 0) {
+          dbgEl.textContent = `shaderDebug (cpu-only tick)\nQ${qualityTier} scale=${renderScale.toFixed(2)}\nshocks H/D/L ${nHero}/${nDrop}/${nLetter}  parts=${np}\nmerges=${mergeCount} drops=${dropCount} clusters=${landClusterFlushes}`;
+        }
+        return;
+      }
+      lastDrawAt = now;
+      draws++;
 
       gl.uniform1f(uTime, shaderT);
       gl.uniform2f(uMouse, smooth.x * dpr, canvas.height - smooth.y * dpr);
@@ -2506,6 +2840,7 @@ export const ShaderGuide: React.FC = () => {
       gl.uniform4f(uCredit, ccx, ccy, chw, chh);
       gl.uniform3f(uEgg, ex, ey, er);
       gl.uniform4fv(uShock, shockUpload);
+      gl.uniform2fv(uShockMeta, shockMetaUpload);
       gl.uniform4fv(uPart, partData);
       gl.uniform4f(uDrag, drag.x0 * dpr, canvas.height - drag.y0 * dpr, dragCharge, dragActiveSm);
       pathData.fill(0);
@@ -2551,13 +2886,55 @@ export const ShaderGuide: React.FC = () => {
       gl.uniform4fv(uMon, monData);
       gl.uniform4fv(uMonPop, monPopData);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      // ---- Adaptive quality (hysteretic): degrade fast, recover slow ----
+      const cpuMs = performance.now() - cpuT0;
+      const frameMs = sinceDraw > 0 && sinceDraw < 100 ? sinceDraw : cpuMs;
+      frameEma = frameEma * 0.9 + frameMs * 0.1;
+      frameSamples.push(frameMs);
+      if (frameSamples.length > 120) frameSamples.shift();
+      if (frameMs > 22) {
+        overrunStreak++;
+        stableMs = 0;
+        if (overrunStreak >= 2 && qualityTier > 0) {
+          setQualityTier(qualityTier - 1, 'degrade');
+          overrunStreak = 0;
+        }
+      } else {
+        overrunStreak = 0;
+        if (frameEma < 15.5 && idle) {
+          stableMs += frameMs;
+          if (stableMs > 2800 && qualityTier < QUALITY_SCALES.length - 1) {
+            setQualityTier(qualityTier + 1, 'recover');
+            stableMs = 0;
+          }
+        } else if (!idle) {
+          stableMs = 0;
+        }
+      }
+
+      if (debugOn && dbgEl && draws % 15 === 0) {
+        const sorted = frameSamples.slice().sort((a, b) => a - b);
+        const pct = (p: number) => {
+          if (!sorted.length) return 0;
+          return sorted[Math.min(sorted.length - 1, Math.floor(p * (sorted.length - 1)))];
+        };
+        dbgEl.textContent = [
+          `shaderDebug  Q${qualityTier} scale=${renderScale.toFixed(2)} dpr=${dpr.toFixed(2)}`,
+          `frame ema ${frameEma.toFixed(1)}ms  p50 ${pct(0.5).toFixed(1)}  p95 ${pct(0.95).toFixed(1)}  p99 ${pct(0.99).toFixed(1)}`,
+          `cpu ${cpuMs.toFixed(1)}ms  draws ${draws}  skip60 ${droppedDraws}`,
+          `shocks H/D/L ${nHero}/${nDrop}/${nLetter}  parts ${np}  walls ${Math.min(liveSegs.length, MAX_WALLS)}`,
+          `merge ${mergeCount}  drop ${dropCount}  clusterFlush ${landClusterFlushes}`,
+          stressMode ? `stress=${stressMode}` : 'stress=off',
+        ].join('\n');
+      }
     };
     raf = requestAnimationFrame(frame);
 
     return () => {
       cancelAnimationFrame(raf);
       window.clearInterval(scanInterval);
-      window.removeEventListener('resize', resize);
+      window.removeEventListener('resize', onWindowResize);
       window.removeEventListener('resize', rasterizeAll);
       document.documentElement.classList.remove('shader-fx');
       window.removeEventListener('pointermove', onMove);
@@ -2576,6 +2953,8 @@ export const ShaderGuide: React.FC = () => {
       for (const id of fxTimers) window.clearTimeout(id);
       document.documentElement.removeEventListener('pointerleave', onLeave);
       setDragGuards(false);
+      dbgEl?.remove();
+      flushLandCluster();
       // Do NOT lose the context here: getContext() returns the same context
       // after a StrictMode re-mount, and a lost one never comes back.
       gl.deleteProgram(program);

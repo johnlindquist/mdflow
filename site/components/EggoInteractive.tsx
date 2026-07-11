@@ -354,6 +354,8 @@ export const StretchySheet: React.FC<SheetProps> = ({
         // dispatches 'mdflow:sparkhit' at the impact point with the spark's
         // incoming velocity — kick nearby vertices along that path and let
         // the underdamped spring wobble them back.
+        let lastSparkHitT = 0;
+        let sparkHitBudget = 0;
         const onSparkHit = (ev: Event) => {
             const d = (ev as CustomEvent<{
                 x: number; y: number; vx: number; vy: number; p: number;
@@ -361,6 +363,12 @@ export const StretchySheet: React.FC<SheetProps> = ({
             const r = wrap.getBoundingClientRect();
             if (d.x < r.left - 12 || d.x > r.right + 12
                 || d.y < r.top - 12 || d.y > r.bottom + 12) return;
+            // Rate-limit clustered dents so a CTA storm can't thrash the mesh.
+            const nowHit = performance.now();
+            sparkHitBudget = Math.min(6, sparkHitBudget + (nowHit - lastSparkHitT) / 45);
+            lastSparkHitT = nowHit;
+            if (sparkHitBudget < 1) return;
+            sparkHitBudget -= 1;
             const lx = d.x - r.left + PAD;
             const ly = d.y - r.top + PAD;
             const sp = Math.hypot(d.vx, d.vy) || 1;
@@ -400,6 +408,7 @@ export const StretchySheet: React.FC<SheetProps> = ({
             { rootMargin: '80px' },
         );
         io.observe(wrap);
+        let settleSkip = 0;
         const frame = (now: number) => {
             raf = requestAnimationFrame(frame);
             if (!onScreen && !grabbing) {
@@ -409,6 +418,15 @@ export const StretchySheet: React.FC<SheetProps> = ({
             const dt = Math.min((now - last) / 1000, 0.033);
             last = now;
             const t = now / 1000;
+            // Active interaction / dance: full rate. Otherwise a ~25fps
+            // heartbeat is enough for the idle pulse and saves GPU.
+            const busy = grabbing || hovering || danceP > 0.04 || sparkHitBudget > 0.5;
+            if (!busy) {
+                settleSkip++;
+                if (settleSkip % 2 !== 0) return;
+            } else {
+                settleSkip = 0;
+            }
             // heartbeat: two quick thumps per ~1.7s
             const beat = (Math.pow(Math.max(Math.sin(t * 3.7), 0), 6) * 0.030
                 + Math.pow(Math.max(Math.sin(t * 3.7 - 0.9), 0), 8) * 0.016) * pulse;
