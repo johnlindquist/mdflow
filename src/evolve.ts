@@ -1067,10 +1067,39 @@ async function runEvolveCliImpl(args: string[]): Promise<number> {
     return 1;
   };
   if (args.includes("--help") || args.includes("-h")) {
-    console.log("Usage: md evolve plan|status|propose <flow.md> [--yes] [--engine <e>] [--json|--events]");
-    console.log("       md evolve show|review|apply|reject|retry|rollback <run-id>");
-    console.log("       md evolve history [flow.md]");
-    console.log("       md evolve prune [--days <n>] [--yes]");
+    console.log(`Usage: md evolve plan|status|propose <flow.md> [--yes] [--engine <e>] [--json|--events]
+       md evolve show|review|apply|reject|retry|rollback <run-id>
+       md evolve history [flow.md]
+       md evolve prune [--days <n>] [--yes]
+
+Evidence-gated evolution of a flow's prompt body. Evolution refuses to run
+without an eval suite (<flow>.eval.ts) and fresh evidence (md feedback or
+rough runs). The lifecycle, in order:
+
+  1. md feedback <flow.md> "msg"  Record evidence            FREE
+  2. md evolve plan <flow.md>     Show evidence, verification
+                                  cost, and planned writes   FREE, read-only
+  3. md evolve propose <flow.md>  Draft + verify an off-path
+                                  proposal; the source flow
+                                  is never modified          PAID (runs the
+                                                             eval suite)
+  4. md evolve show <run-id>      Inspect the proposal diff
+                                  and verification receipt   FREE
+  5. md evolve apply <run-id>     Atomically apply a
+                                  reviewed proposal
+     md evolve rollback <run-id>  Restore the flow captured
+                                  when the proposal applied
+
+Proposals, receipts, and history live under ~/.mdflow/evolution/<run-id>.
+--yes skips confirmations (required when stdin is not a TTY).
+--json emits one JSON object; --events streams NDJSON progress events.
+
+Example (agent-safe sequence):
+  md feedback flows/review.md "missed an obvious bug in the diff"
+  md evolve plan flows/review.md
+  md evolve propose flows/review.md --yes --json
+  md evolve show <run-id>
+  md evolve apply <run-id>`);
     return 0;
   }
   const clean = args.filter((item) => item !== "--json" && item !== "--events");
