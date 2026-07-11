@@ -7,23 +7,52 @@
 
 import type { InputDefinition, FormInputs } from "./types";
 
-// Lazy-load @inquirer/prompts to avoid cold start penalty
-let _input: typeof import("@inquirer/prompts").input | null = null;
+// Lazy-load the remaining stock prompts to avoid cold start penalty.
 let _select: typeof import("@inquirer/prompts").select | null = null;
-let _number: typeof import("@inquirer/prompts").number | null = null;
 let _confirm: typeof import("@inquirer/prompts").confirm | null = null;
-let _password: typeof import("@inquirer/prompts").password | null = null;
 
 async function getPrompts() {
-  if (!_input) {
+  if (!_select || !_confirm) {
     const mod = await import("@inquirer/prompts");
-    _input = mod.input;
     _select = mod.select;
-    _number = mod.number;
     _confirm = mod.confirm;
-    _password = mod.password;
   }
-  return { input: _input!, select: _select!, number: _number!, confirm: _confirm!, password: _password! };
+  return { select: _select!, confirm: _confirm! };
+}
+
+type FormPromptModule = typeof import("./form-input-prompts");
+type TabSafeTextConfig = Parameters<FormPromptModule["tabSafeTextPrompt"]>[0];
+type TabSafeNumberConfig = Parameters<FormPromptModule["tabSafeNumberPrompt"]>[0];
+type TabSafePromptContext = Parameters<FormPromptModule["tabSafeTextPrompt"]>[1];
+
+let _formPrompts: Promise<FormPromptModule> | null = null;
+function getFormPrompts(): Promise<FormPromptModule> {
+  _formPrompts ??= import("./form-input-prompts");
+  return _formPrompts;
+}
+
+/** Lazy wrapper around the controlled text prompt. */
+export async function tabSafeTextPrompt(
+  config: TabSafeTextConfig,
+  context?: TabSafePromptContext,
+): Promise<string> {
+  return (await getFormPrompts()).tabSafeTextPrompt(config, context);
+}
+
+/** Lazy wrapper around the controlled masked prompt. */
+export async function tabSafePasswordPrompt(
+  config: TabSafeTextConfig,
+  context?: TabSafePromptContext,
+): Promise<string> {
+  return (await getFormPrompts()).tabSafePasswordPrompt(config, context);
+}
+
+/** Lazy wrapper around the controlled numeric prompt. */
+export async function tabSafeNumberPrompt(
+  config: TabSafeNumberConfig,
+  context?: TabSafePromptContext,
+): Promise<string> {
+  return (await getFormPrompts()).tabSafeNumberPrompt(config, context);
 }
 
 /**
@@ -57,12 +86,11 @@ async function promptForInput(
   name: string,
   definition: InputDefinition,
 ): Promise<string> {
-  const prompts = await getPrompts();
   const message = definition.description || `${name}:`;
 
   switch (definition.type) {
     case "text": {
-      const result = await prompts.input({
+      const result = await tabSafeTextPrompt({
         message,
         default: definition.default !== undefined ? String(definition.default) : undefined,
         required: definition.required !== false,
@@ -71,8 +99,10 @@ async function promptForInput(
     }
 
     case "password": {
-      const result = await prompts.password({
+      const result = await tabSafePasswordPrompt({
         message,
+        default: definition.default,
+        required: definition.required !== false,
       });
       return result;
     }
@@ -81,7 +111,8 @@ async function promptForInput(
       if (!definition.options || definition.options.length === 0) {
         throw new Error(`Select input "${name}" requires options array`);
       }
-      const result = await prompts.select({
+      const { select } = await getPrompts();
+      const result = await select({
         message,
         choices: definition.options.map((opt) => ({ value: opt, name: opt })),
         default: definition.default !== undefined ? String(definition.default) : undefined,
@@ -90,20 +121,20 @@ async function promptForInput(
     }
 
     case "number": {
-      const result = await prompts.number({
+      const result = await tabSafeNumberPrompt({
         message,
         default: definition.default !== undefined ? Number(definition.default) : undefined,
         min: definition.min,
         max: definition.max,
         required: definition.required !== false,
       });
-      // number prompt can return undefined if user doesn't enter anything
-      return result !== undefined ? String(result) : "";
+      return result;
     }
 
     case "confirm": {
       const defaultValue = definition.default !== undefined ? Boolean(definition.default) : undefined;
-      const result = await prompts.confirm({
+      const { confirm } = await getPrompts();
+      const result = await confirm({
         message,
         default: defaultValue,
       });

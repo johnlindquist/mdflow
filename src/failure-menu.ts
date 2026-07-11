@@ -18,7 +18,13 @@ import {
   isDownKey,
   usePrefix,
   makeTheme,
+  type KeypressEvent,
 } from "@inquirer/core";
+
+interface ExtendedKeypressEvent extends KeypressEvent {
+  sequence?: string;
+  shift?: boolean;
+}
 
 /** Result from the failure menu */
 export interface FailureMenuResult {
@@ -94,7 +100,17 @@ export const failureMenu = createPrompt<FailureMenuResult, FailureMenuConfig>(
       { key: "q", label: "Quit - exit with error code", action: "quit" },
     ];
 
-    useKeypress((key) => {
+    useKeypress((key, readline) => {
+      if (key.name === "tab") {
+        // readline mutates its line before this handler runs, so clear the raw
+        // Tab and keep navigation entirely in the controlled cursor state.
+        readline.clearLine(0);
+        const extKey = key as ExtendedKeypressEvent;
+        const direction = extKey.shift || extKey.sequence === "\x1b[Z" ? -1 : 1;
+        setCursor((cursor + direction + options.length) % options.length);
+        return;
+      }
+
       if (isEnterKey(key)) {
         const option = options[cursor];
         if (option) {
@@ -159,7 +175,7 @@ export const failureMenu = createPrompt<FailureMenuResult, FailureMenuConfig>(
     }
 
     lines.push("");
-    lines.push(`\x1b[90mUse arrow keys to navigate, Enter to select, or press shortcut key\x1b[0m`);
+    lines.push(`\x1b[90mUse arrows or Tab/Shift+Tab, Enter to select, or press shortcut key\x1b[0m`);
 
     return lines.join("\n");
   }

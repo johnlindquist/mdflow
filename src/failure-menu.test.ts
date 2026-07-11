@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { buildFixPrompt } from "./failure-menu";
+import { PassThrough } from "node:stream";
+import { buildFixPrompt, failureMenu } from "./failure-menu";
 
 describe("buildFixPrompt", () => {
   it("includes exit code in the fix prompt", () => {
@@ -130,5 +131,41 @@ describe("buildFixPrompt", () => {
     expect(result).toContain("Error: Module not found");
     expect(result).toContain("at require");
     expect(result).toContain("at main");
+  });
+});
+
+describe("failureMenu Tab handling", () => {
+  function startMenu() {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const pending = failureMenu(
+      { exitCode: 1, stderr: "failed", stdout: "" },
+      { input, output, clearPromptOnDone: true },
+    );
+    const press = async (
+      name: string,
+      sequence = name.length === 1 ? name : "",
+      extra: Record<string, unknown> = {},
+    ) => {
+      input.emit("keypress", sequence, { name, sequence, ctrl: false, ...extra });
+      await Bun.sleep(0);
+    };
+    return { pending, press };
+  }
+
+  it("cycles forward with Tab", async () => {
+    const prompt = startMenu();
+    await prompt.press("tab", "\t");
+    await prompt.press("enter");
+
+    expect(await prompt.pending).toEqual({ action: "fix" });
+  });
+
+  it("cycles backward with Shift+Tab", async () => {
+    const prompt = startMenu();
+    await prompt.press("tab", "\x1b[Z", { shift: true });
+    await prompt.press("enter");
+
+    expect(await prompt.pending).toEqual({ action: "quit" });
   });
 });

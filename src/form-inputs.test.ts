@@ -1,10 +1,14 @@
-import { describe, it, expect, mock, beforeEach } from "bun:test";
+import { describe, it, expect } from "bun:test";
+import { PassThrough } from "node:stream";
 import {
   isFormInputs,
   isLegacyInputs,
   getInputVariableNames,
   getFormInputDefaults,
   getMissingRequiredInputs,
+  tabSafeNumberPrompt,
+  tabSafePasswordPrompt,
+  tabSafeTextPrompt,
 } from "./form-inputs";
 import type { FormInputs } from "./types";
 
@@ -208,5 +212,72 @@ describe("form input types", () => {
       },
     };
     expect(inputs._secret!.type).toBe("password");
+  });
+});
+
+describe("Tab-safe form prompts", () => {
+  function promptContext() {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let rendered = "";
+    output.on("data", (chunk) => { rendered += chunk.toString(); });
+    const press = async (
+      name: string,
+      sequence = name.length === 1 ? name : "",
+    ) => {
+      input.emit("keypress", sequence, { name, sequence, ctrl: false });
+      await Bun.sleep(0);
+    };
+    return {
+      context: { input, output, clearPromptOnDone: true },
+      press,
+      rendered: () => rendered,
+      async waitForPrompt() {
+        for (let attempt = 0; attempt < 100 && !rendered; attempt += 1) {
+          await Bun.sleep(1);
+        }
+        if (!rendered) throw new Error("form prompt did not render");
+      },
+    };
+  }
+
+  it("keeps Tab out of controlled text values", async () => {
+    const prompt = promptContext();
+    const pending = tabSafeTextPrompt({ message: "Name", required: true }, prompt.context);
+    await prompt.waitForPrompt();
+    await prompt.press("a");
+    await prompt.press("tab", "\t");
+    await prompt.press("b");
+    await prompt.press("enter");
+
+    expect(await pending).toBe("ab");
+  });
+
+  it("keeps Tab out of masked password values", async () => {
+    const prompt = promptContext();
+    const pending = tabSafePasswordPrompt({ message: "Secret", required: true }, prompt.context);
+    await prompt.waitForPrompt();
+    for (const character of "hunter") await prompt.press(character);
+    await prompt.press("tab", "\t");
+    await prompt.press("2");
+    await prompt.press("enter");
+
+    expect(await pending).toBe("hunter2");
+    expect(prompt.rendered()).not.toContain("hunter2");
+  });
+
+  it("keeps Tab out of controlled number values", async () => {
+    const prompt = promptContext();
+    const pending = tabSafeNumberPrompt(
+      { message: "Count", min: 1, max: 100, required: true },
+      prompt.context,
+    );
+    await prompt.waitForPrompt();
+    await prompt.press("1");
+    await prompt.press("tab", "\t");
+    await prompt.press("2");
+    await prompt.press("enter");
+
+    expect(await pending).toBe("12");
   });
 });

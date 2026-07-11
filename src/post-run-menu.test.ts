@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { extractCommands, copyToClipboard, saveToFile } from "./post-run-menu";
+import { PassThrough } from "node:stream";
+import { extractCommands, copyToClipboard, postRunMenu, saveToFile } from "./post-run-menu";
 import { unlinkSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -204,6 +205,58 @@ describe("saveToFile", () => {
   it("returns false for invalid paths", () => {
     const result = saveToFile("test", "/nonexistent/directory/file.txt");
     expect(result).toBe(false);
+  });
+});
+
+describe("postRunMenu Tab handling", () => {
+  function startMenu(extractedCommands: Array<{ command: string; language: string }> = []) {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const pending = postRunMenu(
+      { output: "result", extractedCommands, hasJson: false, hasPatch: false },
+      { input, output, clearPromptOnDone: true },
+    );
+    const press = async (
+      name: string,
+      sequence = name.length === 1 ? name : "",
+      extra: Record<string, unknown> = {},
+    ) => {
+      input.emit("keypress", sequence, { name, sequence, ctrl: false, ...extra });
+      await Bun.sleep(0);
+    };
+    return { pending, press };
+  }
+
+  it("cycles with Tab and keeps Tab out of filename input", async () => {
+    const prompt = startMenu();
+    await prompt.press("tab", "\t");
+    await prompt.press("enter");
+    await prompt.press("a");
+    await prompt.press("tab", "\t");
+    await prompt.press("b");
+    await prompt.press("enter");
+
+    expect(await prompt.pending).toEqual({ action: "save", filename: "ab" });
+  });
+
+  it("captures Shift+Tab before forward Tab and wraps to the last choice", async () => {
+    const prompt = startMenu();
+    await prompt.press("tab", "\x1b[Z", { shift: true });
+    await prompt.press("enter");
+
+    expect(await prompt.pending).toEqual({ action: "exit" });
+  });
+
+  it("uses Tab to cycle command choices", async () => {
+    const prompt = startMenu([
+      { command: "bun test", language: "bash" },
+      { command: "bun run typecheck", language: "bash" },
+    ]);
+    await prompt.press("r");
+    await prompt.press("tab", "\t");
+    await prompt.press("enter");
+
+    expect(await prompt.pending).toEqual({ action: "run-command", command: "bun run typecheck" });
   });
 });
 

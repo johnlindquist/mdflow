@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import yaml from "js-yaml";
+import { getRegisteredAdapters } from "./adapters/index";
 import { mdflowVersion, stampCreatedVersion } from "./compat";
 import { ensureFlowIdentity } from "./evolution-core";
 import {
@@ -24,8 +25,6 @@ import type {
   EvolutionRunRecord,
   EvolutionRunStatus,
 } from "./evolution-store";
-
-const DEFAULT_WORKBENCH_ENGINE = "pi";
 
 export type WorkbenchTargetSource = ProjectRootSource;
 
@@ -44,6 +43,14 @@ export interface DraftFlowOptions {
   body?: string;
   version?: string;
   flowId?: string;
+  /** Persist an engine choice in the flow's own frontmatter. */
+  engine?: string;
+  /** Model passed to the engine as --model. */
+  model?: string;
+  /** Reasoning effort, translated per engine — requires `engine`. */
+  effort?: string;
+  /** CLI/API/doc references preloaded into the flow body (see docReferenceLine). */
+  docs?: readonly string[];
 }
 
 export interface FlowDraft {
@@ -137,6 +144,153 @@ export function slugifyFlowIntent(intent: string): string {
   return slug === "readme" ? "readme-flow" : slug;
 }
 
+/** Words that add nothing to a filename derived from a sentence of intent. */
+const SLUG_STOPWORDS = new Set([
+  "a", "an", "and", "any", "are", "as", "at", "be", "by", "for", "from", "in",
+  "into", "is", "it", "its", "me", "my", "new", "of", "on", "or", "our",
+  "please", "should", "so", "some", "that", "the", "their", "then", "this",
+  "to", "up", "was", "were", "will", "with", "your",
+]);
+
+/**
+ * Suggest a short, memorable filename stem from free-form intent. Unlike
+ * slugifyFlowIntent — which sanitizes whatever it is given — this keeps only
+ * the first few meaningful words so "Review database migrations for rollback
+ * risks" becomes review-database-migrations, not the whole sentence.
+ */
+export function suggestFlowSlug(intent: string): string {
+  const sanitized = slugifyFlowIntent(intent);
+  if (sanitized === "new-flow") return sanitized; // Empty-intent fallback.
+  const words = sanitized.split("-");
+  const meaningful = words.filter((word) => !SLUG_STOPWORDS.has(word));
+  const source = meaningful.length > 0 ? meaningful : words;
+  const parts: string[] = [];
+  for (const word of source) {
+    if (parts.length >= 3) break;
+    if (parts.length > 0 && [...parts, word].join("-").length > 32) break;
+    parts.push(word);
+  }
+  return slugifyFlowIntent(parts.join("-"));
+}
+
+/** Engine offered first when composing a new flow. */
+export const NEW_FLOW_DEFAULT_ENGINE = "codex";
+
+const PREFERRED_ENGINE_ORDER = [
+  "codex", "claude", "pi", "gemini", "copilot", "opencode", "droid", "cursor-agent", "agy",
+];
+
+/** Registered engines in composer order: the default first, unknowns last. */
+export function listNewFlowEngines(): string[] {
+  const registered = getRegisteredAdapters();
+  return [
+    ...PREFERRED_ENGINE_ORDER.filter((name) => registered.includes(name)),
+    ...registered.filter((name) => !PREFERRED_ENGINE_ORDER.includes(name)).sort(),
+  ];
+}
+
+/**
+ * Model suggestions per engine. Suggestions only, never validation: the
+ * composer accepts free text and the engine stays the authority. Sourced
+ * 2026-07 from each installed CLI (copilot enumerates --model choices,
+ * claude documents its aliases, codex/gemini names from live configs);
+ * model names drift, so treat this list as a convenience, not a contract.
+ */
+const MODEL_SUGGESTIONS: Record<string, readonly string[]> = {
+  codex: ["gpt-5.6-sol", "gpt-5.5-codex-max", "gpt-5.5"],
+  claude: ["fable", "opus", "sonnet", "haiku"],
+  gemini: ["gemini-3.1-pro", "gemini-2.5-pro"],
+  copilot: [
+    "claude-opus-4.6", "claude-sonnet-4.5", "claude-haiku-4.5",
+    "gpt-5.3-codex", "gpt-5.2", "gemini-3-pro-preview",
+  ],
+};
+
+/** Model suggestions for an engine; empty means "free text only". */
+export function modelSuggestions(engine: string): readonly string[] {
+  return MODEL_SUGGESTIONS[engine] ?? [];
+}
+
+interface EffortSupport {
+  levels: readonly string[];
+  frontmatter: (effort: string) => Record<string, unknown>;
+}
+
+/**
+ * Reasoning-effort support per engine, each translated to that CLI's
+ * verified control: claude --effort, codex -c model_reasoning_effort=…,
+ * pi --thinking. Engines with no verified control are absent — the composer
+ * hides the field and effortFrontmatter() throws rather than emitting a flag
+ * that would break the flow's first run.
+ */
+const EFFORT_SUPPORT: Record<string, EffortSupport> = {
+  claude: {
+    levels: ["low", "medium", "high", "xhigh", "max"],
+    frontmatter: (effort) => ({ effort }),
+  },
+  codex: {
+    levels: ["minimal", "low", "medium", "high", "xhigh"],
+    frontmatter: (effort) => ({ config: [`model_reasoning_effort=${effort}`] }),
+  },
+  pi: {
+    levels: ["off", "minimal", "low", "medium", "high", "xhigh"],
+    frontmatter: (effort) => ({ thinking: effort }),
+  },
+};
+
+/** Effort levels an engine supports; empty means the control doesn't exist. */
+export function effortLevels(engine: string): readonly string[] {
+  return EFFORT_SUPPORT[engine]?.levels ?? [];
+}
+
+/** Translate an effort level into engine-specific frontmatter. */
+export function effortFrontmatter(engine: string, effort: string): Record<string, unknown> {
+  const support = EFFORT_SUPPORT[engine];
+  if (!support) {
+    throw new Error(
+      `${engine} has no verified reasoning-effort control; omit effort for this engine.`,
+    );
+  }
+  const level = effort.trim();
+  if (!support.levels.includes(level)) {
+    throw new Error(
+      `${engine} supports effort levels ${support.levels.join(", ")}; got "${level}".`,
+    );
+  }
+  return support.frontmatter(level);
+}
+
+/**
+ * Turn one docs/context entry into a flow-body line resolved at run time:
+ * URLs and paths become @imports, anything with a space runs as an inline
+ * command, and a bare tool name preloads that tool's --help output.
+ */
+export function docReferenceLine(entry: string): string {
+  const trimmed = entry.trim();
+  if (trimmed.startsWith("@") || /^!`.*`$/.test(trimmed)) return trimmed;
+  if (trimmed.startsWith("!")) return `!\`${trimmed.slice(1).trim()}\``;
+  if (/^https?:\/\//i.test(trimmed)) return `@${trimmed}`;
+  const pathLike = /[\\/]/.test(trimmed) || /\.[a-z0-9]+$/i.test(trimmed);
+  if (pathLike && /\s/.test(trimmed)) {
+    // @imports terminate at whitespace, so this path cannot be expressed as
+    // an import — and treating it as a shell command would execute it.
+    throw new Error(
+      `Docs entry "${trimmed}" looks like a path but contains spaces, which @imports cannot express. ` +
+        `Rename the file, or prefix with ! to run it as a command (e.g. !cat '${trimmed}').`,
+    );
+  }
+  if (/\s/.test(trimmed)) return `!\`${trimmed}\``;
+  if (pathLike) return `@${trimmed}`;
+  return `!\`${trimmed} --help\``;
+}
+
+/** Render docs/context entries as the flow body's Reference section. */
+export function docsReferenceSection(docs: readonly string[]): string | undefined {
+  const lines = docs.map((entry) => entry.trim()).filter(Boolean).map(docReferenceLine);
+  if (lines.length === 0) return undefined;
+  return ["## Reference", "", ...lines].join("\n");
+}
+
 function normalizedIntent(intent: string): string {
   const normalized = intent.trim();
   if (!normalized) throw new Error("Flow intent cannot be empty.");
@@ -162,14 +316,27 @@ function validateFlowId(flowId: string): void {
  */
 export function draftFlowFromIntent(intent: string, options: DraftFlowOptions = {}): FlowDraft {
   const normalized = normalizedIntent(intent);
-  const slug = slugifyFlowIntent(options.slug ?? normalized);
+  const slug = options.slug !== undefined ? slugifyFlowIntent(options.slug) : suggestFlowSlug(normalized);
   const description = (options.description ?? defaultDescription(normalized)).replace(/\s+/g, " ").trim();
   if (!description) throw new Error("Flow description cannot be empty.");
 
   const flowId = options.flowId ?? `flow_${randomUUID().replaceAll("-", "")}`;
   validateFlowId(flowId);
-  const body = options.body === undefined ? normalized : options.body.trim();
-  const frontmatter = yaml.dump({ description }, { lineWidth: -1, noRefs: true }).trimEnd();
+  const taskBody = options.body === undefined ? normalized : options.body.trim();
+  const reference = docsReferenceSection(options.docs ?? []);
+  const body = reference ? `${taskBody}\n\n${reference}` : taskBody;
+
+  const engine = options.engine?.trim();
+  const model = options.model?.trim();
+  const effort = options.effort?.trim();
+  if (effort && !engine) {
+    throw new Error("Effort is engine-specific; choose an engine to set it.");
+  }
+  const data: Record<string, unknown> = { description };
+  if (engine) data.engine = engine;
+  if (model) data.model = model;
+  if (effort) Object.assign(data, effortFrontmatter(engine!, effort));
+  const frontmatter = yaml.dump(data, { lineWidth: -1, noRefs: true }).trimEnd();
   const base = `---\n${frontmatter}\n---\n\n${body}${body.endsWith("\n") ? "" : "\n"}`;
   const versioned = stampCreatedVersion(base, options.version ?? mdflowVersion());
   const markdown = ensureFlowIdentity(versioned, flowId);
@@ -208,7 +375,7 @@ Flows are reusable AI workflows defined as Markdown and run with
 - Open the Flow Workbench: \`md\`
 - Run a flow directly by its filename stem: \`md <name>\`
 - Preview it without an engine invocation: \`md <name> --_dry-run\`
-- Record feedback after a run, then press \`i\` for its improvement workspace in \`md\`
+- Record feedback after a run from the selected flow's Actions screen in \`md\`
 `;
 }
 
@@ -238,8 +405,10 @@ export function applyFlowDraft(
   }
   const target = options.target ?? resolveWorkbenchTarget(options.startPath);
   const flowPath = join(target.flowsDir, draft.filename);
-  const engine = options.engine ?? DEFAULT_WORKBENCH_ENGINE;
-  const configContent = projectConfig(engine); // Validate before the first write.
+  // A project-wide engine default is only stamped when the caller made an
+  // explicit engine choice; a fallback here would silently change how every
+  // engine-neutral flow in the repo resolves.
+  const configContent = options.engine ? projectConfig(options.engine) : undefined; // Validate before the first write.
 
   if (existsSync(flowPath)) {
     return { status: "conflict", target, flowPath, created: [], skipped: [] };
@@ -261,7 +430,7 @@ export function applyFlowDraft(
   const currentConfig = existingProjectConfig(target.projectRoot);
   if (currentConfig) {
     skipped.push(currentConfig);
-  } else {
+  } else if (configContent) {
     const configPath = join(target.projectRoot, ".mdflow.yaml");
     if (writeExclusive(configPath, configContent) === "created") created.push(configPath);
     else skipped.push(configPath);

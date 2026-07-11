@@ -32,6 +32,7 @@ import {
 interface ExtendedKeyEvent extends KeypressEvent {
   sequence?: string;
   meta?: boolean;
+  shift?: boolean;
 }
 
 /** Result from the post-run menu */
@@ -211,8 +212,26 @@ export const postRunMenu = createPrompt<PostRunMenuResult, PostRunMenuConfig>(
 
     options.push({ key: "q", label: "Exit", action: "exit" });
 
-    useKeypress((key) => {
+    useKeypress((key, readline) => {
       const extKey = key as ExtendedKeyEvent;
+
+      if (key.name === "tab") {
+        // readline inserts a literal tab before keypress handlers run. Keep it
+        // out of filename buffers and use Tab as wraparound navigation in the
+        // two choice screens instead.
+        readline.clearLine(0);
+        if (inputMode === "filename") return;
+
+        const direction = extKey.shift || extKey.sequence === "\x1b[Z" ? -1 : 1;
+        if (inputMode === "command-select") {
+          setCommandCursor(
+            (commandCursor + direction + extractedCommands.length) % extractedCommands.length,
+          );
+        } else {
+          setCursor((cursor + direction + options.length) % options.length);
+        }
+        return;
+      }
 
       if (inputMode === "filename") {
         if (isEnterKey(key)) {
@@ -367,7 +386,7 @@ export const postRunMenu = createPrompt<PostRunMenuResult, PostRunMenuConfig>(
       }
 
       lines.push("");
-      lines.push(`\x1b[90mPress Enter to run, Escape to go back\x1b[0m`);
+      lines.push(`\x1b[90mUse arrows or Tab/Shift+Tab, Enter to run, Escape to go back\x1b[0m`);
       return lines.join("\n");
     }
 
@@ -386,7 +405,7 @@ export const postRunMenu = createPrompt<PostRunMenuResult, PostRunMenuConfig>(
     }
 
     lines.push("");
-    lines.push(`\x1b[90mUse arrow keys to navigate, Enter to select, or press shortcut key\x1b[0m`);
+    lines.push(`\x1b[90mUse arrows or Tab/Shift+Tab, Enter to select, or press shortcut key\x1b[0m`);
 
     return lines.join("\n");
   }

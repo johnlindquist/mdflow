@@ -1,9 +1,11 @@
 import { expect, test, describe, beforeEach, afterEach } from "bun:test";
 import { findAgentFiles, clearDescriptionCache, type AgentFile } from "./cli";
-import { mkdirSync, writeFileSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { PassThrough } from "node:stream";
 import { saveCwdAndPath } from "./test-utils";
+import { fileSelector } from "./file-selector";
 
 describe("findAgentFiles", () => {
   let testDir: string;
@@ -192,6 +194,32 @@ describe("AgentFile interface", () => {
 
     expect(file.description).toBe("Auto-fixes linting errors");
   });
+});
+
+test("file selector captures Shift+Tab before generic Tab", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "mdflow-selector-tab-"));
+  const path = join(directory, "review.md");
+  writeFileSync(path, "Review changes\n");
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const pending = fileSelector(
+    { message: "Select", files: [{ name: "review.md", path, source: "cwd" }], pageSize: 5 },
+    { input, output, clearPromptOnDone: true },
+  );
+  let settled = false;
+  void pending.then(() => { settled = true; });
+  await Bun.sleep(0);
+  input.emit("keypress", "\x1b[Z", {
+    name: "tab",
+    sequence: "\x1b[Z",
+    ctrl: false,
+    shift: true,
+  });
+  await Bun.sleep(0);
+  expect(settled).toBe(false);
+  input.emit("keypress", "", { name: "enter", ctrl: false });
+  expect(await pending).toEqual({ action: "run", path });
+  rmSync(directory, { recursive: true, force: true });
 });
 
 describe("semantic agent picker - description extraction", () => {

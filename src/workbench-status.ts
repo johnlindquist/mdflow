@@ -338,7 +338,7 @@ function nextAction(
   const lifecycle = proposalNext(snapshot.runs[0]);
   if (lifecycle) return lifecycle;
 
-  if (actionable.length === 0) return "Run the flow, then record anything it misses with f.";
+  if (actionable.length === 0) return "Run the flow, then open Actions to record anything it misses.";
   if (!snapshot.evaluation.exists) return "Represent actionable feedback with an eval case before proposing.";
   if (snapshot.evaluation.planError) return "Make the eval suite statically inspectable before asking an engine for a proposal.";
 

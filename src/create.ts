@@ -1,18 +1,18 @@
 /**
- * Create a project flow from plain-language intent.
+ * Create a scoped flow from plain-language intent.
  *
  * The default path is deliberately the same one used by the Flow Workbench:
  * a canonical `flows/<slug>.md` file plus additive project support files.
  */
 
-import { input } from "@inquirer/prompts";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join, relative, resolve } from "node:path";
 import yaml from "js-yaml";
-import { getUserAgentsDir } from "./cli";
 import { openInEditor } from "./file-selector";
 import { parseRawFrontmatter } from "./parse";
 import { contextualFlowTip } from "./tips";
+import { tabSafeInput } from "./workbench-input";
 import {
   applyFlowDraft,
   draftFlowFromIntent,
@@ -21,12 +21,30 @@ import {
 } from "./workbench-model";
 import type { FlowDraft, WorkbenchTarget } from "./workbench-model";
 
-type CreateLocation = "project" | "cwd" | "user" | "custom";
+export type CreateLocation = "project" | "cwd" | "user" | "custom";
+
+export interface CreateScopeDescription {
+  location: CreateLocation;
+  displayPath: string;
+  meaning: string;
+  invocation: string;
+  exactInvocation: string;
+}
+
+export interface GlobalFlowAvailability {
+  flowPath: string;
+  slug: string;
+  userAgentsDir: string;
+  invocation: string;
+}
 
 export interface CreateOptions {
   intent?: string;
   name?: string;
   engine?: string;
+  model?: string;
+  effort?: string;
+  docs: string[];
   location: CreateLocation;
   customDir?: string;
   content?: string;
@@ -52,9 +70,111 @@ export type CreateCommandResult =
 /** Small dependency seam used by tests and other non-process callers. */
 export interface CreateRuntime {
   cwd?: string;
+  homeDirectory?: string;
+  userAgentsDir?: string;
   promptIntent?: () => Promise<string>;
   log?: (message: string) => void;
+  warn?: (message: string) => void;
   openFile?: (path: string) => boolean;
+  isStdinTTY?: boolean;
+  ensureGlobalAvailability?: (receipt: GlobalFlowAvailability) => void | Promise<void>;
+}
+
+function portableRelative(from: string, to: string): string {
+  return relative(from, to).split("\\").join("/");
+}
+
+function displayFrom(base: string, path: string): string {
+  const pathFromBase = portableRelative(base, path);
+  if (!pathFromBase || pathFromBase === ".") return "./";
+  return pathFromBase.startsWith("../") ? path : `./${pathFromBase}`;
+}
+
+function displayFromHome(homeDirectory: string, path: string): string {
+  const pathFromHome = portableRelative(homeDirectory, path);
+  return pathFromHome && !pathFromHome.startsWith("../")
+    ? `~/${pathFromHome}`
+    : path;
+}
+
+/** Human-facing scope contract shared by `md create` and the Workbench. */
+export function describeCreateScope(input: {
+  location: CreateLocation;
+  flowPath: string;
+  slug: string;
+  cwd: string;
+  projectRoot?: string;
+  homeDirectory?: string;
+}): CreateScopeDescription {
+  const homeDirectory = resolve(input.homeDirectory ?? homedir());
+  const exactPath = input.location === "user"
+    ? displayFromHome(homeDirectory, input.flowPath)
+    : input.flowPath;
+  if (input.location === "project") {
+    const displayPath = displayFrom(input.projectRoot ?? input.cwd, input.flowPath);
+    return {
+      location: input.location,
+      displayPath,
+      meaning: `(available throughout this project as md ${input.slug})`,
+      invocation: `md ${input.slug}`,
+      exactInvocation: `md ${shellQuote(input.flowPath)}`,
+    };
+  }
+  if (input.location === "cwd") {
+    const displayPath = displayFrom(input.cwd, input.flowPath);
+    return {
+      location: input.location,
+      displayPath,
+      meaning: "(available here; elsewhere invoke it by path)",
+      invocation: `md ${input.slug}`,
+      exactInvocation: `md ${shellQuote(input.flowPath)}`,
+    };
+  }
+  if (input.location === "user") {
+    return {
+      location: input.location,
+      displayPath: exactPath,
+      meaning: `(available from any directory as md ${input.slug})`,
+      invocation: `md ${input.slug}`,
+      exactInvocation: `md ${exactPath}`,
+    };
+  }
+  return {
+    location: input.location,
+    displayPath: displayFrom(input.cwd, input.flowPath),
+    meaning: "(invoke it by path unless this directory is on PATH)",
+    invocation: `md ${shellQuote(input.flowPath)}`,
+    exactInvocation: `md ${shellQuote(input.flowPath)}`,
+  };
+}
+
+export function formatCreateScope(
+  scope: CreateScopeDescription,
+  phase: "creating" | "created" | "preview" = "creating",
+): string {
+  const verb = phase === "creating" ? "Creating" : phase === "created" ? "Created" : "Would create";
+  const place = scope.location === "project"
+    ? "in THIS PROJECT"
+    : scope.location === "cwd"
+      ? "in CURRENT DIRECTORY"
+      : scope.location === "user"
+        ? "GLOBALLY"
+        : "in CUSTOM DIRECTORY";
+  return `${verb} ${place} → ${scope.displayPath} ${scope.meaning}`;
+}
+
+/**
+ * Global flow discovery is native: the CLI resolver reads ~/.mdflow/*.md.
+ * This post-write assertion protects that invariant without inventing a shim
+ * or linking the mdflow package itself.
+ */
+export function ensureGlobalFlowAvailable(receipt: GlobalFlowAvailability): void {
+  const expected = resolve(receipt.userAgentsDir, `${receipt.slug}.md`);
+  if (resolve(receipt.flowPath) !== expected || !existsSync(expected)) {
+    throw new Error(
+      `Global flow availability check failed: expected ${expected} for ${receipt.invocation}`,
+    );
+  }
 }
 
 function flagValue(
@@ -82,6 +202,7 @@ function inferredValue(value: string): string | number | boolean {
 export function parseCreateArgs(args: readonly string[]): CreateOptions {
   const options: CreateOptions = {
     location: "project",
+    docs: [],
     dryRun: false,
     open: false,
     help: false,
@@ -132,6 +253,18 @@ export function parseCreateArgs(args: readonly string[]): CreateOptions {
     ) {
       const parsed = flagValue(args, i, inlineValue, flag);
       options.engine = parsed.value;
+      i = parsed.nextIndex;
+    } else if (flag === "--model") {
+      const parsed = flagValue(args, i, inlineValue, flag);
+      options.model = parsed.value;
+      i = parsed.nextIndex;
+    } else if (flag === "--effort") {
+      const parsed = flagValue(args, i, inlineValue, flag);
+      options.effort = parsed.value;
+      i = parsed.nextIndex;
+    } else if (flag === "--docs" || flag === "--doc") {
+      const parsed = flagValue(args, i, inlineValue, flag);
+      options.docs.push(parsed.value);
       i = parsed.nextIndex;
     } else if (flag === "--location" || flag === "-l") {
       const parsed = flagValue(args, i, inlineValue, flag);
@@ -223,10 +356,31 @@ function mergeFrontmatter(draft: FlowDraft, extra: Record<string, unknown>): Flo
   };
 }
 
-function previewMessage(draft: FlowDraft, flowPath: string, engine: string | undefined): string {
+function applyCommand(draft: FlowDraft, options: CreateOptions, engine: string | undefined): string {
+  const parts = ["md create", shellQuote(draft.intent)];
+  if (options.name) parts.push("--name", shellQuote(draft.slug));
+  if (engine) parts.push("--engine", shellQuote(engine));
+  if (options.model) parts.push("--model", shellQuote(options.model));
+  if (options.effort) parts.push("--effort", shellQuote(options.effort));
+  for (const doc of options.docs) parts.push("--docs", shellQuote(doc));
+  if (options.location === "project") parts.push("--project");
+  else if (options.location === "cwd") parts.push("--location", "cwd");
+  else if (options.location === "user") parts.push("--global");
+  else parts.push("--dir", shellQuote(options.customDir!));
+  return parts.join(" ");
+}
+
+function previewMessage(
+  draft: FlowDraft,
+  flowPath: string,
+  options: CreateOptions,
+  engine: string | undefined,
+  scope: CreateScopeDescription,
+): string {
   return [
     "",
     "Flow preview",
+    formatCreateScope(scope, "preview"),
     `  Intent: ${draft.intent}`,
     `  File:   ${flowPath}`,
     `  Engine: ${engine ?? "project default (pi if unset)"}`,
@@ -234,7 +388,7 @@ function previewMessage(draft: FlowDraft, flowPath: string, engine: string | und
     "",
     draft.markdown.trimEnd(),
     "",
-    `Apply it: md create ${shellQuote(draft.intent)}`,
+    `Apply it: ${applyCommand(draft, options, engine)}`,
   ].join("\n");
 }
 
@@ -274,14 +428,20 @@ Create a runnable Markdown flow in the nearest project's flows/ roster.
 An intent on the command line applies immediately; --dry-run is read-only.
 
 Options:
-  --name, -n <slug>       Override the generated filename
+  --name, -n <slug>       Override the suggested short filename
   --engine <name>         Persist an engine choice (default: project config / pi)
+  --model <name>          Persist a model choice for the engine
+  --effort <level>        Persist a reasoning-effort level (claude/codex/pi)
+  --docs <entry>          Preload docs into the body (repeatable): a command
+                          ("gog --help"), URL, path, or bare tool name (runs
+                          its --help)
   --content, --body       Override the Markdown prompt body
   --description <text>    Override the roster description
   --dry-run, --preview    Print the exact draft and target; write nothing
   --open                  Open the new flow in $EDITOR
   --project, -p           Use the canonical project flows/ roster (default)
-  --global, -g            Create a personal flow in ~/.mdflow/ (user scope)
+  --global, -g            Create in ~/.mdflow/; md <name> works everywhere
+  --location cwd          Create directly in the current directory
   --dir, -d <path>        Legacy: create directly in a custom directory
 
 Unknown flags are retained as flow frontmatter for compatibility.
@@ -289,7 +449,8 @@ Deprecated --_command/-_c and --tool aliases still select --engine.
 
 Examples:
   md create Review staged changes for correctness
-  md create "Draft release notes from recent commits" --engine codex
+  md create "Draft release notes from recent commits" --engine codex --effort high
+  md create "Summarize gog output" --engine codex --docs "gog --help"
   md create "Turn meeting notes into an action plan" --global
   md create "Summarize this repo" --name repo-summary --dry-run
 `;
@@ -305,18 +466,41 @@ export async function runCreate(
 ): Promise<CreateCommandResult> {
   const options = parseCreateArgs(args);
   const log = runtime.log ?? console.log;
+  const warn = runtime.warn ?? console.error;
   const cwd = resolve(runtime.cwd ?? process.cwd());
+  const homeDirectory = resolve(runtime.homeDirectory ?? homedir());
+  const userAgentsDir = resolve(
+    runtime.userAgentsDir ?? join(homeDirectory, ".mdflow"),
+  );
 
   if (options.help) {
     log(helpText());
     return { status: "help" };
   }
 
+  const retainedFlags = Object.keys(options.frontmatter);
+  if (retainedFlags.length > 0) {
+    // A typo'd or hallucinated option would otherwise become silent
+    // frontmatter; the retention contract stays, but visibly.
+    warn(
+      `Note: unknown flag(s) retained as flow frontmatter: ${retainedFlags
+        .map((key) => `--${key}`)
+        .join(", ")} (run 'md create --help' for known options)`
+    );
+  }
+
   const legacyName = options.name ? interpretName(options.name) : undefined;
+  const isStdinTTY = runtime.isStdinTTY ?? Boolean(process.stdin.isTTY);
+  if (!options.intent?.trim() && !legacyName && !runtime.promptIntent && !isStdinTTY) {
+    throw new Error(
+      'Flow intent required (INTENT_REQUIRED): stdin is not a TTY, so md create cannot prompt.\n' +
+        'Pass the intent as an argument, e.g.: md create "Review staged changes for correctness"'
+    );
+  }
   const promptIntent =
     runtime.promptIntent ??
     (() =>
-      input({
+      tabSafeInput({
         message: "What should this flow do?",
         validate: (value) => value.trim().length > 0 || "Describe the flow in a few words",
       }));
@@ -330,10 +514,13 @@ export async function runCreate(
     ...(legacyName ? { slug: legacyName.slug } : {}),
     ...(options.description ? { description: options.description } : {}),
     ...(options.content !== undefined ? { body: options.content } : {}),
+    ...(engine ? { engine } : {}),
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.effort ? { effort: options.effort } : {}),
+    docs: options.docs,
   });
   draft = mergeFrontmatter(draft, {
     ...options.frontmatter,
-    ...(engine ? { engine } : {}),
     ...(legacyName?.interactive ? { _interactive: true } : {}),
   });
 
@@ -345,18 +532,30 @@ export async function runCreate(
   } else if (options.location === "cwd") {
     legacyDirectory = cwd;
   } else if (options.location === "user") {
-    legacyDirectory = getUserAgentsDir();
+    legacyDirectory = userAgentsDir;
   } else {
     legacyDirectory = resolve(cwd, options.customDir!);
   }
   const flowPath = canonical
     ? join(target!.flowsDir, draft.filename)
     : join(legacyDirectory!, draft.filename);
+  const scope = describeCreateScope({
+    location: options.location,
+    flowPath,
+    slug: draft.slug,
+    cwd,
+    ...(target ? { projectRoot: target.projectRoot } : {}),
+    homeDirectory,
+  });
 
   if (options.dryRun) {
-    log(previewMessage(draft, flowPath, engine));
+    log(previewMessage(draft, flowPath, options, engine, scope));
     return { status: "preview", draft, flowPath };
   }
+
+  // Scope is printed before the first write so there is no ambiguity about
+  // which namespace this command is about to mutate.
+  log(`\n${formatCreateScope(scope, "creating")}`);
 
   let created: string[];
   let skipped: string[];
@@ -381,11 +580,32 @@ export async function runCreate(
     return { status: "conflict", draft, flowPath };
   }
 
-  log(`\nCreated flow: ${flowPath}`);
+  if (options.location === "user") {
+    const availability = {
+      flowPath,
+      slug: draft.slug,
+      userAgentsDir,
+      invocation: scope.invocation,
+    } satisfies GlobalFlowAvailability;
+    await (runtime.ensureGlobalAvailability ?? ensureGlobalFlowAvailable)(availability);
+  }
+
+  log(`\n${formatCreateScope(scope, "created")}`);
+  log(`Created flow: ${flowPath}`);
   const supportFiles = created.filter((path) => path !== flowPath);
   if (supportFiles.length > 0) log(`Added project support: ${supportFiles.join(", ")}`);
-  const tip = contextualFlowTip({ cwd, flowPath, created: true });
-  if (tip) log(`Tip: ${tip}`);
+  if (options.location === "user") {
+    log(`Run from any directory: ${scope.invocation}`);
+    log(`Exact global path (bypasses a same-named project flow): ${scope.exactInvocation}`);
+  } else if (options.location === "cwd") {
+    log(`Run from this directory: ${scope.invocation}`);
+    log(`From elsewhere: ${scope.exactInvocation}`);
+  } else if (options.location === "custom") {
+    log(`Run by path: ${scope.exactInvocation}`);
+  } else {
+    const tip = contextualFlowTip({ cwd, flowPath, created: true });
+    if (tip) log(`Tip: ${tip}`);
+  }
 
   if (options.open) (runtime.openFile ?? openInEditor)(flowPath);
 

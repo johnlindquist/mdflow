@@ -482,23 +482,26 @@ export const fileSelector = createPrompt<FileSelectorResult, FileSelectorConfig>
         return;
       }
 
+      // Shift+Tab: In content mode, cycle to the previous match. Check it
+      // before generic Tab because both arrive with key.name === "tab".
+      if (key.name === "tab" && (extKey.shift || extKey.sequence === "\x1b[Z")) {
+        rl.clearLine(0);
+        if (searchMode === "content" && filter) {
+          setMatchIndex(matchIndex - 1);
+          setPreviewScroll(0);
+        }
+        return;
+      }
+
       // Tab: In content mode, cycle to next match. Otherwise, edit file.
       if (key.name === "tab") {
+        rl.clearLine(0);
         if (searchMode === "content" && filter) {
           // Cycle to next match (will wrap in render based on match count)
           setMatchIndex(matchIndex + 1);
           setPreviewScroll(0); // Reset scroll so auto-scroll takes effect
         } else if (currentFile) {
           done({ action: "edit", path: currentFile.path });
-        }
-        return;
-      }
-
-      // Shift+Tab: In content mode, cycle to previous match
-      if (extKey.shift && extKey.sequence === "\x1b[Z") {
-        if (searchMode === "content" && filter) {
-          setMatchIndex(matchIndex - 1);
-          setPreviewScroll(0);
         }
         return;
       }

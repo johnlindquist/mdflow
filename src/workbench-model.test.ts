@@ -5,9 +5,15 @@ import { join } from "node:path";
 import { parseFrontmatter } from "./parse";
 import {
   applyFlowDraft,
+  docReferenceLine,
   draftFlowFromIntent,
+  effortFrontmatter,
+  effortLevels,
+  listNewFlowEngines,
+  NEW_FLOW_DEFAULT_ENGINE,
   resolveWorkbenchTarget,
   slugifyFlowIntent,
+  suggestFlowSlug,
   summarizeFlowLifecycle,
 } from "./workbench-model";
 import type { EvidenceEvent, EvolutionRunRecord } from "./evolution-store";
@@ -29,7 +35,7 @@ describe("draftFlowFromIntent", () => {
       flowId: "flow_test123",
     });
 
-    expect(draft.slug).toBe("review-database-migrations-for-rollback-risks");
+    expect(draft.slug).toBe("review-database-migrations");
     expect(draft.filename).toBe(`${draft.slug}.md`);
     expect(draft.description).toBe("Review database migrations for rollback risks");
     expect(draft.markdown).toContain("_flow_id: flow_test123");
@@ -57,6 +63,98 @@ describe("draftFlowFromIntent", () => {
 
   it("rejects an empty intent", () => {
     expect(() => draftFlowFromIntent(" \n\t ")).toThrow("Flow intent cannot be empty");
+  });
+
+  it("persists engine, model, effort, and preloaded docs", () => {
+    const draft = draftFlowFromIntent("Summarize gog output", {
+      engine: "codex",
+      model: "gpt-5.5",
+      effort: "high",
+      docs: ["gog --help", "https://example.com/api.md"],
+      version: "4.3.0",
+      flowId: "flow_docs",
+    });
+
+    const parsed = parseFrontmatter(draft.markdown);
+    expect(parsed.frontmatter).toMatchObject({
+      engine: "codex",
+      model: "gpt-5.5",
+      config: ["model_reasoning_effort=high"],
+    });
+    expect(parsed.body).toBe(
+      "Summarize gog output\n\n## Reference\n\n!`gog --help`\n@https://example.com/api.md",
+    );
+  });
+
+  it("refuses effort without an engine or on an engine with no effort control", () => {
+    expect(() => draftFlowFromIntent("Do a thing", { effort: "high" })).toThrow(
+      "Effort is engine-specific",
+    );
+    expect(() => draftFlowFromIntent("Do a thing", { engine: "gemini", effort: "high" })).toThrow(
+      "no verified reasoning-effort control",
+    );
+  });
+});
+
+describe("suggestFlowSlug", () => {
+  it("keeps only the first few meaningful words", () => {
+    expect(suggestFlowSlug("Review database migrations for rollback risks")).toBe(
+      "review-database-migrations",
+    );
+    expect(suggestFlowSlug("Summarize this repository for a new contributor")).toBe(
+      "summarize-repository-contributor",
+    );
+    expect(suggestFlowSlug("Draft release notes from recent commits")).toBe("draft-release-notes");
+  });
+
+  it("falls back safely for stopword-only and empty intents", () => {
+    expect(suggestFlowSlug("for the with")).toBe("for-the-with");
+    expect(suggestFlowSlug("✨")).toBe("new-flow");
+  });
+});
+
+describe("composer engine metadata", () => {
+  it("offers codex first and only registered engines", () => {
+    const engines = listNewFlowEngines();
+    expect(engines[0]).toBe(NEW_FLOW_DEFAULT_ENGINE);
+    expect(engines[0]).toBe("codex");
+    expect(engines).toContain("claude");
+    expect(new Set(engines).size).toBe(engines.length);
+  });
+
+  it("translates effort per engine and hides it where unsupported", () => {
+    expect(effortLevels("claude")).toContain("max");
+    expect(effortFrontmatter("claude", "high")).toEqual({ effort: "high" });
+    expect(effortFrontmatter("codex", "medium")).toEqual({
+      config: ["model_reasoning_effort=medium"],
+    });
+    expect(effortFrontmatter("pi", "low")).toEqual({ thinking: "low" });
+    expect(effortLevels("copilot")).toEqual([]);
+    expect(() => effortFrontmatter("copilot", "high")).toThrow("no verified reasoning-effort control");
+  });
+
+  it("rejects effort levels the engine does not support", () => {
+    expect(() => effortFrontmatter("claude", "banana")).toThrow('got "banana"');
+    expect(() => effortFrontmatter("claude", "banana")).toThrow("low, medium, high");
+    expect(() => effortFrontmatter("codex", "max")).toThrow("minimal, low, medium, high, xhigh");
+  });
+});
+
+describe("docReferenceLine", () => {
+  it("classifies commands, URLs, paths, and bare tool names", () => {
+    expect(docReferenceLine("gog --help")).toBe("!`gog --help`");
+    expect(docReferenceLine("https://example.com/docs.md")).toBe("@https://example.com/docs.md");
+    expect(docReferenceLine("./docs/api.md")).toBe("@./docs/api.md");
+    expect(docReferenceLine("gog")).toBe("!`gog --help`");
+    expect(docReferenceLine("@./already-an-import.md")).toBe("@./already-an-import.md");
+    expect(docReferenceLine("!git log --oneline -5")).toBe("!`git log --oneline -5`");
+  });
+
+  it("refuses a path with spaces instead of turning it into a shell command", () => {
+    expect(() => docReferenceLine("./docs/API Guide.md")).toThrow("cannot express");
+    expect(() => docReferenceLine("./docs/API Guide.md")).toThrow("prefix with !");
+    // The explicit ! prefix remains the escape hatch for intentional commands.
+    expect(docReferenceLine("!cat './docs/API Guide.md'")).toBe("!`cat './docs/API Guide.md'`");
   });
 });
 
@@ -118,13 +216,29 @@ describe("applyFlowDraft", () => {
 
     expect(result.status).toBe("created");
     expect(result.created).toEqual([
-      join(directory, "flows", "review-staged-changes-for-bugs.md"),
+      join(directory, "flows", "review-staged-changes.md"),
       join(directory, "flows", "README.md"),
       join(directory, ".mdflow.yaml"),
     ]);
     expect(readFileSync(result.flowPath, "utf8")).toBe(draft.markdown);
     expect(readFileSync(join(directory, "flows", "README.md"), "utf8")).toContain("Open the Flow Workbench: `md`");
     expect(readFileSync(join(directory, ".mdflow.yaml"), "utf8")).toContain("engine: codex");
+  });
+
+  it("does not stamp a project engine default without an explicit engine choice", () => {
+    mkdirSync(join(directory, ".git"));
+    const draft = draftFlowFromIntent("Review staged changes for bugs", {
+      version: "4.1.0",
+      flowId: "flow_review",
+    });
+    const result = applyFlowDraft(draft, { startPath: directory });
+
+    expect(result.status).toBe("created");
+    expect(result.created).toEqual([
+      join(directory, "flows", "review-staged-changes.md"),
+      join(directory, "flows", "README.md"),
+    ]);
+    expect(existsSync(join(directory, ".mdflow.yaml"))).toBe(false);
   });
 
   it("never overwrites an existing flow or creates support files on conflict", () => {
