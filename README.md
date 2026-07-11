@@ -412,6 +412,7 @@ Hello {{ _name }}! Deploying to {{ _env }} with {{ _count }} items.
 | `_interactive` / `_i` | boolean | Enable interactive mode (overrides print-mode defaults) |
 | `_subcommand` | string/string[] | Prepend subcommand(s) to CLI args |
 | `_cwd` | string | Override working directory for inline commands |
+| `_hooks` | boolean/string | Lifecycle hooks file: unset = auto-discover `<flow>.hooks.ts`, `false` = disable, path = shared hooks file (see Lifecycle Hooks) |
 | `context_window` | number | Override token limit for context (default: model-based) |
 
 ### Auto-Injected Template Variables
@@ -440,6 +441,83 @@ p: true                               # → -p (single char = short flag)
 - `key: true` → `--key`
 - `key: false` → (omitted)
 - `key: [a, b]` → `--key a --key b`
+
+---
+
+## Lifecycle Hooks
+
+A flow's hooks live in a TypeScript file **named after the flow** — that's
+the whole wiring:
+
+```
+review.codex.md          # the flow
+review.codex.hooks.ts    # its hooks — discovered and wired automatically
+```
+
+Scaffold one (or pick events interactively by omitting them):
+
+```bash
+md hooks add review.codex.md stop userPromptSubmit
+md hooks list review.codex.md
+md hooks remove review.codex.md stop
+```
+
+The generated file is an executable, dependency-free Bun program exporting
+handlers keyed by canonical event names:
+
+```ts
+#!/usr/bin/env bun
+const handlers: Record<string, HookHandler> = {
+  userPromptSubmit: async (payload) => {
+    // return a string to inject context;
+    // return { decision: "block", reason: "…" } to reject the prompt
+  },
+  stop: async (payload) => {
+    // return { decision: "block", reason: "…" } to force the turn to continue
+  },
+};
+```
+
+On every run, mdflow reads which events the file handles (from its text —
+inspection never executes it) and translates them into the engine's native
+hook mechanism (codex today: an inline `-c hooks={…}` override plus a
+prepared, hooks-free codex home under `~/.mdflow/` — your own codex config
+and credentials are never modified).
+Debug a hook standalone by piping a payload to it:
+
+```bash
+echo '{"hook_event_name":"Stop"}' | ./review.codex.hooks.ts
+```
+
+Events: `sessionStart`, `userPromptSubmit`, `preToolUse`, `postToolUse`,
+`permissionRequest`, `preCompact`, `postCompact`, `subagentStart`,
+`subagentStop`, `stop`, `sessionEnd`. In `codex exec` (print mode), codex
+fires `sessionStart`, `userPromptSubmit`, `preToolUse`, `postToolUse`, and
+`stop`. Once a run is underway, a hook that crashes or times out fails open
+— codex continues. Discovery problems are the opposite: a hooks file that
+exists but can't be used (missing, uninspectable, escaping path) fails the
+run loudly, because silently dropping declared hooks would change the flow.
+
+Consent and containment rules:
+
+- **Inspection never executes.** `md explain`, `md hooks list`, dry runs,
+  and the Workbench read the handlers map from the file's text; only a real
+  run may execute the hook program (it's about to run anyway).
+- **Hooks run isolated.** On codex, hooked runs use a prepared, hooks-free
+  codex home so mdflow's trust bypass can never enable ambient hooks you
+  haven't reviewed; `_isolated: false` combined with a hooks file is an
+  error.
+- **Paths are contained.** A flow's `_hooks:` may only point inside the
+  flow's own directory, and remote flows can't declare `_hooks` paths at
+  all. Only `--_hooks` typed on the command line escapes containment.
+- **`md install` fetches only the flow markdown** — hook files are never
+  downloaded from a registry.
+
+Control: `_hooks: false` disables discovery; `_hooks: ./shared.hooks.ts`
+points several flows at one file (within the flow's directory);
+`--_hooks <path|false>` overrides from the CLI. Engines without a verified
+hook mechanism fail a run whose hooks file exists — disable with
+`_hooks: false` or switch engines.
 
 ---
 

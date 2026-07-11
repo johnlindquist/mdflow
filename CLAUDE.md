@@ -13,6 +13,7 @@ md <file.md> [flags]     # Run a flow
 md init [-e <eng>] [-y]  # Initialize a flow roster (guided by an agent CLI; -y scaffolds)
 md create [name]         # Create a new flow file
 md explain <flow.md>     # Show resolved config without executing (free)
+md hooks add|list|remove <flow.md> [event…]  # Manage the flow's lifecycle hooks file (free)
 md eval <flow.md>        # Run the flow's eval suite (costs engine turns)
 md complain <flow.md> "msg"  # Record evolution evidence (free)
 md evolve <flow.md>      # Evidence-gated prompt evolution (--check is free)
@@ -127,6 +128,15 @@ Vercel with Root Directory = `site`). Rules:
   `MDFLOW_EVAL_RUN=1`); surgical line-level frontmatter edits, semver-aware,
   major-mismatch prints a dim stderr notice, never blocks execution
 
+- **`hooks.ts` / `hooks-cli.ts`** - Lifecycle hooks by convention:
+  `review.codex.md` → sibling `review.codex.hooks.ts` (executable,
+  self-contained Bun TS; zero imports) auto-discovered every run and
+  translated by the adapter's `applyHooks()` into engine-native config
+  (codex: one inline `-c hooks={…}` override + top-level
+  `--dangerously-bypass-hook-trust`). `md hooks add/list/remove` scaffolds
+  and edits the file surgically via template markers. See Lifecycle Hooks
+  below.
+
 - **`config.ts`** - Global configuration
   - Loads defaults from `~/.mdflow/config.yaml`
   - Built-in defaults: All commands default to print mode
@@ -190,6 +200,7 @@ a document and printed, not executed.
 - `_cwd`: Override working directory for inline commands (`` !`cmd` ``)
 - `_isolated`: Isolation is ON BY DEFAULT — set `false` to opt back into ambient context (skills, MCP, memory/context files, plugins) — see Isolation below
 - `_system-prompt` / `_append-system-prompt`: Replace/append the engine's system prompt, translated per engine — see System Prompt below
+- `_hooks`: Lifecycle hooks file control — unset = convention discovery (`<flow>.hooks.ts`), `false` disables, a path (relative to the flow file) selects a shared hooks file; `--_hooks <path|false>` is the CLI override — see Lifecycle Hooks below
 - `_mdflow_version` / `_compat`: Automatic compatibility stamps (see below) — never set these by hand
 
 **Isolation (`src/isolation.ts` + adapter `getIsolationDefaults()`):**
@@ -220,6 +231,63 @@ gemini → `GEMINI_SYSTEM_MD=<temp file>` env (replace only — append errors).
 Engines with no mechanism (copilot, droid, opencode, cursor-agent, agy) fail
 the run — a silently dropped system prompt would be a different flow. Never
 add a translation from an unverified flag; check the engine's `--help` first.
+
+**Lifecycle hooks (`src/hooks.ts`, `src/hooks-cli.ts` + adapter `applyHooks()`):**
+a flow's hooks live in a sibling file named after it — `review.codex.md` →
+`review.codex.hooks.ts` — auto-discovered on every run (no frontmatter
+needed). The file is an EXECUTABLE, SELF-CONTAINED Bun TypeScript program
+(zero imports: flows run where mdflow isn't a dependency) that default-scaffolds
+via `md hooks add <flow.md> [event…]`. It exports a `handlers` map keyed by
+canonical camelCase events and implements two contracts:
+`--mdflow-list-events` (prints its handled events as JSON; used only as a
+REAL-RUN fallback when the static text parse fails — passive surfaces never
+execute the file) and the stdin/stdout hook protocol
+(payload JSON on stdin; a returned string → stdout context, object →
+JSON.stringify'd decision, void → nothing, always exit 0).
+
+Canonical events: `sessionStart userPromptSubmit preToolUse postToolUse
+permissionRequest preCompact postCompact subagentStart subagentStop stop
+sessionEnd`. Adapters map them to engine-native names via `applyHooks()`.
+
+CONSENT BOUNDARIES (audit-hardened; regression-tested in
+hooks-integration.test.ts "consent boundaries"):
+- Passive surfaces NEVER execute hook code: explain, dry-run, the
+  Workbench, and `md hooks list` discover events via
+  `listHandledEventsStatic()` (text parse of the template's handlers map).
+  Executing `--mdflow-list-events` is allowed ONLY as a real-run fallback —
+  the flow is executing anyway, so it adds no privilege.
+- Frontmatter `_hooks:` paths are CONTAINED to the flow's own directory
+  subtree, and remote flows may not declare `_hooks` paths at all (hook
+  programs run on the host OUTSIDE the engine sandbox). `--_hooks` from the
+  CLI is unrestricted — the invoking user typed it.
+- `md install` downloads only the flow markdown, never sibling hook files.
+
+Codex translation (all facts verified empirically on codex-cli 0.144.1 —
+see the probe evidence rules below before changing any of this):
+- ONE inline override carries every event: `-c hooks={Event=[{hooks=[{type="command",command="'<bun>' '<file>'",timeout=60,…}]}]}`
+  plus top-level `--dangerously-bypass-hook-trust` (without it codex
+  SILENTLY skips unreviewed hooks). Event keys MUST be PascalCase —
+  snake_case silently registers nothing. The event → group list → `hooks`
+  list nesting is mandatory.
+- The bypass flag is invocation-wide and hook sources AGGREGATE
+  (`--ignore-user-config`/`--ephemeral` do NOT disable `$CODEX_HOME`
+  hooks.json). Hooked runs therefore execute against a PREPARED CODEX_HOME
+  (`~/.mdflow/codex-hooks-home`, built by adapters/codex-hooks-home.ts:
+  auth.json symlink + `[projects]` trust copy + guaranteed-absent
+  hooks.json) so the bypass can only authorize mdflow-injected hooks. As a
+  consequence, hooks on codex REQUIRE isolation: `_isolated: false` + a
+  hooks file is a hard error (HOOKS_REQUIRE_ISOLATION).
+- `codex exec` fires SessionStart, UserPromptSubmit, PreToolUse,
+  PostToolUse, Stop; SessionEnd never fires. Hook cwd = session cwd; stdin
+  payload carries `hook_event_name` (PascalCase), `session_id`, `cwd`, etc.
+- EXECUTION-time hook failures fail OPEN (codex continues the run), but
+  DISCOVERY failures fail the run loudly (missing/rejected/uninspectable
+  hooks file). UserPromptSubmit can block via exit 2 or
+  `{"decision":"block"}`; Stop can force continuation.
+Engines with no verified hook mechanism FAIL a run whose hooks file exists
+(same policy as `_system-prompt`); `_hooks: false` opts out. Never add an
+engine translation from guessed config — verify against the engine's own
+help/docs first.
 
 **Compatibility stamps (`src/compat.ts`):** every flow tracks which mdflow it
 works with, with zero user involvement. `md create`/`md init` stamp

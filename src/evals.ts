@@ -28,6 +28,7 @@ import { atomicWriteJson, withAtomicFileLock } from "./evolution-store";
 import { canonicalFlowPath, findRepositoryRoot, identifyFlow, resolveEvolutionPolicy, sha256, splitFlowDocument } from "./evolution-core";
 import { parseImports } from "./imports-parser";
 import { parseFrontmatter } from "./parse";
+import { resolveHooksFile } from "./hooks";
 import ts from "typescript";
 
 export interface EvalContext {
@@ -326,6 +327,21 @@ function hashFlowGraph(
   seen.add(absolute);
   const content = readFileSync(absolute, "utf8");
   const pieces = [`${logicalPath(graphRoot, absolute)}:${sha256(content)}`];
+  // Lifecycle hooks are part of the flow's behavior: a changed hook program
+  // must invalidate eval receipts exactly like a changed body would.
+  try {
+    const hooksResolved = resolveHooksFile({
+      flowPath: absolute,
+      frontmatterValue: (parseFrontmatter(content).frontmatter as Record<string, unknown>)?.["_hooks"],
+    });
+    if (hooksResolved.kind === "file" && !hooksResolved.missing && !hooksResolved.rejected) {
+      pieces.push(
+        `${logicalPath(graphRoot, canonicalFlowPath(hooksResolved.path))}:${sha256(readFileSync(hooksResolved.path))}`
+      );
+    }
+  } catch {
+    // Unparseable frontmatter: the flow hash above already covers the bytes.
+  }
   for (const action of parseImports(splitFlowDocument(content).body)) {
     if (action.type === "file" || action.type === "symbol") {
       const path = resolve(dirname(absolute), action.path);
@@ -689,8 +705,35 @@ export async function runEvalCli(args: string[], cliPath?: string): Promise<numb
   const planOnly = args.includes("--plan");
   const json = args.includes("--json");
   if (args.includes("--help") || args.includes("-h")) {
-    console.log("Usage: md eval <flow.md> [--plan] [--yes] [--filter <substring>] [--json]");
-    console.log("       --plan is free and does not import executable suite code");
+    console.log(`Usage: md eval <flow.md> [--plan] [--yes] [--filter <substring>] [--json]
+
+Run the flow's behavioral eval suite. The suite is a colocated TypeScript
+file: <flow>.md is paired with <flow>.eval.ts (flows/review.md ->
+flows/review.eval.ts) that default-exports an EvalCase[]:
+
+  export default [
+    {
+      name: "answers with a number",
+      prompt: "What is 2+2?",
+      check: (output) => /4/.test(output),
+    },
+  ];
+
+Steps and cost:
+  md eval flow.md --plan   FREE - static plan only: case names and the paid
+                           invocation count; never imports executable suite code
+  md eval flow.md          PAID - runs each case against the engine; prints the
+                           cost first and asks for confirmation in a TTY
+
+Options:
+  --yes, -y                Skip the confirmation (REQUIRED when stdin is not a
+                           TTY - agents and CI must pass --yes to spend)
+  --filter <substring>     Run only cases whose name contains the substring
+  --json                   Machine-readable plan/results on stdout
+
+Example (agent-safe sequence):
+  md eval flows/review.md --plan
+  md eval flows/review.md --yes --json`);
     return 0;
   }
   const fail = (reasonCode: string, message: string): number => {

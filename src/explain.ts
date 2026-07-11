@@ -80,6 +80,12 @@ export interface ExplainResult {
     appendCount: number;
     error?: string;
   };
+  hooks?: {
+    file: string;
+    source: string;
+    events: string[];
+    error?: string;
+  };
 }
 
 function truncateText(text: string, maxLength: number): { text: string; truncated: boolean } {
@@ -204,13 +210,64 @@ export async function analyzeAgent(
     }
   }
 
+  // Hooks: mirror the run path — discover the flow's hooks file, read its
+  // events, and apply the adapter translation so the final command shows
+  // exactly what a run would spawn. Discovery here is STRICTLY STATIC:
+  // explain is documented FREE and must never execute hook code. Errors are
+  // captured, never thrown: explain always renders.
+  let hooksResult: ExplainResult["hooks"];
+  {
+    const { resolveHooksFile, listHandledEventsStatic, applyHooksToFrontmatter } = await import("./hooks");
+    const hooksFlagIdx = passthroughArgs.indexOf("--_hooks");
+    const cliHooksValue =
+      hooksFlagIdx !== -1 && hooksFlagIdx + 1 < passthroughArgs.length
+        ? passthroughArgs[hooksFlagIdx + 1]
+        : undefined;
+    const resolvedHooks = resolveHooksFile({
+      flowPath: localFilePath,
+      frontmatterValue: frontmatter._hooks,
+      cliValue: cliHooksValue,
+      isRemote,
+    });
+    if (resolvedHooks.kind === "file") {
+      hooksResult = { file: resolvedHooks.path, source: resolvedHooks.source, events: [] };
+      if (resolvedHooks.rejected) {
+        hooksResult.error = resolvedHooks.rejected;
+      } else if (resolvedHooks.missing) {
+        hooksResult.error = `Hooks file not found: ${resolvedHooks.path}`;
+      } else {
+        const listed = listHandledEventsStatic(resolvedHooks.path);
+        if (!listed.ok) {
+          hooksResult.error =
+            `${listed.error} (explain never executes hook programs; a real run ` +
+            `may still interrogate this file)`;
+        } else {
+          hooksResult.events = listed.events;
+          try {
+            frontmatter = applyHooksToFrontmatter(engineAdapter, command, frontmatter, {
+              hooksFile: resolve(resolvedHooks.path),
+              events: listed.events,
+              isolated: isolationMode.isolated,
+              prepareEnvironment: false,
+            });
+          } catch (err) {
+            hooksResult.error = (err as Error).message;
+          }
+        }
+      }
+    } else if (frontmatter._hooks !== undefined) {
+      frontmatter = { ...frontmatter };
+      delete frontmatter._hooks;
+    }
+  }
+
   const envVars = extractEnvVars(frontmatter);
   const envKeys = envVars ? Object.keys(envVars) : [];
 
   const templateVars: Record<string, string> = {};
   const internalKeys = new Set([
     "_interactive", "_i", "_cwd", "_subcommand", "_steps", "_output", "_inputs",
-    "_isolated", "_system-prompt", "_append-system-prompt",
+    "_isolated", "_system-prompt", "_append-system-prompt", "_hooks",
   ]);
   for (const key of Object.keys(frontmatter).filter((k) => k.startsWith("_") && !internalKeys.has(k))) {
     const value = frontmatter[key];
@@ -293,6 +350,7 @@ export async function analyzeAgent(
       warning: isolationInfo.unsupportedWarning,
     },
     systemPrompt: systemPromptResult,
+    hooks: hooksResult,
   };
 }
 
@@ -341,6 +399,17 @@ export function formatExplainOutput(result: ExplainResult): string {
       if (result.systemPrompt.appendCount > 0) {
         lines.push(`Append segments: ${result.systemPrompt.appendCount} (_append-system-prompt)`);
       }
+    }
+    lines.push("");
+  }
+
+  if (result.hooks) {
+    lines.push(thinSep, "LIFECYCLE HOOKS", thinSep);
+    lines.push(`File: ${result.hooks.file} (${result.hooks.source})`);
+    if (result.hooks.error) {
+      lines.push(`ERROR: ${result.hooks.error}`);
+    } else {
+      lines.push(`Events: ${result.hooks.events.join(", ")}`);
     }
     lines.push("");
   }
@@ -445,7 +514,20 @@ export async function buildExplainJson(
   cwd: string = process.cwd()
 ): Promise<ExplainJson> {
   const result = await analyzeAgent(filePath, passthroughArgs, cwd);
+  return explainJsonFromResult(result, filePath, passthroughArgs, cwd);
+}
 
+/**
+ * Build the protocol payload from an existing analysis. Split out so callers
+ * that need both the full ExplainResult and the protocol shape (md render)
+ * analyze the flow exactly once.
+ */
+export async function explainJsonFromResult(
+  result: ExplainResult,
+  filePath: string,
+  passthroughArgs: string[] = [],
+  cwd: string = process.cwd()
+): Promise<ExplainJson> {
   // Effective run cwd: --_cwd flag > frontmatter _cwd > invocation cwd.
   let cwdFromCli: string | undefined;
   const cwdIdx = passthroughArgs.indexOf("--_cwd");
@@ -479,6 +561,7 @@ export async function buildExplainJson(
   const warnings: string[] = [];
   if (result.isolation.warning) warnings.push(result.isolation.warning);
   if (result.systemPrompt?.error) warnings.push(result.systemPrompt.error);
+  if (result.hooks?.error) warnings.push(result.hooks.error);
 
   // Fingerprint: resolved config + flow content + mdflow version.
   const fullConfig = await loadFullConfig(cwd);

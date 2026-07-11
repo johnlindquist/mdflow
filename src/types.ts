@@ -496,6 +496,52 @@ export interface ToolAdapter {
     spec: SystemPromptSpec,
     writeTempFile: (content: string) => string
   ): SystemPromptTranslation;
+
+  /**
+   * Optional: translate a discovered flow hooks file (`<flow>.hooks.ts`) into
+   * engine-native lifecycle-hook configuration. Absent = the engine has no
+   * verified hook mechanism and a flow WITH a hooks file FAILS the run (a
+   * silently dropped hook would be a different flow; `_hooks: false` opts
+   * out). Only add a translation verified against the engine's own
+   * config/docs — codex is verified via `-c hooks={…}` inline overrides plus
+   * `--dangerously-bypass-hook-trust`.
+   */
+  applyHooks?(spec: HooksSpec): HooksTranslation;
+}
+
+/**
+ * Canonical lifecycle-hooks request: one executable hooks file plus the
+ * canonical events it declared via the `--mdflow-list-events` contract.
+ * Event names are mdflow-canonical (camelCase); adapters own the mapping to
+ * engine-native names.
+ */
+export interface HooksSpec {
+  /** Absolute path to the executable hooks file. */
+  hooksFile: string;
+  /** Canonical events the file handles (validated, non-empty). */
+  events: string[];
+  /**
+   * Whether the run is context-isolated. Adapters may require isolation for
+   * hooks (codex does: its trust bypass is only safe against a prepared
+   * home, which replaces ambient context anyway).
+   */
+  isolated: boolean;
+  /**
+   * False on passive surfaces (explain, dry-run): the translation must be
+   * PURE — compute the same flags/env a real run would use, but perform no
+   * filesystem preparation (no prepared-home writes). Defaults to true.
+   */
+  prepareEnvironment?: boolean;
+}
+
+/**
+ * Engine-native translation of a HooksSpec. Same merge semantics as
+ * SystemPromptTranslation: array values concat, scalars override, env merges
+ * into `_env` and wins.
+ */
+export interface HooksTranslation {
+  frontmatter?: Record<string, FrontmatterValue>;
+  env?: Record<string, string>;
 }
 
 /**

@@ -26,7 +26,16 @@ import type {
   AgentFrontmatter,
   SystemPromptSpec,
   SystemPromptTranslation,
+  HooksSpec,
+  HooksTranslation,
 } from "../types";
+import {
+  buildCodexHooksConfig,
+  buildCodexHooksOverride,
+  type CanonicalHookEvent,
+} from "../hooks";
+import { prepareCodexHooksHome, preparedCodexHooksHome } from "./codex-hooks-home";
+import { CommandError } from "../errors";
 
 /** Flags that only exist on `codex exec`, not top-level codex. */
 const EXEC_ONLY_ISOLATION_FLAGS = ["ignore-user-config", "ephemeral"] as const;
@@ -56,6 +65,50 @@ export const codexAdapter: ToolAdapter = {
       "ignore-user-config": true,
       ephemeral: true,
       config: ["project_doc_max_bytes=0"],
+    };
+  },
+
+  /**
+   * Hooks ride in as ONE inline `-c hooks={…}` override plus
+   * `--dangerously-bypass-hook-trust` (top-level flag, valid in exec AND
+   * interactive). Verified on codex-cli 0.144.1: no hooks.json is needed
+   * and the override survives --ignore-user-config/--ephemeral.
+   *
+   * The bypass flag is invocation-wide and hook sources AGGREGATE — against
+   * the user's real `$CODEX_HOME` it would also un-gate ambient
+   * not-yet-reviewed hooks from hooks.json (probe Q6). Hooked runs
+   * therefore execute against a prepared CODEX_HOME carrying auth +
+   * workspace trust but NO ambient hooks (codex-hooks-home.ts), so the
+   * bypass can only authorize what mdflow injected. Because that prepared
+   * home replaces ambient context wholesale, hooks REQUIRE isolation: an
+   * `_isolated: false` flow keeps the real home and must not run flow hooks.
+   */
+  applyHooks(spec: HooksSpec): HooksTranslation {
+    if (!spec.isolated) {
+      throw new CommandError(
+        `Flow hooks on codex require isolation (the default). An ambient run ` +
+          `(_isolated: false) would let the hook trust bypass authorize ` +
+          `pending-review hooks from your real codex home. Remove ` +
+          `\`_isolated: false\` or set \`_hooks: false\`.`,
+        { errorCode: "HOOKS_REQUIRE_ISOLATION", context: { hooksFile: spec.hooksFile } }
+      );
+    }
+    const config = buildCodexHooksConfig({
+      hooksFile: spec.hooksFile,
+      events: spec.events as CanonicalHookEvent[],
+    });
+    // Passive surfaces (explain, dry-run) show the same env a run would use
+    // but must not write anything — the home is prepared only for real runs.
+    const codexHome =
+      spec.prepareEnvironment === false
+        ? preparedCodexHooksHome()
+        : prepareCodexHooksHome();
+    return {
+      frontmatter: {
+        config: [buildCodexHooksOverride(config)],
+        "dangerously-bypass-hook-trust": true,
+      },
+      env: { CODEX_HOME: codexHome },
     };
   },
 
