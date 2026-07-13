@@ -90,6 +90,9 @@ export interface WorkbenchEvalStatus {
   total?: number;
   current?: boolean;
   headline?: string;
+  /** Canonical fail-closed classifier (shared with md eval list / md explain). */
+  verdict?: "Verified" | "Stale" | "Flaky" | "Failing" | "Unverified" | string;
+  verdictReason?: string;
 }
 
 export interface WorkbenchProposalStatus {

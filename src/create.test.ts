@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   describeCreateScope,
   formatCreateScope,
@@ -368,5 +376,77 @@ describe("runCreate", () => {
     expect(output).toContain("--global, -g            Create in ~/.mdflow/; md <name> works everywhere");
     expect(output).not.toContain("Legacy: create directly in ~/.mdflow/");
     expect(existsSync(join(directory, "flows"))).toBe(false);
+  });
+});
+
+describe("creation determinism", () => {
+  /**
+   * Replay parity: the same intent must draft the same flow, byte for byte,
+   * with `_flow_id` as the ONLY sanctioned divergence (each flow needs a
+   * unique identity). Any other diff means creation picked up hidden state.
+   */
+  it("two identical creates differ only in _flow_id", async () => {
+    const homes = [join(directory, "run-a"), join(directory, "run-b")];
+    const contents: string[] = [];
+    for (const projectDir of homes) {
+      mkdirSync(join(projectDir, ".git"), { recursive: true });
+      const result = await runCreate(["Review", "staged", "changes"], {
+        cwd: projectDir,
+        log: () => {},
+        openFile: () => true,
+      });
+      if (result.status !== "created") throw new Error(`expected created, got ${result.status}`);
+      contents.push(readFileSync(result.flowPath, "utf8"));
+    }
+
+    const withoutId = (content: string) =>
+      content
+        .split("\n")
+        .filter((line) => !line.startsWith("_flow_id:"))
+        .join("\n");
+    const idLine = (content: string) =>
+      content.split("\n").find((line) => line.startsWith("_flow_id:"));
+
+    expect(idLine(contents[0]!)).toBeDefined();
+    expect(idLine(contents[1]!)).toBeDefined();
+    expect(idLine(contents[0]!)).not.toBe(idLine(contents[1]!));
+    expect(withoutId(contents[0]!)).toBe(withoutId(contents[1]!));
+  });
+});
+
+describe("creation failure modes stay fail-closed", () => {
+  it("an unwritable flows directory fails the create and writes nothing", async () => {
+    if (typeof process.getuid === "function" && process.getuid() === 0) return; // root ignores modes
+    const flowsDir = join(directory, "flows");
+    mkdirSync(flowsDir);
+    chmodSync(flowsDir, 0o500);
+    try {
+      await expect(
+        runCreate(["Audit", "permissions"], {
+          cwd: directory,
+          log: () => {},
+          openFile: () => true,
+        })
+      ).rejects.toThrow();
+      expect(readdirSync(flowsDir)).toEqual([]);
+    } finally {
+      chmodSync(flowsDir, 0o755);
+    }
+  });
+});
+
+describe("create scope display never lies about escaping paths", () => {
+  it("falls back to the absolute path when the custom target escapes the base directory", () => {
+    const home = join(directory, "home");
+    const escapingFlowPath = resolve(directory, "..", "shared-out", "review.md");
+    const scope = describeCreateScope({
+      location: "custom",
+      flowPath: escapingFlowPath,
+      slug: "review",
+      cwd: directory,
+      homeDirectory: home,
+    });
+    expect(scope.displayPath).toBe(escapingFlowPath);
+    expect(scope.displayPath.startsWith("./")).toBe(false);
   });
 });

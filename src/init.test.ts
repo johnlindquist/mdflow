@@ -85,8 +85,11 @@ describe("scaffoldStarterFlows", () => {
     const flow = readFileSync(join(dir, "flows", "review.md"), "utf-8");
     expect(flow).toContain("_flow_id:");
 
+    // Catalog flows ship REAL behavioral suites, not the old length-check stub.
     const suite = readFileSync(join(dir, "flows", "review.eval.ts"), "utf-8");
-    expect(suite).toContain("returns a substantive answer");
+    expect(suite).toContain("finds an out-of-bounds loop in a staged diff");
+    expect(suite).not.toContain("returns a substantive answer");
+    expect(suite).not.toContain("MDFLOW_DRAFT_CASE");
 
     const readme = readFileSync(join(dir, "flows", "README.md"), "utf-8");
     expect(readme).toContain("review.md");

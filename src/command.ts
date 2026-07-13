@@ -751,10 +751,12 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
     }
   }
 
-  // Merge process.env with provided env
-  const runEnv = env || adapterEnv
-    ? { ...adapterEnv, ...process.env, ...env }
-    : undefined;
+  // Merge process.env with provided env. MDFLOW_CONFIG_CWD is mdflow's
+  // internal parent→child config pointer for eval children; the ENGINE (and
+  // everything it spawns — hooks, nested md runs) must never inherit it, or
+  // it would load the outer flow's project config instead of its own.
+  const runEnv: Record<string, string | undefined> = { ...adapterEnv, ...process.env, ...env };
+  delete runEnv.MDFLOW_CONFIG_CWD;
 
   // Determine stdout/stderr pipe config based on mode
   // When spinner is running, we need to pipe stdout to detect first output

@@ -87,4 +87,22 @@ describe("hook bytes in the explain/render configFingerprint", () => {
     expect(before.configFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(after.configFingerprint).not.toBe(before.configFingerprint);
   });
+
+  // A binding is only trustworthy in both directions: bytes changed must move
+  // the fingerprint (above), and bytes unchanged must NOT — otherwise every
+  // receipt is stale on arrival and the invalidation signal means nothing.
+  it("configFingerprint is stable while the flow and its hooks are unchanged", async () => {
+    const { buildExplainJson } = await import("./explain");
+    const flow = join(dir, "review.codex.md");
+    writeFileSync(flow, "---\ndescription: t\n---\nSay ok.\n");
+    writeFileSync(join(dir, "review.codex.hooks.ts"), renderHooksTemplate(["stop"]), {
+      mode: 0o755,
+    });
+
+    const a = await buildExplainJson(flow, [], dir);
+    const b = await buildExplainJson(flow, [], dir);
+
+    expect(a.configFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(a.configFingerprint).toBe(b.configFingerprint);
+  });
 });

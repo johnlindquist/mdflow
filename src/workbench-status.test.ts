@@ -144,8 +144,14 @@ describe("workbench lifecycle status", () => {
 
     writeFileSync(file.path, "---\ndescription: changed\nengine: codex\n---\nChanged body.\n");
     status = (await buildWorkbenchStatusMap([file]))[file.path]!;
-    expect(status.eval).toMatchObject({ state: "unknown", passed: 1, total: 1, current: false });
-    expect(status.eval?.headline).toContain("not current");
+    expect(status.eval).toMatchObject({
+      state: "unknown",
+      passed: 1,
+      total: 1,
+      current: false,
+      verdict: "Stale",
+    });
+    expect(status.eval?.headline).toContain("changed");
 
     const failingVerification = await buildVerificationFingerprint(file.path, suite, plan.cases);
     recordEvalResult(suite, {
@@ -164,6 +170,57 @@ describe("workbench lifecycle status", () => {
     });
     status = (await buildWorkbenchStatusMap([file]))[file.path]!;
     expect(status.eval).toMatchObject({ state: "failing", passed: 0, total: 1, current: true });
+  });
+
+  it("static draft metadata can never render Verified", async () => {
+    const file = writeFlow();
+    // Hand-written draft suite: the ONLY draft signal is the static
+    // `draft: true` case metadata — no MDFLOW_DRAFT_CASE sentinel anywhere.
+    const suite = file.path.replace(/\.md$/, ".eval.ts");
+    writeFileSync(suite, `
+export default [{
+  name: "draft",
+  draft: true,
+  check: () => null,
+}];
+`);
+    // A clean, full, fingerprint-bound receipt exists (e.g. someone called
+    // the exported runEvalSuite directly). Without the draft fact this would
+    // classify Verified — a false green.
+    const plan = inspectEvalSuitePlan(suite);
+    const verification = await buildVerificationFingerprint(file.path, suite, plan.cases);
+    recordEvalResult(suite, {
+      flow: file.path,
+      pass: 1,
+      fail: 0,
+      total: 1,
+      lastRunAt: "2026-07-11T10:00:00.000Z",
+      full: true,
+      currentClean: true,
+      verification,
+      lastRunFingerprint: verification.fingerprint,
+      inconclusive: 0,
+      flaky: 0,
+      cases: [],
+    });
+
+    const syncStatus = buildWorkbenchStatusMapSync([file])[file.path]!;
+    expect(syncStatus.eval).toMatchObject({
+      state: "unknown",
+      current: false,
+      verdict: "Unverified",
+    });
+    expect(syncStatus.eval?.verdictReason).toContain("draft");
+
+    const status = (await buildWorkbenchStatusMap([file]))[file.path]!;
+    expect(status.eval?.state).not.toBe("passing");
+    expect(status.eval?.verdict).not.toBe("Verified");
+    expect(status.eval).toMatchObject({
+      state: "unknown",
+      current: false,
+      verdict: "Unverified",
+    });
+    expect(status.eval?.verdictReason).toContain("draft");
   });
 
   it("keeps verified_improvement distinct from regression_safe and exposes run IDs and capability deltas", () => {

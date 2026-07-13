@@ -16,8 +16,8 @@
  * and !`cmd` examples that must arrive as text, not be expanded.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { basename, join } from "path";
 import { select, confirm } from "@inquirer/prompts";
 import { getAdapter as getEngineAdapter, getRegisteredAdapters } from "./adapters";
 import {
@@ -29,6 +29,7 @@ import {
 } from "./command";
 import { applyDefaults, applyInteractiveMode, getCommandDefaults, loadProjectConfig } from "./config";
 import { parseFrontmatter } from "./parse";
+import { inferEvalRecipes, renderEvalTemplate } from "./eval-convention";
 import { stampCreatedVersion } from "./compat";
 import type { AgentFrontmatter } from "./types";
 import { ensureFlowIdentity } from "./evolution-core";
@@ -48,6 +49,8 @@ interface CatalogEntry {
   name: string;
   description: string;
   content: string;
+  /** A REAL sibling eval suite shipped with the catalog flow, when one exists. */
+  evalContent?: string;
 }
 
 function parseInitArgs(args: string[]): InitOptions {
@@ -84,10 +87,12 @@ export function loadCatalog(): CatalogEntry[] {
     .map((file) => {
       const content = readFileSync(join(catalogDir, file), "utf-8");
       const { frontmatter } = parseFrontmatter(content);
+      const evalPath = join(catalogDir, file.replace(/\.md$/i, ".eval.ts"));
       return {
         name: file,
         description: String(frontmatter.description ?? ""),
         content,
+        evalContent: existsSync(evalPath) ? readFileSync(evalPath, "utf-8") : undefined,
       };
     });
 }
@@ -99,24 +104,6 @@ function packageVersion(): string {
   } catch {
     return "unknown";
   }
-}
-
-function starterEvalSource(flowName: string): string {
-  return `/**
- * Starter behavioral guardrail for ${flowName}.
- *
- * Review and strengthen this case before trusting it for evolution decisions.
- * Preview cost with: md eval flows/${flowName} --plan
- */
-export default [
-  {
-    name: "returns a substantive answer",
-    kind: "stochastic",
-    check: ({ stdout }: { stdout: string }) =>
-      stdout.trim().length >= 20 ? null : "expected at least 20 characters of useful output",
-  },
-];
-`;
 }
 
 /**
@@ -232,20 +219,70 @@ export function scaffoldStarterFlows(cwd: string, engine: string): string[] {
 
   for (const entry of catalog) {
     const target = join(flowsDir, entry.name);
+    const evalName = entry.name.replace(/\.md$/i, ".eval.ts");
+    const evalTarget = join(flowsDir, evalName);
+    const hooksName = entry.name.replace(/\.md$/i, ".hooks.ts");
+    const hooksTarget = join(flowsDir, hooksName);
+
+    let flowCreated = false;
     if (existsSync(target)) {
       lines.push(`  skipped flows/${entry.name} (already exists)`);
+    } else if (existsSync(evalTarget) || existsSync(hooksTarget)) {
+      // Orphaned sibling sidecars are executable TypeScript init did not
+      // write. Creating the catalog flow would pair it with unknown code that
+      // runs on its first `md eval` (suite) or first run (hooks) — refuse the
+      // whole entry instead.
+      const orphans = [evalTarget, hooksTarget].filter((path) => existsSync(path)).map((path) => `flows/${basename(path)}`);
+      lines.push(
+        `  refused flows/${entry.name} (orphan sidecar ${orphans.join(", ")} already exists — ` +
+          `init never adopts executable files it did not write; remove the file(s) and re-run)`
+      );
+      continue;
     } else {
-      writeFileSync(target, ensureFlowIdentity(stampCreatedVersion(entry.content)));
+      // "wx" (O_EXCL) never follows symlinks; a dangling symlink at the
+      // target fails loudly instead of writing through it.
+      writeFileSync(target, ensureFlowIdentity(stampCreatedVersion(entry.content)), { flag: "wx" });
+      flowCreated = true;
       lines.push(`  created flows/${entry.name} — ${entry.description}`);
     }
 
-    const evalName = entry.name.replace(/\.md$/i, ".eval.ts");
-    const evalTarget = join(flowsDir, evalName);
+    if (!flowCreated) {
+      // A pre-existing flow with this name is NOT the catalog flow — pairing
+      // the shipped suite with unrelated content would assert guardrails the
+      // flow never promised. Suites are only written in the same transaction
+      // as their catalog flow.
+      if (!existsSync(evalTarget)) {
+        lines.push(`  skipped flows/${evalName} (flows/${entry.name} is not the catalog flow — add one with md eval add)`);
+      }
+      continue;
+    }
     if (existsSync(evalTarget)) {
-      lines.push(`  skipped flows/${evalName} (already exists)`);
+      // The orphan precheck above makes this a RACE (someone planted the
+      // suite between the check and here) — roll the flow back rather than
+      // pair it with executable code this run did not write.
+      try { rmSync(target, { force: true }); } catch {}
+      throw new Error(
+        `flows/${evalName} appeared while flows/${entry.name} was being created; ` +
+          `rolled back flows/${entry.name} — init never adopts executable files it did not write`
+      );
     } else {
-      writeFileSync(evalTarget, starterEvalSource(entry.name));
-      lines.push(`  created flows/${evalName} — starter behavioral guardrail`);
+      try {
+        if (entry.evalContent) {
+          writeFileSync(evalTarget, entry.evalContent, { flag: "wx" });
+          lines.push(`  created flows/${evalName} — behavioral guardrail suite`);
+        } else {
+          writeFileSync(evalTarget, renderEvalTemplate(inferEvalRecipes(entry.content)), { flag: "wx" });
+          lines.push(`  created flows/${evalName} — draft guardrail (replace its assertions and delete draft: true before running)`);
+        }
+      } catch (error) {
+        // All-or-nothing per catalog entry: a flow without its promised
+        // suite would dodge the coverage ratchet.
+        try { rmSync(target, { force: true }); } catch {}
+        throw new Error(
+          `failed to write flows/${evalName} (${error instanceof Error ? error.message : String(error)}); ` +
+            `rolled back flows/${entry.name}`
+        );
+      }
     }
   }
 

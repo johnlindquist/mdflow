@@ -19,6 +19,7 @@ import { existsSync } from "fs";
 import { mkdir, rm } from "fs/promises";
 import { homedir } from "os";
 import { basename, join } from "path";
+import { atomicWriteFile, withAtomicFileLock } from "./evolution-store";
 import { toRawUrl } from "./remote";
 
 export type RegistryScope = "project" | "user";
@@ -308,7 +309,27 @@ export async function installAgent(spec: string, options: RegistryOptions = {}):
   }
 
   const installedPath = join(paths.registryDir, name);
-  await Bun.write(installedPath, content);
+
+  // Consent boundary: `md install` downloads ONLY the flow markdown — never
+  // sibling hook/eval programs. A pre-existing sidecar next to the install
+  // target was planted by something else and would otherwise ride along with
+  // the flow's name forever. Refuse until the user removes it deliberately.
+  // The check runs under the install lock (so a concurrent plant between
+  // check and write cannot slip through) and the write is atomic
+  // (temp + rename never follows a symlink planted at the destination).
+  withAtomicFileLock(installedPath, () => {
+    const stem = installedPath.replace(/\.md$/i, "");
+    const sidecars = [`${stem}.hooks.ts`, `${stem}.eval.ts`]
+      .filter((sidecar) => existsSync(sidecar));
+    if (sidecars.length > 0) {
+      throw new Error(
+        `Refusing to install "${name}": unexpected sidecar file(s) already exist next to the install target ` +
+          `(${sidecars.join(", ")}). mdflow never installs hook or eval programs from remote sources — ` +
+          `remove the file(s) and re-run md install.`
+      );
+    }
+    atomicWriteFile(installedPath, content, 0o644);
+  });
 
   const entry: LockfileEntry = {
     source: resolved.source,

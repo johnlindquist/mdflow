@@ -68,10 +68,22 @@ import type { RunRecord } from "./telemetry";
 import { compatNotice, isCompatOnlyFrontmatter, stampCompatFile } from "./compat";
 import type { SystemEnvironment } from "./system-environment";
 import { maskArgsArray } from "./secrets";
-import { resolveProjectRootWith } from "./project-root";
+import { isRegistryPath, resolveProjectRootWith } from "./project-root";
 
 function isRemoteUrl(path: string): boolean {
   return path.startsWith("http://") || path.startsWith("https://");
+}
+
+/**
+ * Registry-installed flows (`.mdflow/registry/` at project or user scope)
+ * carry remote provenance even though they live on disk: `md install` only
+ * ever downloads the flow markdown, so a sibling hooks program there was
+ * never consented to. They share the remote flows' hooks trust boundary.
+ * Realpath-aware (src/project-root.ts) — a symlink outside the registry
+ * cannot launder a registry flow into local provenance.
+ */
+function isRegistryFlowPath(path: string): boolean {
+  return isRegistryPath(path);
 }
 
 async function cleanupRemoteFile(localFilePath: string): Promise<void> {
@@ -255,6 +267,17 @@ export class CliRunner {
 
   private writeStdout(data: string): void { console.log(data); }
   private writeStderr(data: string): void { console.error(data); }
+
+  /**
+   * Directory whose project config governs this run. Eval children execute
+   * inside sandbox cwds; MDFLOW_CONFIG_CWD (set by the eval runner) points
+   * back at the flow's own project so config resolution — and therefore the
+   * behavior a receipt fingerprints — matches a normal run of the flow.
+   */
+  private configCwd(): string {
+    const override = this.processEnv.MDFLOW_CONFIG_CWD?.trim();
+    return override ? override : this.cwd;
+  }
 
   private printErrorWithLogPath(message: string, logPath: string | null): void {
     this.writeStderr(`\n${message}`);
@@ -752,8 +775,13 @@ export class CliRunner {
       return { exitCode: await runRoster(cliArgs.passthroughArgs, this.cwd) };
     }
     if (subcommand === "eval") {
-      const { runEvalCli } = await import("./evals");
-      return { exitCode: await runEvalCli(cliArgs.passthroughArgs) };
+      const { runEvalCommand } = await import("./evals-cli");
+      return {
+        exitCode: await runEvalCommand(cliArgs.passthroughArgs, {
+          cwd: this.cwd,
+          isTTY: this.isStdinTTY && this.isStdoutTTY,
+        }),
+      };
     }
     if (subcommand === "evolve") {
       const { runEvolveCli } = await import("./evolve");
@@ -1085,7 +1113,7 @@ export class CliRunner {
     // TOFU gate after it would allow an untrusted remote flow to perform host
     // work before the user has approved the source.
     if (isRemote && !parsed.trustFlag) {
-      const fullConfig = await loadFullConfig(this.cwd);
+      const fullConfig = await loadFullConfig(this.configCwd());
       const trustCommand = parsed.commandFromCli ?? resolveEngine(
         localFilePath,
         baseFrontmatter as AgentFrontmatter,
@@ -1121,7 +1149,7 @@ export class CliRunner {
         () => this.readStdinOnce(),
         parsed,
         parsed.dryRun ? undefined : startLogger,
-        isRemote,
+        isRemote || isRegistryFlowPath(localFilePath),
       );
 
     // Show context dashboard before execution (unless --_quiet)
@@ -1645,7 +1673,7 @@ export class CliRunner {
 
       // Document rule: a file with no meaningful frontmatter and no explicit
       // engine is a document, not a flow — there is nothing to run.
-      const fullConfig = await loadFullConfig(this.cwd);
+      const fullConfig = await loadFullConfig(this.configCwd());
       const resolvedEngine = resolveEngine(localFilePath, baseFrontmatter as AgentFrontmatter, {
         configEngine: fullConfig.engine,
       });
@@ -1656,7 +1684,15 @@ export class CliRunner {
       }
 
       const { command, frontmatter, templateVars, finalBody, args, positionalMappings } =
-        await this.processAgent(localFilePath, baseFrontmatter, rawBody, () => this.readStdinOnce(), parsed);
+        await this.processAgent(
+          localFilePath,
+          baseFrontmatter,
+          rawBody,
+          () => this.readStdinOnce(),
+          parsed,
+          undefined,
+          isRegistryFlowPath(localFilePath),
+        );
 
       const flowId = flowIdForPath(resolve(localFilePath), { cwd: this.cwd });
       const effectiveCwd = resolve(
@@ -2073,7 +2109,7 @@ export class CliRunner {
 
     // Resolve the engine via the v3 ladder: CLI flag > env > filename >
     // frontmatter > config > built-in default.
-    const fullConfig = await loadFullConfig(this.cwd);
+    const fullConfig = await loadFullConfig(this.configCwd());
     let command: string;
     let engineSource: EngineSource = "cli";
     if (commandFromCli) {

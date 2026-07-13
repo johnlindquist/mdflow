@@ -199,12 +199,23 @@ export function resolveHooksFile(opts: {
   const path = hooksFileForFlow(opts.flowPath);
   const forceConvention = Boolean(opts.frontmatterValue);
   if (existsSync(path) || forceConvention) {
-    return {
+    const result: ResolvedHooksFile = {
       kind: "file",
       path,
       source: "convention",
       missing: !existsSync(path),
     };
+    // Convention discovery is a trust decision: a hooks file SIBLING to a
+    // remote or registry-installed flow was never consented to by the user
+    // (md install downloads only the flow markdown — a sidecar there was
+    // planted by something else). Reject loudly rather than silently attach
+    // OR silently drop; only a user-typed --_hooks may run hooks for these.
+    if (opts.isRemote && !result.missing) {
+      result.rejected =
+        "hooks file next to a remote/registry flow is not trusted " +
+        `(${path}); remove it, or pass --_hooks <path> to consent explicitly.`;
+    }
+    return result;
   }
 
   return { kind: "none" };

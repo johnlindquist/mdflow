@@ -14,7 +14,8 @@ md init [-e <eng>] [-y]  # Initialize a flow roster (guided by an agent CLI; -y 
 md create [name]         # Create a new flow file
 md explain <flow.md>     # Show resolved config without executing (free)
 md hooks add|list|remove <flow.md> [event…]  # Manage the flow's lifecycle hooks file (free)
-md eval <flow.md>        # Run the flow's eval suite (costs engine turns)
+md eval <flow.md>        # Run the flow's eval suite (costs engine turns; --plan is free)
+md eval add|list|remove|coverage  # Scaffold/manage suites, fail-closed verdicts, CI ratchet (free)
 md complain <flow.md> "msg"  # Record evolution evidence (free)
 md evolve <flow.md>      # Evidence-gated prompt evolution (--check is free)
 md install <url|gh:...>  # Install a flow into the registry (see src/registry.ts)
@@ -90,7 +91,60 @@ Vercel with Root Directory = `site`). Rules:
 - **`evals.ts`** - `md eval <flow.md>`: behavioral eval suites
   (`<flow>.eval.ts`, export default EvalCase[]) run in hermetic temp dirs;
   trust ledger at `~/.mdflow/eval-results.json`; prints cost before running;
-  eval runs redirect MDFLOW_RUNS_FILE so they never pollute telemetry
+  eval runs redirect MDFLOW_RUNS_FILE so they never pollute telemetry.
+  Scaffolded suites are fail-closed DRAFTS: a paid run is refused while any
+  `MDFLOW_DRAFT_CASE` marker remains; every full run records a content-bound
+  fingerprint (even flaky/inconclusive) so verdicts bind to exact bytes
+
+- **`eval-convention.ts` / `evals-cli.ts`** - the eval convention layer
+  (parallel to hooks): `md eval add|list|remove|coverage`. `add`/`remove` are
+  LOCAL WRITES editing template marker blocks surgically
+  (`// mdflow:case:start <recipe>` … `end`, one `// mdflow:case:insert`);
+  recipes: output/stdin/prompt/fixture/stochastic/nonzero, inferred from the
+  flow body when unspecified. `list`/`coverage`/`--plan`/explain are FREE and
+  NEVER import suite code (static AST plan + text marker parse only — the
+  eval parallel of the hooks consent boundary). One fail-closed classifier
+  (`classifyEvalVerdict`: Verified | Stale | Flaky | Failing | Unverified) is
+  shared by `md eval list`, `md explain`, and the Workbench; Stale beats any
+  old outcome. `md eval coverage` is a shrink-only source-coverage ratchet
+  (baseline `.mdflow-eval-baseline.json`) that never needs paid runs, for CI.
+  Nine example suites ship against `examples/` and `assets/init/catalog/`
+  flows (9 suites / 20 cases / 22 invocations, locked by
+  `shipped-evals.test.ts`); `md create` scaffolds a draft suite by default
+  (`--no-eval` opts out) and `md init` copies the real catalog suites.
+  Post-critique hardening (2026-07-11, `eval-hardening.test.ts`): one
+  `ResolvedEvalEnvironment` per run (child gets `MDFLOW_CONFIG_CWD`),
+  sealed pre/post fingerprints (`EVAL_INPUTS_CHANGED`), materialized/frozen
+  cases, filtered runs never clobber full receipts, fail-closed ledger
+  reads, static `draft: true` case metadata, bounded fingerprint graphs,
+  registry/remote sidecars distrusted.
+  Second-audit hardening (2026-07-11, `eval-audit-hardening.test.ts`):
+  ONE paid preparation boundary — `importPreparedEvalSuite()` (import +
+  materialize + freeze + policy repetitions + draft refusal + static-plan
+  equality) is the only way `md eval` AND `md evolve` turn a suite into
+  runnable cases (evolve was a softer second runner: getters could
+  overspend, drafts could verify proposals); the seal is re-checked at every
+  paid boundary (before each child spawn, after each check) so
+  mutate-run-restore cannot mint a receipt for bytes no trial ran;
+  registry provenance is enforced at RUN time and realpath-based
+  (`isRegistryPath` in project-root.ts) — a suite planted next to a registry
+  flow AFTER install never executes, in eval or evolve; `configCwd` is the
+  nearest project root (`resolveProjectRoot`), not `dirname(flow)`, so a
+  non-git `flows/` roster loads its root config, and `MDFLOW_CONFIG_CWD` is
+  an internal pointer that callers cannot override and the engine never
+  inherits; the fingerprint graph uses the TS AST (bare side-effect imports,
+  `export … from`, require, import-equals; .mts/.cts/.mjs/.cjs/.json),
+  realpath containment, stat-before-read bounds, and ONE shared budget;
+  configHash binds exact config-file BYTES; the ledger is schema-closed
+  (malformed entries refuse the read AND the write) and alias-aware; suite
+  `process.stdout.write` can't corrupt the JSONL protocol;
+  `attemptedRuns` (was `actualInvocations`) is named for what it measures.
+  COLD PATH: `typescript` (~1s to import) is required LAZILY in `evals.ts`
+  (`ts()` accessor, never a module-scope import) — init/create/explain/the
+  Workbench all reach evals.ts through the convention layer, so a static
+  import taxed every CLI invocation (`md init` 2.4s → 0.68s). Keep it lazy.
+  Design doc: `docs/EVAL-CONVENTION.md`; audits:
+  `.artifacts/2026-07-11-eval-hardening-audit-oracle.md`
 
 - **`init.ts`** - `md init`: project bootstrap. Default path launches an
   installed engine CLI interactively, pre-loaded with `assets/init/guide.md`

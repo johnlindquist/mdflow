@@ -499,3 +499,90 @@ describe("repo-bound eval cases (explicit cwd)", () => {
     expect(existsSync(join(tempDir, "keep.txt"))).toBe(true);
   });
 });
+
+describe("draft suites never spend", () => {
+  test("a paid run refuses while MDFLOW_DRAFT_CASE markers remain; --plan stays free", async () => {
+    const { renderEvalTemplate } = await import("./eval-convention");
+    const { runEvalCli } = await import("./evals");
+    const flow = join(tempDir, "draft-flow.md");
+    writeFileSync(flow, "Say hello.\n");
+    writeFileSync(join(tempDir, "draft-flow.eval.ts"), renderEvalTemplate(["output"]));
+
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (line: unknown) => lines.push(String(line));
+    try {
+      // Free plan succeeds and reports the draft.
+      expect(await runEvalCli([flow, "--plan", "--json"])).toBe(0);
+      const plan = JSON.parse(lines.find((l) => l.includes('"eval.plan"'))!);
+      expect(plan.draft).toBe(true);
+      expect(plan.runnable).toBe(false);
+      // Both draft mechanisms report: static `draft: true` metadata (by case
+      // name) and the scoped sentinel scan (by managed block id).
+      expect(plan.draftCaseIds).toContain("output");
+      expect(plan.cases.every((c: { draft: boolean }) => c.draft)).toBe(true);
+
+      // A consented paid run is refused before importing the suite.
+      lines.length = 0;
+      expect(await runEvalCli([flow, "--yes", "--json"])).toBe(1);
+      const refusal = JSON.parse(lines.find((l) => l.includes('"eval.error"'))!);
+      expect(refusal.reasonCode).toBe("DRAFT_SUITE");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+});
+
+describe("fingerprints bind non-clean outcomes", () => {
+  test("a first-ever flaky full run records a current fingerprint but is never clean", async () => {
+    const flow = join(tempDir, "flaky-flow.md");
+    const suite = resolveEvalSuitePath(flow);
+    writeFileSync(flow, "Say hello.\n");
+    writeFileSync(suite, "export default [];\n");
+    const ledger = join(tempDir, "ledger.json");
+
+    let trial = 0;
+    const flakyRunner: FlowRunner = async () => ({
+      stdout: ++trial % 2 === 1 ? "hello" : "goodbye",
+      stderr: "",
+      exitCode: 0,
+    });
+    const cases: EvalCase[] = [
+      {
+        name: "sometimes greets",
+        repetitions: 2,
+        quorum: 1,
+        check: ({ stdout }) => (stdout.includes("hello") ? null : "no greeting"),
+      },
+    ];
+
+    const outcome = await runEvalSuite({
+      flowPath: flow,
+      cases,
+      runFlow: flakyRunner,
+      ledgerPath: ledger,
+      log: () => {},
+    });
+    expect(outcome.flaky).toBe(1);
+
+    const entry = getEvalLedgerEntry(suite, readEvalLedger(ledger));
+    expect(entry?.verification?.fingerprint).toBeDefined();
+    expect(entry?.lastRunFingerprint).toBe(entry!.verification!.fingerprint);
+    expect(entry?.currentClean).toBe(false);
+    expect(entry?.lastCleanAt).toBeUndefined();
+
+    // The canonical classifier sees a CURRENT Flaky verdict, not Stale.
+    const { classifyEvalVerdict } = await import("./eval-convention");
+    const current = await buildVerificationFingerprint(flow, suite, cases);
+    const verdict = classifyEvalVerdict({
+      suiteExists: true,
+      inspectable: true,
+      draft: false,
+      plannedCases: 1,
+      entry,
+      currentFingerprint: current.fingerprint,
+    });
+    expect(verdict.verdict).toBe("Flaky");
+    expect(verdict.current).toBe(true);
+  });
+});

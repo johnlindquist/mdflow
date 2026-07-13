@@ -14,7 +14,8 @@ import { CraftedBy } from './components/CraftedBy';
 import { EasterEggs } from './components/EasterEggs';
 import { AlienDefense } from './components/AlienDefense';
 import { shaderAudio } from './components/shaderAudio';
-import { Terminal as TerminalIcon, Zap, Volume2, VolumeX } from 'lucide-react';
+import { Zap, Volume2, VolumeX } from 'lucide-react';
+import { FlowMark } from './components/FlowMark';
 
 /** The X (formerly Twitter) brand mark — lucide has no X logo. */
 const XLogo: React.FC<{ size?: number }> = ({ size = 16 }) => (
@@ -248,7 +249,7 @@ export default function App() {
             <div data-egg="logo" className="flex items-center gap-2 text-white font-display font-bold tracking-tighter text-2xl group cursor-pointer">
                 <div className="relative">
                     <div className="absolute inset-0 bg-orange-500 blur-lg opacity-40 group-hover:opacity-60 transition-opacity"></div>
-                    <TerminalIcon size={24} className="relative z-10 text-white" />
+                    <FlowMark size={24} className="relative z-10 text-white" />
                 </div>
                 <span className="bg-clip-text text-transparent bg-gradient-to-r from-white to-zinc-400 group-hover:to-white transition-all">mdflow</span>
             </div>

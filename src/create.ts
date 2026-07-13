@@ -52,6 +52,8 @@ export interface CreateOptions {
   dryRun: boolean;
   open: boolean;
   help: boolean;
+  /** Scaffold a sibling draft eval suite (default). --no-eval opts out. */
+  withEval: boolean;
   frontmatter: Record<string, unknown>;
 }
 
@@ -206,6 +208,7 @@ export function parseCreateArgs(args: readonly string[]): CreateOptions {
     dryRun: false,
     open: false,
     help: false,
+    withEval: true,
     frontmatter: {},
   };
   const intentParts: string[] = [];
@@ -230,6 +233,8 @@ export function parseCreateArgs(args: readonly string[]): CreateOptions {
       options.help = true;
     } else if (flag === "--dry-run" || flag === "--preview" || flag === "--_dry-run") {
       options.dryRun = true;
+    } else if (flag === "--no-eval") {
+      options.withEval = false;
     } else if (flag === "--open") {
       options.open = true;
     } else if (flag === "--yes" || flag === "-y" || flag === "--json") {
@@ -383,6 +388,11 @@ function previewMessage(
     formatCreateScope(scope, "preview"),
     `  Intent: ${draft.intent}`,
     `  File:   ${flowPath}`,
+    ...(options.withEval
+      ? [
+          `  Eval:   ${flowPath.replace(/\.md$/i, ".eval.ts")} (fail-closed draft; --no-eval skips it)`,
+        ]
+      : []),
     `  Engine: ${engine ?? "project default (pi if unset)"}`,
     "  Effect: FREE — no files written",
     "",
@@ -438,6 +448,8 @@ Options:
   --content, --body       Override the Markdown prompt body
   --description <text>    Override the roster description
   --dry-run, --preview    Print the exact draft and target; write nothing
+  --no-eval               Skip the sibling draft eval suite (created by default;
+                          it is fail-closed and free until its assertions are real)
   --open                  Open the new flow in $EDITOR
   --project, -p           Use the canonical project flows/ roster (default)
   --global, -g            Create in ~/.mdflow/; md <name> works everywhere
@@ -548,9 +560,28 @@ export async function runCreate(
     homeDirectory,
   });
 
+  const suitePath = flowPath.replace(/\.md$/i, ".eval.ts");
+
   if (options.dryRun) {
     log(previewMessage(draft, flowPath, options, engine, scope));
     return { status: "preview", draft, flowPath };
+  }
+
+  // Orphaned sibling sidecars are executable TypeScript this command did not
+  // write. Pairing a brand-new flow with them silently would let unknown code
+  // run on the flow's first `md eval` (suite) or first run (hooks) — surface
+  // them as conflicts instead.
+  const hooksPath = flowPath.replace(/\.md$/i, ".hooks.ts");
+  if (!existsSync(flowPath)) {
+    for (const orphan of [suitePath, hooksPath]) {
+      if (existsSync(orphan)) {
+        log(
+          `\nA sidecar file already exists for this name: ${orphan}\n` +
+            `Nothing was changed. Choose another name with --name <slug>, or remove the orphaned file first.`
+        );
+        return { status: "conflict", draft, flowPath };
+      }
+    }
   }
 
   // Scope is printed before the first write so there is no ambiguity about
@@ -563,6 +594,7 @@ export async function runCreate(
   if (canonical) {
     const result = applyFlowDraft(draft, {
       target: target!,
+      withEval: options.withEval,
       ...(engine ? { engine } : {}),
     });
     conflict = result.status === "conflict";
@@ -580,6 +612,37 @@ export async function runCreate(
     return { status: "conflict", draft, flowPath };
   }
 
+  if (options.withEval && !created.includes(suitePath)) {
+    try {
+      const { inferEvalRecipes, renderEvalTemplate } = await import("./eval-convention");
+      // "wx" (O_EXCL) never follows symlinks: a dangling symlink planted at
+      // the suite path fails here instead of redirecting the write. It also
+      // fails on a suite that APPEARED after the orphan precheck (a race) —
+      // adopting executable code this command did not write is never ok, so
+      // that failure rolls the whole creation back below.
+      writeFileSync(suitePath, renderEvalTemplate(inferEvalRecipes(draft.markdown)), {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o644,
+      });
+      created.push(suitePath);
+    } catch (error) {
+      // A flow without its promised suite would silently dodge the coverage
+      // ratchet; undo EVERYTHING this command created (flow and any project
+      // support files) so the command is all-or-nothing.
+      try {
+        const { unlinkSync } = await import("node:fs");
+        for (const path of [flowPath, ...created.filter((item) => item !== flowPath)]) {
+          try { unlinkSync(path); } catch {}
+        }
+      } catch {}
+      throw new Error(
+        `Failed to write the eval suite (${suitePath}); rolled the new flow back: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
   if (options.location === "user") {
     const availability = {
       flowPath,
@@ -592,7 +655,14 @@ export async function runCreate(
 
   log(`\n${formatCreateScope(scope, "created")}`);
   log(`Created flow: ${flowPath}`);
-  const supportFiles = created.filter((path) => path !== flowPath);
+  if (created.includes(suitePath)) {
+    log(`Created draft eval: ${suitePath}`);
+    log(
+      `The suite is a fail-closed draft — replace its MDFLOW_DRAFT_CASE assertions, ` +
+        `delete each case's draft: true line, then verify with: md eval ${basename(flowPath)} --plan`
+    );
+  }
+  const supportFiles = created.filter((path) => path !== flowPath && path !== suitePath);
   if (supportFiles.length > 0) log(`Added project support: ${supportFiles.join(", ")}`);
   if (options.location === "user") {
     log(`Run from any directory: ${scope.invocation}`);

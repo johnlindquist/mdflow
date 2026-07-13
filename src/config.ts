@@ -350,6 +350,31 @@ export async function loadProjectConfig(cwd: string): Promise<GlobalConfig> {
   return projectConfig;
 }
 
+export interface EffectiveConfigFile {
+  role: "global" | "gitRoot" | "project";
+  path: string;
+}
+
+/**
+ * Absolute paths of every config file whose contents feed
+ * `loadFullConfig(cwd)`, in precedence order (global → git root → cwd).
+ * Used by eval fingerprinting to bind receipts to the exact config bytes,
+ * not just their parsed shape.
+ */
+export function listEffectiveConfigFiles(cwd: string): EffectiveConfigFile[] {
+  const files: EffectiveConfigFile[] = [];
+  if (existsSync(CONFIG_FILE)) files.push({ role: "global", path: CONFIG_FILE });
+  const resolvedCwd = resolve(cwd);
+  const gitRoot = findGitRoot(resolvedCwd);
+  if (gitRoot && gitRoot !== resolvedCwd) {
+    const gitRootFile = findProjectConfigFile(gitRoot);
+    if (gitRootFile) files.push({ role: "gitRoot", path: gitRootFile });
+  }
+  const cwdFile = findProjectConfigFile(resolvedCwd);
+  if (cwdFile) files.push({ role: "project", path: cwdFile });
+  return files;
+}
+
 /**
  * Load global config from ~/.mdflow/config.yaml
  * Falls back to built-in defaults if file doesn't exist

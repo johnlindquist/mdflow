@@ -15,6 +15,8 @@ Commands:
   md render <flow.md>           Render prompt + full config as a shareable HTML page (free)
   md hooks add|list|remove <flow.md> [event…]  Manage the flow's lifecycle hooks file
   md eval <flow.md> [--plan]    Run or cost-preview the executable eval suite
+  md eval add|list|remove|coverage  Scaffold suites, show fail-closed verdicts,
+                                and run the free coverage ratchet
   md feedback <flow.md> "msg"   Record feedback with a durable ID (free)
   md complain <flow.md> "msg"   Alias for md feedback
   md evolve plan <flow.md>      Show evidence, verification, cost, and writes (free)

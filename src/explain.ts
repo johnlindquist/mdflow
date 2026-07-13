@@ -87,6 +87,8 @@ export interface ExplainResult {
     error?: string;
     warnings?: string[];
   };
+  /** Static eval-suite status (verdict from the trust ledger); local flows only. */
+  evaluation?: import("./eval-convention").EvalStatus;
 }
 
 function truncateText(text: string, maxLength: number): { text: string; truncated: boolean } {
@@ -264,6 +266,40 @@ export async function analyzeAgent(
     }
   }
 
+  // Behavioral eval status: static planner + trust ledger only. A suite with
+  // top-level side effects must never execute during explain, and a broken
+  // status computation must never fail the explanation itself — but an
+  // unreadable trust ledger is surfaced fail-closed as an explicit
+  // Unverified status, never silently omitted (hiding the section would make
+  // ledger corruption invisible exactly when it matters).
+  let evaluationResult: ExplainResult["evaluation"];
+  if (!isRemote) {
+    try {
+      const { inspectEvalStatus } = await import("./eval-convention");
+      evaluationResult = await inspectEvalStatus(localFilePath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/eval trust ledger/i.test(message)) {
+        const { resolveEvalSuitePath } = await import("./evals");
+        const suitePath = resolveEvalSuitePath(resolve(localFilePath));
+        evaluationResult = {
+          flowPath: resolve(localFilePath),
+          suitePath,
+          exists: existsSync(suitePath),
+          inspectable: false,
+          draft: false,
+          draftCaseIds: [],
+          managedCaseIds: [],
+          verdict: "Unverified",
+          reason: `trust ledger unreadable (LEDGER_UNREADABLE): ${message}`,
+          current: false,
+        };
+      } else {
+        evaluationResult = undefined;
+      }
+    }
+  }
+
   const envVars = extractEnvVars(frontmatter);
   const envKeys = envVars ? Object.keys(envVars) : [];
 
@@ -354,6 +390,7 @@ export async function analyzeAgent(
     },
     systemPrompt: systemPromptResult,
     hooks: hooksResult,
+    evaluation: evaluationResult,
   };
 }
 
@@ -416,6 +453,27 @@ export function formatExplainOutput(result: ExplainResult): string {
       for (const warning of result.hooks.warnings ?? []) {
         lines.push(warning);
       }
+    }
+    lines.push("");
+  }
+
+  if (result.evaluation) {
+    const evaluation = result.evaluation;
+    lines.push(thinSep, "BEHAVIORAL EVAL", thinSep);
+    if (!evaluation.exists) {
+      lines.push(`No eval suite yet (expected: ${evaluation.suitePath})`);
+      lines.push(`Verdict: ${evaluation.verdict} — ${evaluation.reason}`);
+      lines.push(`Create one: md eval add ${result.agentPath}`);
+    } else {
+      lines.push(`Suite: ${evaluation.suitePath}`);
+      if (evaluation.cases !== undefined) {
+        lines.push(`Cases: ${evaluation.cases}${evaluation.draft ? ` (draft: ${evaluation.draftCaseIds.join(", ")})` : ""}`);
+        lines.push(`Paid invocations: ${evaluation.plannedInvocations}`);
+      }
+      lines.push(`Verdict: ${evaluation.verdict}`);
+      lines.push(`Reason: ${evaluation.reason}`);
+      if (evaluation.lastCleanAt) lines.push(`Last clean run: ${evaluation.lastCleanAt}`);
+      lines.push(`Next: md eval ${result.agentPath} --plan`);
     }
     lines.push("");
   }
@@ -505,6 +563,12 @@ export interface ExplainJson {
   inputs: ProtocolInput[];
   warnings: string[];
   configFingerprint: string;
+  /**
+   * Additive: static eval-suite verdict. Deliberately OUTSIDE
+   * configFingerprint — a suite edit changes proof state, not how the flow
+   * executes.
+   */
+  evaluation?: import("./eval-convention").EvalStatus;
 }
 
 /**
@@ -611,6 +675,7 @@ export async function explainJsonFromResult(
     inputs: mapInputsToProtocol(result.originalFrontmatter._inputs),
     warnings,
     configFingerprint: `sha256:${fingerprint}`,
+    ...(result.evaluation ? { evaluation: result.evaluation } : {}),
   };
 }
 

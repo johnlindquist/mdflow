@@ -14,18 +14,21 @@ import { applyDefaults, getCommandDefaultsFromConfig, loadFullConfig, loadProjec
 import {
   buildVerificationFingerprint,
   buildVerificationEnvironmentFingerprint,
-  applyPolicyRepetitions,
-  evalInvocationCount,
+  importPreparedEvalSuite,
   inspectEvalSuitePlan,
   makeCliFlowRunner,
   getEvalLedgerEntry,
   readEvalLedger,
+  resolveEvalEnvironment,
   resolveEvalSuitePath,
   runEvalSuite,
   type EvalCase,
   type EvalSuiteOutcome,
   type FlowRunner,
+  type ResolvedEvalEnvironment,
 } from "./evals";
+import { detectDraftCaseIds } from "./eval-convention";
+import { isRegistryPath } from "./project-root";
 import {
   capabilityManifest,
   canonicalFlowPath,
@@ -101,7 +104,9 @@ export interface EvolveDecision {
     | "FEEDBACK_UNCOVERED"
     | "POLICY_OFF"
     | "WORKFLOW_UNSUPPORTED"
-    | "BUDGET_EXCEEDED";
+    | "BUDGET_EXCEEDED"
+    | "DRAFT_SUITE"
+    | "UNTRUSTED_SIDECAR";
   evidence: EvolveEvidence;
 }
 
@@ -379,14 +384,6 @@ export interface EvolveRunResult {
   pendingPath?: string;
 }
 
-async function loadSuite(suitePath: string): Promise<EvalCase[]> {
-  const mod = await import(`${suitePath}?evolve=${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  if (!Array.isArray(mod.default) || mod.default.length === 0) {
-    throw new Error(`${suitePath} has no cases (export default an EvalCase[])`);
-  }
-  return mod.default as EvalCase[];
-}
-
 function targetedImprovement(
   current: EvalSuiteOutcome,
   proposal: EvalSuiteOutcome,
@@ -455,12 +452,47 @@ export async function runEvolve(options: EvolveRunOptions): Promise<EvolveRunRes
     return { exitCode: 0, decision, applied: false };
   }
 
+  // Registry-installed flows carry remote provenance: `md install` never
+  // installs eval programs, so a convention sidecar next to one was planted
+  // after installation. Evolve imports and executes the suite — refuse.
+  if (isRegistryPath(flowPath) || isRegistryPath(suitePath)) {
+    const decision: EvolveDecision = {
+      evolve: false,
+      reasonCode: "UNTRUSTED_SIDECAR",
+      reason:
+        `${suitePath} sits next to a registry-installed flow; md install never installs eval programs, ` +
+        `so this sidecar was not consented to. Copy the flow into your project to evolve it.`,
+      evidence,
+    };
+    log(`no proposal: ${decision.reason}`);
+    return { exitCode: 1, decision, applied: false };
+  }
+
   let staticPlan: ReturnType<typeof inspectEvalSuitePlan>;
   try {
     staticPlan = inspectEvalSuitePlan(suitePath, policy.repetitions);
   } catch (error) {
     const decision = decideEvolve({ suiteExists, evidence, mode: options.mode, policyMode: policy.mode, workflow });
     log(`cannot plan eval suite safely: ${error instanceof Error ? error.message : String(error)}`);
+    return { exitCode: 1, decision, applied: false };
+  }
+
+  // Draft refusal mirrors `md eval`: a scaffolded suite can never verify a
+  // proposal (or spend paid invocations through evolve's runner). Static
+  // `draft: true` metadata is primary; the sentinel scan backs it up.
+  const sentinelDraftIds = detectDraftCaseIds(readFileSync(suitePath, "utf8"));
+  const staticDraftIds = staticPlan.cases.filter((item) => item.draft).map((item) => item.name);
+  const draftCaseIds = [...new Set([...staticDraftIds, ...sentinelDraftIds])];
+  if (draftCaseIds.length > 0) {
+    const decision: EvolveDecision = {
+      evolve: false,
+      reasonCode: "DRAFT_SUITE",
+      reason:
+        `${suitePath} still contains draft case(s): ${draftCaseIds.join(", ")} — a draft suite cannot ` +
+        `verify a proposal. Replace the draft assertions (and remove \`draft: true\`) first.`,
+      evidence,
+    };
+    log(`no proposal: ${decision.reason}`);
     return { exitCode: 1, decision, applied: false };
   }
 
@@ -574,20 +606,13 @@ export async function runEvolve(options: EvolveRunOptions): Promise<EvolveRunRes
     }
   }
 
-  // Eval modules are executable code. Import only after consent, then verify
-  // their runtime shape still matches the static cost/coverage plan.
+  // Eval modules are executable code. Import only after consent, through the
+  // SAME preparation boundary as `md eval` (materialize + freeze + policy
+  // repetitions + draft refusal + static-plan equality) — evolve must never
+  // be a softer second paid runner where getters can overspend consent.
   let cases: EvalCase[];
   try {
-    cases = applyPolicyRepetitions(await loadSuite(suitePath), policy.repetitions);
-    const runtimeShape = cases.map((item) => ({
-      name: item.name,
-      evidence: item.evidence ?? [],
-      repetitions: item.repetitions ?? policy.repetitions,
-      quorum: item.quorum ?? item.repetitions ?? policy.repetitions,
-    }));
-    if (JSON.stringify(runtimeShape) !== JSON.stringify(staticPlan.cases) || evalInvocationCount(cases) !== evalInvocations) {
-      throw new Error("eval suite runtime shape differs from the announced static plan");
-    }
+    cases = await importPreparedEvalSuite({ suitePath, policyRepetitions: policy.repetitions, staticPlan });
   } catch (error) {
     log(`cannot load consented eval suite: ${error instanceof Error ? error.message : String(error)}`);
     return { exitCode: 1, decision, applied: false };
@@ -646,12 +671,25 @@ export async function runEvolve(options: EvolveRunOptions): Promise<EvolveRunRes
     log(`current guardrails (${cases.length} case${cases.length === 1 ? "" : "s"}, ${evalInvocations} invocation${evalInvocations === 1 ? "" : "s"}):`);
     const currentWorkspace = createEvolutionWorkspace(flowPath, join(receiptRoot, "workspaces", "current"), original);
     const runFlow = options.runFlow ?? makeCliFlowRunner(join(import.meta.dir, "index.ts"));
+    // The workspace is its own project: resolve ONE environment inside it so
+    // the eval children load the WORKSPACE's config (the copied project
+    // root, not just the flow's subdirectory), and seal the workspace's eval
+    // inputs so suite code cannot rewrite them mid-run.
+    const currentWorkspaceEnvironment = await resolveEvalEnvironment(currentWorkspace.flowPath);
+    const currentWorkspaceSeal = await buildVerificationFingerprint(
+      currentWorkspace.flowPath,
+      resolveEvalSuitePath(currentWorkspace.flowPath),
+      cases,
+      currentWorkspaceEnvironment
+    );
     const ancestorOutcome = await runEvalSuite({
       flowPath: currentWorkspace.flowPath,
       cases,
       runFlow,
       log,
       noLedger: true,
+      environment: currentWorkspaceEnvironment,
+      sealedFingerprint: currentWorkspaceSeal.fingerprint,
       env: {
         MDFLOW_EVOLUTION_RUN: run.id,
         MDFLOW_EVOLUTION_WORKSPACE_ROOT: currentWorkspace.root,
@@ -728,7 +766,7 @@ export async function runEvolve(options: EvolveRunOptions): Promise<EvolveRunRes
 
     let proposalCases: EvalCase[];
     try {
-      proposalCases = applyPolicyRepetitions(await loadSuite(suitePath), policy.repetitions);
+      proposalCases = await importPreparedEvalSuite({ suitePath, policyRepetitions: policy.repetitions, staticPlan });
       const preProposalFingerprint = await buildVerificationFingerprint(flowPath, suitePath, proposalCases);
       if (preProposalFingerprint.fingerprint !== currentFingerprint.fingerprint) {
         const reason = "flow dependencies, suite, config, engine, or policy changed during proposal generation";
@@ -751,12 +789,21 @@ export async function runEvolve(options: EvolveRunOptions): Promise<EvolveRunRes
     log(`proposal guardrails (${cases.length} case${cases.length === 1 ? "" : "s"}, ${evalInvocations} invocation${evalInvocations === 1 ? "" : "s"}):`);
     event("evolve.proposal.verification.started", { runId: run.id, cases: cases.length, invocations: evalInvocations });
     const proposalWorkspace = createEvolutionWorkspace(flowPath, join(receiptRoot, "workspaces", "proposal"), proposal);
+    const proposalWorkspaceEnvironment: ResolvedEvalEnvironment = await resolveEvalEnvironment(proposalWorkspace.flowPath);
+    const proposalWorkspaceSeal = await buildVerificationFingerprint(
+      proposalWorkspace.flowPath,
+      resolveEvalSuitePath(proposalWorkspace.flowPath),
+      proposalCases,
+      proposalWorkspaceEnvironment
+    );
     const candidateOutcome = await runEvalSuite({
       flowPath: proposalWorkspace.flowPath,
       cases: proposalCases,
       runFlow,
       log,
       noLedger: true,
+      environment: proposalWorkspaceEnvironment,
+      sealedFingerprint: proposalWorkspaceSeal.fingerprint,
       env: {
         MDFLOW_EVOLUTION_RUN: run.id,
         MDFLOW_EVOLUTION_WORKSPACE_ROOT: proposalWorkspace.root,

@@ -4,8 +4,26 @@
  * CLI cold path and must not pull in prompts, engines, or TUI dependencies.
  */
 
-import { existsSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
+
+/**
+ * Registry-installed flows (`.mdflow/registry/` at project or user scope)
+ * carry remote provenance even though they live on disk: `md install` only
+ * ever downloads the flow markdown, so sibling hook/eval programs there were
+ * never consented to. The check follows symlinks (realpath) so an alias
+ * outside the registry cannot launder a registry flow into local provenance.
+ */
+export function isRegistryPath(path: string): boolean {
+  const marker = `${sep}.mdflow${sep}registry${sep}`;
+  const resolved = resolve(path);
+  if (resolved.includes(marker)) return true;
+  try {
+    return realpathSync(resolved).includes(marker);
+  } catch {
+    return false;
+  }
+}
 
 export const PROJECT_CONFIG_NAMES = [
   "mdflow.config.yaml",

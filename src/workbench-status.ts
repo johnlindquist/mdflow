@@ -8,14 +8,16 @@
  * suite code.
  */
 
-import { existsSync } from "node:fs";
 import type { AgentFile } from "./cli";
+import {
+  classifyEvalVerdict,
+  inspectEvalSuiteStatic,
+  resolveFlowPolicyRepetitions,
+} from "./eval-convention";
 import {
   buildVerificationFingerprint,
   getEvalLedgerEntry,
-  inspectEvalSuitePlan,
   readEvalLedger,
-  resolveEvalSuitePath,
   type EvalLedgerEntry,
   type EvalSuitePlan,
 } from "./evals";
@@ -48,9 +50,17 @@ interface EvalSnapshot {
   plan?: EvalSuitePlan;
   planError?: string;
   entry?: EvalLedgerEntry;
+  /**
+   * True when the suite is still a draft — the SAME union every other
+   * surface uses (static `draft: true` case metadata ∪ scoped
+   * MDFLOW_DRAFT_CASE sentinel scan), sourced from inspectEvalSuiteStatic.
+   */
+  draft?: boolean;
   /** Undefined means the synchronous builder did not check freshness. */
   receiptCurrent?: boolean;
   receiptError?: string;
+  /** The freshly computed content fingerprint (async builder only). */
+  currentFingerprint?: string;
 }
 
 interface FlowSnapshot {
@@ -88,25 +98,21 @@ function runsByFlowId(items: readonly EvolutionRunRecord[]): Map<string, Evoluti
 }
 
 function inspectEvaluation(file: AgentFile, ledger: Record<string, EvalLedgerEntry>): EvalSnapshot {
-  const suitePath = resolveEvalSuitePath(file.path);
-  if (!existsSync(suitePath)) return { suitePath, exists: false };
+  // Same static inspection as `md eval list`/`md explain`: draft is the
+  // union of static `draft: true` case metadata and the sentinel scan. A
+  // sentinel-only view here previously let hand-written `draft: true` cases
+  // with a ledger receipt render Verified — a false green.
+  const inspection = inspectEvalSuiteStatic(file.path);
+  if (!inspection.exists) return { suitePath: inspection.suitePath, exists: false };
 
-  const entry = getEvalLedgerEntry(suitePath, ledger);
-  try {
-    return {
-      suitePath,
-      exists: true,
-      plan: inspectEvalSuitePlan(suitePath),
-      entry,
-    };
-  } catch (error) {
-    return {
-      suitePath,
-      exists: true,
-      planError: errorMessage(error),
-      entry,
-    };
-  }
+  return {
+    suitePath: inspection.suitePath,
+    exists: true,
+    plan: inspection.plan,
+    planError: inspection.planError,
+    entry: getEvalLedgerEntry(inspection.suitePath, ledger),
+    draft: inspection.draft,
+  };
 }
 
 function readSnapshots(
@@ -115,17 +121,27 @@ function readSnapshots(
 ): FlowSnapshot[] {
   const evidence = options.evidence ?? readEvidence();
   const runs = options.runs ?? listEvolutionRuns();
-  const ledger = options.ledger ?? readEvalLedger();
+  let ledger: Record<string, EvalLedgerEntry> = {};
+  let ledgerError: string | undefined;
+  try {
+    ledger = options.ledger ?? readEvalLedger();
+  } catch (error) {
+    // A corrupt ledger must not crash the Workbench, but it is surfaced on
+    // every flow rather than silently rendered as "no receipts".
+    ledgerError = errorMessage(error);
+  }
   const evidenceGroups = groupedByFlowId(evidence);
   const runGroups = runsByFlowId(runs);
 
   return files.map((file) => {
     const flowId = identifyFlow(file.path).id;
+    const evaluation = inspectEvaluation(file, ledger);
+    if (ledgerError) evaluation.receiptError = `trust ledger unreadable: ${ledgerError}`;
     return {
       file,
       evidence: evidenceGroups.get(flowId) ?? [],
       runs: runGroups.get(flowId) ?? [],
-      evaluation: inspectEvaluation(file, ledger),
+      evaluation,
     };
   });
 }
@@ -172,81 +188,53 @@ function resultCounts(snapshot: EvalSnapshot): Pick<WorkbenchEvalStatus, "passed
   return {};
 }
 
+/**
+ * The canonical fail-closed verdict IS the presentation state — one
+ * classifier everywhere (`md eval list`, `md explain`, here), so the
+ * Workbench can never render a green state the classifier would dispute.
+ * The synchronous builder has not proven freshness, so its verdicts stay at
+ * Unverified ("freshness could not be established") until
+ * buildWorkbenchStatusMap computes the current fingerprint.
+ */
 function evalStatus(snapshot: EvalSnapshot): WorkbenchEvalStatus {
-  if (!snapshot.exists) {
-    return { state: "missing", current: false, headline: "No eval suite yet" };
-  }
-  if (snapshot.planError) {
-    return {
-      state: "unknown",
-      current: false,
-      headline: `Eval suite cannot be inspected safely: ${snapshot.planError}`,
-    };
-  }
-
+  const verdict = classifyEvalVerdict({
+    suiteExists: snapshot.exists,
+    inspectable: Boolean(snapshot.plan),
+    draft: snapshot.draft === true,
+    plannedCases: snapshot.plan?.cases.length ?? 0,
+    entry: snapshot.entry,
+    currentFingerprint: snapshot.currentFingerprint,
+  });
   const counts = resultCounts(snapshot);
-  const entry = snapshot.entry;
-  const cases = snapshot.plan?.cases.length ?? entry?.total ?? 0;
-  if (!entry) {
-    return {
-      ...counts,
-      state: "unknown",
-      current: false,
-      headline: `${plural(cases, "eval case")} · no proof recorded`,
-    };
+  const state: WorkbenchEvalStatus["state"] = !snapshot.exists
+    ? "missing"
+    : verdict.verdict === "Verified"
+      ? "passing"
+      : verdict.verdict === "Failing"
+        ? "failing"
+        // Stale, Flaky, and Unverified all render as unproven — never green.
+        : "unknown";
+
+  let headline: string;
+  if (!snapshot.exists) {
+    headline = "No eval suite yet";
+  } else {
+    const prefix = snapshot.entry
+      ? `${snapshot.entry.pass}/${snapshot.entry.total} last passing · `
+      : snapshot.plan
+        ? `${plural(snapshot.plan.cases.length, "eval case")} · `
+        : "";
+    const suffix = snapshot.receiptError ? ` · ${snapshot.receiptError}` : "";
+    headline = `${prefix}${verdict.reason}${suffix}`;
   }
 
-  const inconclusive = entry.inconclusive ?? 0;
-  const flaky = entry.flaky ?? 0;
-  if (snapshot.receiptError) {
-    return {
-      ...counts,
-      state: "unknown",
-      current: false,
-      headline: `${entry.pass}/${entry.total} last passing · proof freshness unavailable: ${snapshot.receiptError}`,
-    };
-  }
-  if (snapshot.receiptCurrent === false) {
-    return {
-      ...counts,
-      state: "unknown",
-      current: false,
-      headline: `${entry.pass}/${entry.total} last passing · recorded proof is not current`,
-    };
-  }
-  if (inconclusive > 0 || flaky > 0) {
-    const qualifiers = [
-      inconclusive > 0 ? plural(inconclusive, "inconclusive case") : "",
-      flaky > 0 ? plural(flaky, "flaky case") : "",
-    ].filter(Boolean).join(" · ");
-    return {
-      ...counts,
-      state: "unknown",
-      current: snapshot.receiptCurrent,
-      headline: `${entry.pass}/${entry.total} passing · ${qualifiers}`,
-    };
-  }
-  if (entry.fail > 0) {
-    return {
-      ...counts,
-      state: "failing",
-      current: snapshot.receiptCurrent,
-      headline: `${entry.pass}/${entry.total} passing · ${plural(entry.fail, "failing case")}`,
-    };
-  }
-  if (entry.currentClean && entry.total > 0 && entry.pass === entry.total) {
-    return {
-      ...counts,
-      state: "passing",
-      current: snapshot.receiptCurrent,
-      headline: `${entry.pass}/${entry.total} passing${snapshot.receiptCurrent === true ? " · current proof" : " · last clean receipt"}`,
-    };
-  }
   return {
     ...counts,
-    state: "unknown",
-    current: snapshot.receiptCurrent,
-    headline: `${entry.pass}/${entry.total} passing · proof is incomplete`,
+    state,
+    current: verdict.current,
+    headline,
+    verdict: verdict.verdict,
+    verdictReason: verdict.reason,
   };
 }
 
@@ -393,6 +381,27 @@ export async function buildWorkbenchStatusMap(
   const snapshots = readSnapshots(files, options);
   await Promise.all(snapshots.map(async (snapshot) => {
     const { evaluation } = snapshot;
+    if (!evaluation.exists) return;
+    // The recorded fingerprint hashes cases AFTER the flow's evolve policy
+    // repetitions were applied, so freshness must plan with the same policy
+    // (and a quorum that leans on that policy must not read as
+    // uninspectable under the default of 1).
+    try {
+      const policyRepetitions = await resolveFlowPolicyRepetitions(snapshot.file.path);
+      const inspection = inspectEvalSuiteStatic(snapshot.file.path, policyRepetitions);
+      // Recompute the draft union (plan `draft: true` metadata ∪ sentinel
+      // scan) on the same bytes the replanned cases came from, so a replan
+      // can never weaken the draft fact other surfaces would report.
+      evaluation.draft = inspection.draft;
+      if (inspection.plan) {
+        evaluation.plan = inspection.plan;
+        evaluation.planError = undefined;
+      } else if (!evaluation.plan) {
+        evaluation.planError = inspection.planError;
+      }
+    } catch (error) {
+      if (!evaluation.plan) evaluation.planError = errorMessage(error);
+    }
     if (!evaluation.plan || !evaluation.entry?.lastRunFingerprint || !evaluation.entry.verification) {
       if (evaluation.entry) evaluation.receiptCurrent = false;
       return;
@@ -403,9 +412,12 @@ export async function buildWorkbenchStatusMap(
         evaluation.suitePath,
         evaluation.plan.cases,
       );
+      evaluation.currentFingerprint = current.fingerprint;
       evaluation.receiptCurrent = evaluation.entry.lastRunFingerprint === current.fingerprint
         && evaluation.entry.verification.fingerprint === current.fingerprint;
     } catch (error) {
+      // Fingerprint unavailable: freshness stays unknown (classifies as
+      // Unverified, never Stale — Stale asserts an actual diff).
       evaluation.receiptCurrent = false;
       evaluation.receiptError = errorMessage(error);
     }

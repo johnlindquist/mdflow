@@ -217,10 +217,14 @@ describe("applyFlowDraft", () => {
     expect(result.status).toBe("created");
     expect(result.created).toEqual([
       join(directory, "flows", "review-staged-changes.md"),
+      join(directory, "flows", "review-staged-changes.eval.ts"),
       join(directory, "flows", "README.md"),
       join(directory, ".mdflow.yaml"),
     ]);
     expect(readFileSync(result.flowPath, "utf8")).toBe(draft.markdown);
+    expect(readFileSync(join(directory, "flows", "review-staged-changes.eval.ts"), "utf8")).toContain(
+      "MDFLOW_DRAFT_CASE"
+    );
     expect(readFileSync(join(directory, "flows", "README.md"), "utf8")).toContain("Open the Flow Workbench: `md`");
     expect(readFileSync(join(directory, ".mdflow.yaml"), "utf8")).toContain("engine: codex");
   });
@@ -236,6 +240,7 @@ describe("applyFlowDraft", () => {
     expect(result.status).toBe("created");
     expect(result.created).toEqual([
       join(directory, "flows", "review-staged-changes.md"),
+      join(directory, "flows", "review-staged-changes.eval.ts"),
       join(directory, "flows", "README.md"),
     ]);
     expect(existsSync(join(directory, ".mdflow.yaml"))).toBe(false);

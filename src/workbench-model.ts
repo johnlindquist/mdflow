@@ -7,12 +7,13 @@
  * non-interactive CLI can therefore share exactly the same creation contract.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import yaml from "js-yaml";
 import { getRegisteredAdapters } from "./adapters/index";
 import { mdflowVersion, stampCreatedVersion } from "./compat";
+import { inferEvalRecipes, renderEvalTemplate } from "./eval-convention";
 import { ensureFlowIdentity } from "./evolution-core";
 import {
   PROJECT_CONFIG_NAMES,
@@ -65,6 +66,8 @@ export interface ApplyFlowDraftOptions {
   startPath?: string;
   target?: WorkbenchTarget;
   engine?: string;
+  /** Scaffold the paired draft eval suite (default true). */
+  withEval?: boolean;
 }
 
 export interface ApplyFlowDraftResult {
@@ -414,6 +417,15 @@ export function applyFlowDraft(
     return { status: "conflict", target, flowPath, created: [], skipped: [] };
   }
 
+  // Orphaned sibling sidecars are executable TypeScript this call did not
+  // write; silently pairing a brand-new flow with them would let unknown
+  // code run on its first `md eval` (suite) or first run (hooks).
+  const suitePath = flowPath.replace(/\.md$/i, ".eval.ts");
+  const hooksPath = flowPath.replace(/\.md$/i, ".hooks.ts");
+  if (existsSync(suitePath) || existsSync(hooksPath)) {
+    return { status: "conflict", target, flowPath, created: [], skipped: [] };
+  }
+
   mkdirSync(target.flowsDir, { recursive: true });
   if (writeExclusive(flowPath, draft.markdown) === "exists") {
     return { status: "conflict", target, flowPath, created: [], skipped: [] };
@@ -421,6 +433,29 @@ export function applyFlowDraft(
 
   const created = [flowPath];
   const skipped: string[] = [];
+
+  // Workbench-originated creates get the same paired draft suite as
+  // `md create` — the coverage ratchet must not depend on which surface
+  // created the flow. All-or-nothing: a suite failure rolls the flow back,
+  // and so does LOSING the exclusive write (a suite that appeared between
+  // the orphan precheck and here is executable code this call did not
+  // write — pairing the new flow with it would be adoption, not creation).
+  if (options.withEval !== false) {
+    try {
+      if (writeExclusive(suitePath, renderEvalTemplate(inferEvalRecipes(draft.markdown))) === "created") {
+        created.push(suitePath);
+      } else {
+        try { rmSync(flowPath, { force: true }); } catch {}
+        return { status: "conflict", target, flowPath, created: [], skipped: [] };
+      }
+    } catch (error) {
+      try { rmSync(flowPath, { force: true }); } catch {}
+      throw new Error(
+        `Failed to write the eval suite (${suitePath}); rolled the new flow back: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
   const readmePath = join(target.flowsDir, "README.md");
   if (writeExclusive(readmePath, rosterReadme()) === "created") created.push(readmePath);
   else skipped.push(readmePath);

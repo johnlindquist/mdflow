@@ -34,12 +34,13 @@ describe("pre-runner global help router", () => {
     }
 
     // Captured from the pre-router canonical output, with the required hooks
-    // and render commands inserted after `md explain` and the --_hooks /
-    // --dry-run-alias flag lines added post-audit.
-    expect(Buffer.byteLength(help.stdout)).toBe(5561);
+    // and render commands inserted after `md explain`, the --_hooks /
+    // --dry-run-alias flag lines added post-audit, and the eval management
+    // subcommand lines (md eval add|list|remove|coverage).
+    expect(Buffer.byteLength(help.stdout)).toBe(5707);
     expect(
       new Bun.CryptoHasher("sha256").update(help.stdout).digest("hex"),
-    ).toBe("d344c8e6eed7fd6c6b2b7ef7cdcf71a1eb15f83ef25f3c6930ef26a7b6069289");
+    ).toBe("d9a9f54b1c35d35beeac93b1c468788dc7a04fba46991973d7d18aa3c25ec855");
     expect(help.stdout).toMatchSnapshot();
   });
 

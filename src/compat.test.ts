@@ -13,6 +13,7 @@ import {
   stampCompatFile,
   stampCreatedVersion,
 } from "./compat";
+import { parseRawFrontmatter } from "./parse";
 
 const v = (s: string) => parseVersion(s)!;
 
@@ -217,4 +218,51 @@ describe("stamping never corrupts exotic-but-valid frontmatter", () => {
     const next = applyCompatStamp(content, "9.9.9");
     expect(next).toContain("_compat: 9.9.9");
   });
+});
+
+/**
+ * Sweep the stamping guarantee across a corpus of frontmatter shapes, the
+ * way a multi-seed soak sweeps game states: every shape must land in exactly
+ * one of two safe arms — stamped (still parses, key present, every original
+ * line preserved, second stamp a no-op) or skipped (byte-identical original).
+ * A corrupt in-between state is unrepresentable in either arm. The corpus
+ * must exercise BOTH arms so the skip arm can't pass vacuously.
+ */
+describe("stamping sweep across exotic-but-valid frontmatter shapes", () => {
+  const corpus: Array<{ name: string; content: string; expectStamp: boolean }> = [
+    { name: "inline flow mapping with keys", content: "---\n{description: exotic}\n---\nBody.\n", expectStamp: false },
+    { name: "multiline flow mapping", content: "---\n{\n  description: t\n}\n---\nBody.\n", expectStamp: false },
+    { name: "top-level sequence", content: "---\n- alpha\n- beta\n---\nBody.\n", expectStamp: false },
+    { name: "bare scalar document", content: "---\nhello\n---\nBody.\n", expectStamp: false },
+    { name: "anchor and alias mapping", content: "---\ndescription: &d t\nalso: *d\n---\nBody.\n", expectStamp: true },
+    { name: "comment-bearing mapping", content: "---\n# owner: docs\ndescription: t\n---\nBody.\n", expectStamp: true },
+  ];
+
+  it("exercises both arms — the sweep is not a strawman", () => {
+    expect(corpus.some((entry) => entry.expectStamp)).toBe(true);
+    expect(corpus.some((entry) => !entry.expectStamp)).toBe(true);
+  });
+
+  for (const entry of corpus) {
+    it(`${entry.expectStamp ? "stamps" : "skips"} ${entry.name} without corrupting it`, () => {
+      const next = applyCompatStamp(entry.content, "9.9.9");
+
+      if (!entry.expectStamp) {
+        expect(next).toBeNull();
+        // Both stamps must agree: the creation stamp also leaves the file
+        // byte-identical rather than guessing at the shape.
+        expect(stampCreatedVersion(entry.content, "9.9.9")).toBe(entry.content);
+        return;
+      }
+
+      if (next === null) throw new Error("expected this shape to be stamped");
+      const frontmatter = (parseRawFrontmatter(next).frontmatter ?? {}) as Record<string, unknown>;
+      expect(frontmatter["_compat"]).toBe("9.9.9");
+      for (const line of entry.content.split("\n")) {
+        expect(next.split("\n")).toContain(line);
+      }
+      expect(next.endsWith("Body.\n")).toBe(true);
+      expect(applyCompatStamp(next, "9.9.9")).toBeNull();
+    });
+  }
 });

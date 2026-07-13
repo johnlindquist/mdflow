@@ -232,32 +232,71 @@ export function withAtomicFileLock<T>(targetPath: string, fn: () => T, staleAfte
   try {
     fd = acquire();
   } catch {
+    // The lock exists. A contender may observe it BETWEEN the owner's
+    // open("wx") and its metadata write, so an empty/unparseable lock file
+    // is NOT evidence of staleness — only age is. A fresh lock whose
+    // metadata cannot be read yet is busy, never stale.
     let stale = false;
+    let age = Number.POSITIVE_INFINITY;
+    try {
+      age = Date.now() - statSync(lockPath).mtimeMs;
+    } catch {
+      // Lock vanished between open and stat: the owner finished. Retry once.
+    }
     try {
       const value = JSON.parse(readFileSync(lockPath, "utf8")) as { pid?: number; createdAt?: string };
-      const age = value.createdAt ? Date.now() - Date.parse(value.createdAt) : Number.POSITIVE_INFINITY;
+      // A malformed createdAt parses to NaN, and NaN would poison the
+      // staleness math below (NaN > staleAfterMs is false forever). Treat any
+      // non-finite claimed timestamp as absent and trust the file's mtime.
+      const claimedCreatedAt = value.createdAt ? Date.parse(value.createdAt) : Number.NaN;
+      const claimedAge = Number.isFinite(claimedCreatedAt) ? Date.now() - claimedCreatedAt : age;
       let alive = false;
       if (value.pid) {
         try { process.kill(value.pid, 0); alive = true; } catch {}
       }
-      stale = !alive && age > staleAfterMs;
+      stale = !alive && Math.min(age, claimedAge) > staleAfterMs;
     } catch {
-      stale = true;
+      // Unreadable metadata: trust the file's own age only.
+      stale = age > staleAfterMs;
     }
     if (!stale) throw new Error(`State file is busy: ${targetPath}`);
     rmSync(lockPath, { force: true });
-    fd = acquire();
+    try {
+      fd = acquire();
+    } catch {
+      // Another contender won the takeover race — the lock is busy again.
+      throw new Error(`State file is busy: ${targetPath}`);
+    }
   }
+  const token = randomUUID();
   let closed = false;
+  let tokenWritten = false;
   try {
-    writeFileSync(fd, `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString(), targetPath })}\n`);
+    writeFileSync(fd, `${JSON.stringify({ pid: process.pid, token, createdAt: new Date().toISOString(), targetPath })}\n`);
+    tokenWritten = true;
     fsyncSync(fd);
     closeSync(fd);
     closed = true;
     return fn();
   } finally {
     if (!closed) try { closeSync(fd); } catch {}
-    rmSync(lockPath, { force: true });
+    if (!tokenWritten) {
+      // The metadata write failed before the token landed on disk, so the
+      // zero-byte lock created by our own open("wx") is still ours to remove.
+      rmSync(lockPath, { force: true });
+    } else {
+      // Only release a lock we still own. While fn() ran, another actor may
+      // have removed our lock (e.g. via stale takeover) and installed its own;
+      // unconditionally unlinking would delete THAT owner's lock and let
+      // concurrent writers into the critical section. Unreadable or missing
+      // lock files are treated as "not ours — do not unlink".
+      let owned = false;
+      try {
+        const value = JSON.parse(readFileSync(lockPath, "utf8")) as { token?: string };
+        owned = value.token === token;
+      } catch {}
+      if (owned) rmSync(lockPath, { force: true });
+    }
   }
 }
 

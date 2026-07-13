@@ -17,11 +17,13 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   CANONICAL_HOOK_EVENTS,
+  CLAUDE_HOOK_EVENT_NAMES,
   CODEX_HOOK_EVENT_NAMES,
   buildCodexHooksConfig,
   formatHooksStderrLine,
   hooksFileForFlow,
   listHandledEvents,
+  listHandledEventsStatic,
   renderHooksTemplate,
   resolveHooksFile,
   buildCodexHooksOverride,
@@ -585,5 +587,66 @@ describe("applyHooksToFrontmatter", () => {
         isolated: true,
       })
     ).toThrow(/own the `settings` setting/);
+  });
+});
+
+describe("engine event-registry parity", () => {
+  /**
+   * One hook set must mean the same thing on every engine. Both registries
+   * are derived here (PascalCase of the canonical name) rather than copied,
+   * so an event added to CANONICAL_HOOK_EVENTS without both translations —
+   * or a translation that quietly diverges between engines — fails.
+   */
+  it("codex and claude registries cover the canonical set with identical PascalCase names", () => {
+    const pascal = (event: string) => event.charAt(0).toUpperCase() + event.slice(1);
+    expect(Object.keys(CODEX_HOOK_EVENT_NAMES).sort()).toEqual([...CANONICAL_HOOK_EVENTS].sort());
+    expect(Object.keys(CLAUDE_HOOK_EVENT_NAMES).sort()).toEqual([...CANONICAL_HOOK_EVENTS].sort());
+    for (const event of CANONICAL_HOOK_EVENTS) {
+      expect(CODEX_HOOK_EVENT_NAMES[event]).toBe(pascal(event));
+      expect(CLAUDE_HOOK_EVENT_NAMES[event]).toBe(CODEX_HOOK_EVENT_NAMES[event]);
+    }
+  });
+});
+
+describe("remote flows and _hooks consent", () => {
+  /**
+   * Paired A/B on one bit: the identical, fully-contained declaration is
+   * accepted for a local flow and rejected for a remote one, so the rejection
+   * is provably the remote policy and not a containment side effect. The
+   * local arm doubles as the non-strawman check.
+   */
+  it("rejects a remote flow's _hooks path that a local flow would be allowed", () => {
+    const flowPath = join(tempDir, "review.codex.md");
+    writeFileSync(flowPath, "---\n_hooks: ./guard.hooks.ts\n---\nBody.\n");
+    writeFileSync(join(tempDir, "guard.hooks.ts"), renderHooksTemplate(["stop"]), { mode: 0o755 });
+
+    const local = resolveHooksFile({ flowPath, frontmatterValue: "./guard.hooks.ts" });
+    const remote = resolveHooksFile({
+      flowPath,
+      frontmatterValue: "./guard.hooks.ts",
+      isRemote: true,
+    });
+
+    if (local.kind !== "file") throw new Error("expected a file result for the local arm");
+    expect(local.rejected).toBeUndefined();
+    if (remote.kind !== "file") throw new Error("expected a file result for the remote arm");
+    expect(remote.rejected).toContain("remote flows cannot declare a _hooks path");
+  });
+});
+
+describe("unreadable hooks files fail loudly", () => {
+  it("static discovery reports a read failure instead of silently dropping declared behavior", () => {
+    if (typeof process.getuid === "function" && process.getuid() === 0) return; // root ignores modes
+    const hooksFile = join(tempDir, "review.codex.hooks.ts");
+    writeFileSync(hooksFile, renderHooksTemplate(["stop"]), { mode: 0o755 });
+    chmodSync(hooksFile, 0o000);
+    try {
+      const result = listHandledEventsStatic(hooksFile);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected a failure result");
+      expect(result.error).toContain("Could not read hooks file");
+    } finally {
+      chmodSync(hooksFile, 0o755);
+    }
   });
 });
