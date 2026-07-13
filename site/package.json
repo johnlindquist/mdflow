@@ -7,7 +7,7 @@
     "dev": "portless run --name mdflow vite",
     "dev:raw": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test ./components/workbench-demo/model.test.ts ./components/workbench-demo/screens.test.ts ./components/easter-eggs/catalog.test.ts ./components/easter-eggs/progress.test.ts ./components/easter-eggs/recognizers.test.ts",
+    "test": "bun test ./components/marketing-invariants.test.ts ./components/workbench-demo/model.test.ts ./components/workbench-demo/screens.test.ts ./components/easter-eggs/catalog.test.ts ./components/easter-eggs/progress.test.ts ./components/easter-eggs/recognizers.test.ts",
     "build": "vite build && node scripts/build-content.mjs",
     "verify": "bun run test && bun run typecheck && bun run build",
     "preview": "vite preview",

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { Zap, ArrowRight } from 'lucide-react';
 import { EggoInteractive, StretchName } from './EggoInteractive';
+import { WorkshopCTA } from './WorkshopCTA';
 
 /**
  * Prominent maker credit. [data-shader-credit] gives the block its own
@@ -226,26 +226,13 @@ export const CraftedBy: React.FC = () => {
                                 </span>
                             ))}
                         </div>
-                        <a
+                        <WorkshopCTA
                             ref={btnRef}
-                            href="https://egghead.io/workshop/software-factory"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            data-shader-target="workshop"
-                            data-shader-priority="1"
-                            data-shader-gravity="1.3"
-                            className="group relative z-10 inline-flex max-w-full items-center gap-2.5 sm:gap-3 px-4 py-3 sm:px-6 sm:py-3.5 rounded-lg bg-white text-black font-mono font-bold text-xs sm:text-sm hover:scale-105 active:scale-95 transition-all duration-200 shadow-[0_0_20px_rgba(255,255,255,0.25)] hover:shadow-[0_0_25px_rgba(255,255,255,0.5),0_0_50px_rgba(249,115,22,0.7),0_0_100px_rgba(249,115,22,0.35)]"
-                        >
-                            {/* the bolt gets its own stage: an orange chip
-                                with a slow radar ping behind a filled,
-                                glowing Zap — the eye lands here first */}
-                            <span aria-hidden className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-orange-500/15 ring-1 ring-orange-500/40">
-                                <span className="absolute inset-0 rounded-full bg-orange-500/25 animate-ping [animation-duration:2.2s]" />
-                                <Zap size={15} strokeWidth={2.5} className="relative text-orange-600 fill-orange-500 drop-shadow-[0_0_6px_rgba(249,115,22,0.9)]" />
-                            </span>
-                            Agentic Software Factory Workshop
-                            <ArrowRight aria-hidden size={16} strokeWidth={2.5} className="text-orange-500 transition-transform duration-200 group-hover:translate-x-1" />
-                        </a>
+                            variant="full"
+                            shaderTarget="workshop"
+                            shaderPriority={1}
+                            shaderGravity={1.3}
+                        />
                     </div>
                 </div>
             </motion.div>

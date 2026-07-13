@@ -64,6 +64,39 @@ Vercel with Root Directory = `site`). Rules:
 - Factual site copy should render from facts.json; artistic copy (headlines,
   shaders, easter eggs) is hand-written. See `docs/SITE-SYNC.md`.
 
+### Positioning and conversion invariants
+
+The website has two durable primary goals:
+
+1. The first and clearest visible product promise above the fold is
+   **“Markdown Agents that Evolve.”**
+2. The page must give qualified visitors an early, prominent path to buy
+   tickets to John Lindquist’s **Agentic Software Factory Workshop**.
+
+“One Markdown file → one repeatable command” is the supporting mental model.
+It explains how mdflow works; it must not replace the evolve promise as the H1
+or dominant positioning.
+
+Keep the product/install CTA visually primary for open-source onboarding. Keep
+a clearly labeled **“Buy workshop tickets”** CTA inside or immediately adjacent
+to the Hero. A fuller maker/workshop section may remain later in the page, but
+it does not substitute for the early conversion point.
+
+Preserve the current one-flow examples, `./flows` roster, Workbench, demos,
+shaders, and easter eggs unless a task explicitly calls for redesigning them.
+Integrate positioning changes with those systems rather than reverting them
+wholesale.
+
+Positioning and CTA language are hand-written marketing copy. Commands,
+engines, flags, versions, and other mechanically derived facts come from
+`site/src/facts.json`. Never edit that generated file by hand; run
+`bun run facts` when its source facts change.
+
+Any change to the Hero, page-section order, or workshop CTA must run the site
+marketing-invariant test and the full site verification command, then be
+inspected at desktop and mobile widths. Tests should protect the semantic
+promise, CTA presence, and hierarchy without freezing every sentence.
+
 ## Architecture
 
 ### Core Flow (`src/index.ts`)

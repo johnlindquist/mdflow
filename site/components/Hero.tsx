@@ -3,6 +3,7 @@ import { Copy, Check, Zap, ChevronRight } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Editor } from './Editor';
 import { Terminal } from './Terminal';
+import { WorkshopCTA, WORKSHOP_TITLE } from './WorkshopCTA';
 import { TerminalLine } from '../types';
 import facts from '../src/facts.json';
 
@@ -97,23 +98,29 @@ export const Hero: React.FC = () => {
                         </div>
 
                         <p className="mb-4 font-mono text-xs font-bold uppercase tracking-[0.24em] text-orange-300">
-                            Executable Markdown for AI agents
+                            One Markdown file → one repeatable command
                         </p>
-                        <h1 data-egg="headline" data-shader-headline className="select-none font-display text-5xl font-bold leading-[0.92] tracking-tighter text-white text-glow sm:text-6xl lg:text-7xl xl:text-8xl">
+                        <h1
+                            data-egg="headline"
+                            data-shader-headline
+                            data-marketing-invariant="evolve-first"
+                            className="select-none font-display text-[clamp(2.5rem,11vw,5rem)] font-bold leading-[0.92] tracking-tighter text-white text-glow lg:text-7xl xl:text-8xl"
+                        >
                             <span className="bg-gradient-to-r from-orange-400 via-amber-200 to-white bg-clip-text text-transparent">
-                                WRITE THE JOB ONCE.
+                                MARKDOWN AGENTS
                             </span>
                             <br />
-                            RUN IT LIKE A COMMAND.
+                            THAT{' '}
+                            <span className="evolve-live" data-shader-evolve>EVOLVE.</span>
                         </h1>
 
                         <p className="mt-6 max-w-2xl border-l-4 border-orange-500/50 pl-5 text-base font-light leading-relaxed text-zinc-300 sm:text-lg lg:text-xl">
-                            Each file in <span className="font-mono text-white">./flows</span> defines a repeatable AI job.
+                            Each file in <span className="font-mono text-white">./flows</span> defines one repeatable AI job.
                             Frontmatter configures the run. The Markdown body becomes the prompt.{' '}
                             <span className="font-mono font-semibold text-white">md review</span> runs it with the agent CLI you already use.
                         </p>
-                        <p className="mt-4 text-sm text-zinc-400 sm:text-base">
-                            Diffable in Git. Previewable before spend. Guardable with evals.
+                        <p className="mt-4 max-w-2xl text-sm leading-relaxed text-zinc-400 sm:text-base">
+                            Feedback becomes a capability-checked, eval-gated proposal. The source changes only after you review and explicitly apply it.
                         </p>
                     </motion.div>
 
@@ -126,6 +133,7 @@ export const Hero: React.FC = () => {
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                             <button
                                 onClick={copyInstall}
+                                data-marketing-cta="install"
                                 data-shader-target="install"
                                 data-shader-priority="1"
                                 className="group inline-flex min-h-12 items-center justify-center gap-2.5 rounded-lg bg-white px-5 font-mono font-semibold text-black shadow-[0_0_20px_rgba(255,255,255,0.25)] transition-all hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(255,255,255,0.45)] active:scale-95 motion-reduce:transform-none"
@@ -142,6 +150,25 @@ export const Hero: React.FC = () => {
                                 <ChevronRight size={16} className="transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none" aria-hidden="true" />
                             </a>
                         </div>
+
+                        <aside
+                            aria-labelledby="hero-workshop-title"
+                            data-marketing-slot="early-workshop"
+                            className="mt-5 flex flex-col gap-4 rounded-xl border border-orange-400/25 bg-orange-500/[0.07] p-4 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                            <div className="min-w-0">
+                                <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-orange-300">
+                                    John Lindquist&apos;s workshop
+                                </p>
+                                <p id="hero-workshop-title" className="mt-1 font-semibold text-white">
+                                    {WORKSHOP_TITLE}
+                                </p>
+                                <p className="mt-1 text-sm leading-relaxed text-zinc-400">
+                                    Go from one repeatable flow to an agentic software factory.
+                                </p>
+                            </div>
+                            <WorkshopCTA variant="hero" />
+                        </aside>
 
                         <p className="mt-4 max-w-xl text-sm leading-relaxed text-zinc-400">
                             <span className="font-mono text-zinc-200">npx mdflow init</span> creates a starter{' '}

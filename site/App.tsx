@@ -219,6 +219,7 @@ export default function App() {
         <Hero />
         <FlowsRoster />
         <FlowWorkbenchDemo />
+        <Evolve />
 
         <div id="features" className="relative">
             <div className="absolute left-1/2 top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-orange-500/30 to-transparent hidden lg:block"></div>
@@ -236,7 +237,6 @@ export default function App() {
             ))}
         </div>
 
-        <Evolve />
         <AgentPrompts />
         <ManPage />
         <CraftedBy />
