@@ -134,6 +134,7 @@ class ShaderAudioEngine {
   private alienUrgent = false; // one is raiding / they're taunt-dancing
   private tauntUntil = 0;   // aliens-won: march runs hot until this time
   private muted = true;
+  private suspendTimer: number | null = null;
   private lastTick = 0;
 
   get isMuted() {
@@ -151,28 +152,61 @@ class ShaderAudioEngine {
     if (!m) {
       this.ensure();
       const ctx = this.ctx!;
+      this.cancelSuspend();
+      if (document.hidden) {
+        this.silenceSustained();
+        this.suspendSoon();
+        return;
+      }
       if (ctx.state === 'suspended') void ctx.resume();
       this.master!.gain.cancelScheduledValues(ctx.currentTime);
       this.master!.gain.setTargetAtTime(1, ctx.currentTime, 0.4);
     } else if (this.ctx && this.master) {
-      this.stopSling();
+      this.silenceSustained();
       this.master.gain.cancelScheduledValues(this.ctx.currentTime);
-      this.master.gain.setTargetAtTime(0, this.ctx.currentTime, 0.12);
+      this.master.gain.setTargetAtTime(0, this.ctx.currentTime, 0.03);
+      this.suspendSoon();
     }
   }
 
+  private silenceSustained() {
+    this.stopSling();
+    this.stopHold();
+    this.stopCreak();
+  }
+
+  private cancelSuspend() {
+    if (this.suspendTimer === null) return;
+    window.clearTimeout(this.suspendTimer);
+    this.suspendTimer = null;
+  }
+
+  private suspendSoon() {
+    if (!this.ctx) return;
+    this.cancelSuspend();
+    const ctx = this.ctx;
+    this.suspendTimer = window.setTimeout(() => {
+      this.suspendTimer = null;
+      if ((this.muted || document.hidden) && ctx.state === 'running') {
+        void ctx.suspend();
+      }
+    }, 180);
+  }
+
   /** The rAF loop stops on hidden tabs, so sustained oscillators (pads,
-   * drone, gate) would hum forever at their last gain — fade the master
-   * out on hide and back in on return. */
+   * drone, gate) would hum forever at their last gain — fade the master,
+   * then suspend the graph until sound is allowed again. */
   private onVisibility = () => {
     if (!this.ctx || !this.master) return;
     const t = this.ctx.currentTime;
     if (document.hidden) {
-      this.stopSling();
-      this.stopHold();
+      this.silenceSustained();
       this.master.gain.cancelScheduledValues(t);
-      this.master.gain.setTargetAtTime(0, t, 0.1);
+      this.master.gain.setTargetAtTime(0, t, 0.03);
+      this.suspendSoon();
     } else if (!this.muted) {
+      this.cancelSuspend();
+      if (this.ctx.state === 'suspended') void this.ctx.resume();
       this.master.gain.cancelScheduledValues(t);
       this.master.gain.setTargetAtTime(1, t, 0.4);
     }
@@ -184,7 +218,14 @@ class ShaderAudioEngine {
     this.ctx = ctx;
     this.master = ctx.createGain();
     this.master.gain.value = 0;
-    this.master.connect(ctx.destination);
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -6;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.18;
+    this.master.connect(limiter);
+    limiter.connect(ctx.destination);
     document.addEventListener('visibilitychange', this.onVisibility);
 
     // Reverb bus: generated exponential-decay noise impulse (no assets).

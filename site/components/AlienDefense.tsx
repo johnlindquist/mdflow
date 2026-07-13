@@ -83,17 +83,24 @@ export const AlienDefense: React.FC = () => {
                 }
             `}</style>
             <div
+                data-alien-defense-armed="true"
                 className="fixed bottom-3 right-3 z-50 flex flex-col items-end gap-1.5 select-none pointer-events-none"
                 style={{ animation: 'hud-heart-in 0.4s ease-out' }}
             >
-                {msg && (
-                    <div className="max-w-[240px] rounded-lg border border-zinc-700/80 bg-zinc-950/85 px-3 py-2 text-right font-mono text-[11px] leading-snug text-zinc-300 backdrop-blur-md">
-                        {msg}
-                    </div>
-                )}
+                <div
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    className={msg
+                        ? 'max-w-[240px] rounded-lg border border-zinc-700/80 bg-zinc-950/85 px-3 py-2 text-right font-mono text-[11px] leading-snug text-zinc-300 backdrop-blur-md'
+                        : 'sr-only'}
+                >
+                    {msg ?? ''}
+                </div>
                 <div
                     data-hearts-anchor
-                    aria-label={`${state.hearts} of ${state.max} hearts left`}
+                    role="img"
+                    aria-label={`Alien defense armed: ${state.hearts} of ${state.max} hearts left`}
                     className="flex items-center gap-1 rounded-full border border-white/10 bg-black/60 px-2.5 py-1 backdrop-blur-md"
                     style={fx === 'steal' ? { animation: 'hud-steal-kf 0.5s ease-in-out' } : undefined}
                 >
@@ -102,6 +109,7 @@ export const AlienDefense: React.FC = () => {
                         return (
                             <span
                                 key={i}
+                                aria-hidden="true"
                                 className={filled
                                     ? 'text-sm leading-none text-rose-500 drop-shadow-[0_0_5px_rgba(244,63,94,0.9)]'
                                     : 'text-sm leading-none text-zinc-700'}

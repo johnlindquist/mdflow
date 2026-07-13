@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { shaderAudio, BPM } from './shaderAudio';
+import { emitPlaygroundSignal, PLAYGROUND_EVENT, type PlaygroundSignal } from './easter-eggs/events';
 
 /**
  * Mario-64-style grabbable rubber sheets. StretchySheet renders arbitrary
@@ -140,6 +141,14 @@ export const StretchySheet: React.FC<SheetProps> = ({
     const goldRef = useRef(!!gold);
     goldRef.current = !!gold;
     const [broken, setBroken] = useState(false);
+    const actionable = !!(tapBoop || onCleanClick);
+    const activate = () => {
+        if (tapBoop) {
+            shaderAudio.boop();
+            emitPlaygroundSignal({ kind: 'boop' });
+        }
+        onCleanClick?.();
+    };
 
     const W = artW + PAD * 2;
     const H = artH + PAD * 2;
@@ -329,11 +338,9 @@ export const StretchySheet: React.FC<SheetProps> = ({
                         vel[ix] += (dx / dd) * 540 * f;
                         vel[iy] += (dy / dd) * 540 * f;
                     }
-                    shaderAudio.boop();
                     emitStretch('grab', e.clientX, e.clientY); // soft ripple
-                    window.dispatchEvent(new CustomEvent('mdflow:boop')); // puzzle hook
                 }
-                onCleanClick?.();
+                activate();
                 return;
             }
             emitStretch('release', e.clientX, e.clientY, Math.min(1, p), pullX, pullY);
@@ -350,16 +357,20 @@ export const StretchySheet: React.FC<SheetProps> = ({
         wrap.addEventListener('pointercancel', release);
         wrap.addEventListener('pointerleave', onLeave);
 
-        // shader sparks that bounce off this sheet dent it: ShaderGuide
-        // dispatches 'mdflow:sparkhit' at the impact point with the spark's
-        // incoming velocity — kick nearby vertices along that path and let
-        // the underdamped spring wobble them back.
+        // Shader sparks that bounce off this sheet dent it through the same
+        // typed signal the easter-egg orchestrator observes.
         let lastSparkHitT = 0;
         let sparkHitBudget = 0;
         const onSparkHit = (ev: Event) => {
-            const d = (ev as CustomEvent<{
-                x: number; y: number; vx: number; vy: number; p: number;
-            }>).detail;
+            const signal = (ev as CustomEvent<PlaygroundSignal>).detail;
+            if (signal?.kind !== 'spark-impact' || signal.target !== 'eggo') return;
+            const d = {
+                x: signal.point.x,
+                y: signal.point.y,
+                vx: signal.velocity?.x ?? 0,
+                vy: signal.velocity?.y ?? 180,
+                p: signal.power ?? 0.5,
+            };
             const r = wrap.getBoundingClientRect();
             if (d.x < r.left - 12 || d.x > r.right + 12
                 || d.y < r.top - 12 || d.y > r.bottom + 12) return;
@@ -385,7 +396,7 @@ export const StretchySheet: React.FC<SheetProps> = ({
                 vel[iy] += uy * kick * f;
             }
         };
-        window.addEventListener('mdflow:sparkhit', onSparkHit);
+        window.addEventListener(PLAYGROUND_EVENT, onSparkHit);
 
         // dance drive: CraftedBy broadcasts cursor-to-CTA proximity; the
         // sheet eases toward it and the frame loop turns it into moves
@@ -518,14 +529,41 @@ export const StretchySheet: React.FC<SheetProps> = ({
         uploadRef.current();
     }, [redrawKey]);
 
-    if (broken) return <>{fallback}</>;
+    if (broken) {
+        if (!actionable) return <>{fallback}</>;
+        return (
+            <button
+                type="button"
+                aria-label={label}
+                {...(dataEgg ? { 'data-shader-egg': '' } : {})}
+                onPointerDown={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                }}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    activate();
+                }}
+                className="inline-flex border-0 bg-transparent p-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-orange-400"
+            >
+                {fallback}
+            </button>
+        );
+    }
     return (
         <div
             ref={wrapRef}
-            role="img"
+            role={actionable ? 'button' : 'img'}
+            tabIndex={actionable ? 0 : undefined}
             aria-label={label}
+            onKeyDown={actionable ? (e) => {
+                if (e.repeat || (e.key !== 'Enter' && e.key !== ' ')) return;
+                e.preventDefault();
+                e.stopPropagation();
+                activate();
+            } : undefined}
             {...(dataEgg ? { 'data-shader-egg': '' } : {})}
-            className={`${className ?? ''} relative touch-none select-none cursor-grab active:cursor-grabbing`}
+            className={`${className ?? ''} relative touch-none select-none cursor-grab active:cursor-grabbing focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-orange-400`}
             style={{ width: artW, height: artH }}
         >
             <canvas

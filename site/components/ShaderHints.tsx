@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 
 /**
  * Discoverability layer for the shader playground. Both affordances wait
@@ -13,6 +13,17 @@ export const ShaderHints: React.FC<{ muted: boolean; onUnmute: () => void }> = (
     const [interacted, setInteracted] = useState(false);
     const [hintsGone, setHintsGone] = useState(false);
     const [nudgeGone, setNudgeGone] = useState(false);
+    const reducedMotion = useReducedMotion();
+    const [playgroundMode, setPlaygroundMode] = useState<'full' | 'fallback'>('fallback');
+
+    useEffect(() => {
+        const root = document.documentElement;
+        const update = () => setPlaygroundMode(root.classList.contains('shader-fx') ? 'full' : 'fallback');
+        update();
+        const observer = new MutationObserver(update);
+        observer.observe(root, { attributes: true, attributeFilter: ['class'] });
+        return () => observer.disconnect();
+    }, []);
 
     useEffect(() => {
         const onDown = () => setInteracted(true);
@@ -25,13 +36,7 @@ export const ShaderHints: React.FC<{ muted: boolean; onUnmute: () => void }> = (
         const t1 = window.setTimeout(() => setNudgeGone(true), 11000);
         const t2 = window.setTimeout(() => setHintsGone(true), 16000);
         return () => { window.clearTimeout(t1); window.clearTimeout(t2); };
-    }, [interacted]);
-
-    // the shader bails on reduced motion — so do we (touch devices play)
-    if (typeof window !== 'undefined'
-        && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        return null;
-    }
+    }, [interacted, playgroundMode]);
     const coarse = typeof window !== 'undefined'
         && !window.matchMedia('(pointer: fine)').matches;
 
@@ -40,10 +45,10 @@ export const ShaderHints: React.FC<{ muted: boolean; onUnmute: () => void }> = (
             {interacted && muted && !nudgeGone && (
                 <motion.button
                     key="nudge"
-                    initial={{ opacity: 0, y: -8 }}
+                    initial={reducedMotion ? false : { opacity: 0, y: -8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    transition={{ duration: 0.4 }}
+                    exit={reducedMotion ? undefined : { opacity: 0, y: -6 }}
+                    transition={{ duration: reducedMotion ? 0 : 0.4 }}
                     onClick={() => { setNudgeGone(true); onUnmute(); }}
                     className="fixed top-20 right-5 z-40 flex items-center gap-2 px-4 py-2 rounded-full border border-orange-500/50 bg-black/80 backdrop-blur-md text-orange-300 text-xs font-mono shadow-[0_0_18px_rgba(249,115,22,0.25)] hover:bg-orange-950/60 hover:text-orange-200 transition-colors"
                 >
@@ -54,15 +59,17 @@ export const ShaderHints: React.FC<{ muted: boolean; onUnmute: () => void }> = (
             {interacted && !hintsGone && (
                 <motion.div
                     key="legend"
-                    initial={{ opacity: 0, y: 8 }}
+                    initial={reducedMotion ? false : { opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.5, delay: 0.6 }}
+                    exit={reducedMotion ? undefined : { opacity: 0 }}
+                    transition={{ duration: reducedMotion ? 0 : 0.5, delay: reducedMotion ? 0 : 0.6 }}
                     className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none select-none px-4 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-[11px] font-mono tracking-wide text-zinc-500"
                 >
-                    {coarse
-                        ? 'tap · hold to charge · hold then drag to sling · two-finger tap to draw walls'
-                        : 'click · hold to charge · drag to sling · shift+click to draw walls'}
+                    {playgroundMode === 'fallback'
+                        ? 'lightweight playground · tap the stray pixel · hold · double tap · drag'
+                        : coarse
+                            ? 'tap · hold to charge · hold then drag to sling · two-finger tap to draw walls'
+                            : 'click · hold to charge · drag to sling · shift+click to draw walls'}
                 </motion.div>
             )}
         </AnimatePresence>

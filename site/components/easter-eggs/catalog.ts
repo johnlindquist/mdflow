@@ -1,0 +1,218 @@
+export const EGG_CATALOG = [
+  {
+    id: 'konami',
+    legacyIds: [],
+    label: 'GOD MODE compiled',
+    triggerKey: 'konami-sequence',
+    rewardKey: 'terminal-god-mode',
+    clue: 'The old ways still compile.',
+    reducedMotionText: 'GOD MODE compiled for play only.',
+  },
+  {
+    id: 'type-mdflow',
+    legacyIds: [],
+    label: 'you spoke its name',
+    triggerKey: 'typed-mdflow',
+    rewardKey: 'resolved-wordmark',
+    clue: 'Some names want to be spoken, away from a cursor.',
+    reducedMotionText: 'The mdflow wordmark resolved at full signal.',
+  },
+  {
+    id: 'type-egg',
+    legacyIds: [],
+    label: 'egg weather',
+    triggerKey: 'typed-egg',
+    rewardKey: 'egg-weather',
+    clue: 'Three letters can change the forecast.',
+    reducedMotionText: 'Forecast: tiny eggs, clearing shortly.',
+  },
+  {
+    id: 'bass-drop',
+    legacyIds: ['key-b'],
+    label: 'bass line armed',
+    triggerKey: 'typed-bass',
+    rewardKey: 'grid-compression',
+    clue: 'Ask the page for bass, not just a B.',
+    reducedMotionText: 'BASS: decorative grid compressed one beat.',
+  },
+  {
+    id: 'headline-hello',
+    legacyIds: ['key-h'],
+    label: 'the headline answered',
+    triggerKey: 'visible-headline-h',
+    rewardKey: 'headline-reply',
+    clue: 'The headline is polite while it can see you.',
+    reducedMotionText: 'HELLO, HUMAN.',
+  },
+  {
+    id: 'eggo-dance',
+    legacyIds: ['arrow-dance'],
+    label: 'Eggo learned the steps',
+    triggerKey: 'focused-eggo-arrows',
+    rewardKey: 'eggo-choreography',
+    clue: 'Introduce Eggo to left, right, left, right.',
+    reducedMotionText: 'Eggo poses: left · right · left · right.',
+  },
+  {
+    id: 'alt-click',
+    legacyIds: [],
+    label: 'gravity reversed',
+    triggerKey: 'safe-alt-click',
+    rewardKey: 'reverse-gravity',
+    clue: 'A modified click can disagree with gravity.',
+    reducedMotionText: 'GRAVITY: REVERSED for five seconds.',
+  },
+  {
+    id: 'click-cadence',
+    legacyIds: ['double-click', 'triple-click'],
+    label: 'echo became confetti',
+    triggerKey: 'same-surface-cadence',
+    rewardKey: 'markdown-confetti',
+    clue: 'Tap the same quiet place twice. A third has opinions.',
+    reducedMotionText: 'Two echoes; the third became markdown confetti.',
+  },
+  {
+    id: 'corners',
+    legacyIds: [],
+    label: 'the frame is complete',
+    triggerKey: 'four-corners',
+    rewardKey: 'luminous-frame',
+    clue: 'The viewport has four unsigned corners.',
+    reducedMotionText: 'All four corners signed the luminous frame.',
+  },
+  {
+    id: 'footer-zap',
+    legacyIds: [],
+    label: 'connector charged',
+    triggerKey: 'footer-bolt',
+    rewardKey: 'connector-electricity',
+    clue: 'The bolt at the bottom is a button.',
+    reducedMotionText: 'Footer connector: CHARGED.',
+  },
+  {
+    id: 'version-badge',
+    legacyIds: ['v3-badge'],
+    label: 'version unpacked',
+    triggerKey: 'version-activation',
+    rewardKey: 'semantic-version-split',
+    clue: 'A live version may contain three smaller surprises.',
+    reducedMotionText: 'MAJOR · MINOR · PATCH recombined successfully.',
+  },
+  {
+    id: 'logo-disco',
+    legacyIds: [],
+    label: 'wordmark equalizer',
+    triggerKey: 'five-logo-activations',
+    rewardKey: 'logo-equalizer',
+    clue: 'The mark has a five-count.',
+    reducedMotionText: 'The mdflow mark displayed a five-band equalizer.',
+  },
+  {
+    id: 'middle-click',
+    legacyIds: [],
+    label: 'paired portals opened',
+    triggerKey: 'middle-click-or-warp',
+    rewardKey: 'spark-portals',
+    clue: 'A middle path—or #warp—opens two doors.',
+    reducedMotionText: 'One spark crossed between mirrored portals.',
+  },
+  {
+    id: 'shake',
+    legacyIds: [],
+    label: 'markdown shook loose',
+    triggerKey: 'horizontal-reversals',
+    rewardKey: 'loose-markdown-glyph',
+    clue: 'Shake the pointer like a stuck Etch A Sketch.',
+    reducedMotionText: 'A markdown glyph fell out of the grid.',
+  },
+  {
+    id: 'circle',
+    legacyIds: [],
+    label: 'orbit closed',
+    triggerKey: 'pointer-loop-or-key',
+    rewardKey: 'luminous-orbit',
+    clue: 'Complete a loop—or focus the constellation and press C.',
+    reducedMotionText: 'A luminous orbit closed around the cursor.',
+  },
+  {
+    id: 'overload',
+    legacyIds: [],
+    label: 'circuit breaker tripped',
+    triggerKey: 'safe-ten-second-hold',
+    rewardKey: 'overload-meter',
+    clue: 'Hold a quiet surface past FULL.',
+    reducedMotionText: 'CIRCUIT BREAKER: 117% · safely tripped.',
+  },
+  {
+    id: 'monster-hunt',
+    legacyIds: [],
+    label: 'bestiary specimen collected',
+    triggerKey: 'armed-monster-capture',
+    rewardKey: 'bestiary-card',
+    clue: 'Draw a gate to invite a visitor, then close it around one.',
+    reducedMotionText: 'A pixel visitor joined the local bestiary.',
+  },
+  {
+    id: 'egg-pop',
+    legacyIds: [],
+    label: 'Eggo shared a fortune',
+    triggerKey: 'five-eggo-impacts',
+    rewardKey: 'deterministic-fortune',
+    clue: 'Five sparks can crack an egg without breaking it.',
+    reducedMotionText: 'Eggo fortune: SMALL FLOWS, BIG MOMENTUM.',
+  },
+  {
+    id: 'idle-fireflies',
+    legacyIds: [],
+    label: 'the fireflies finished spelling',
+    triggerKey: 'visible-idle',
+    rewardKey: 'md-constellation',
+    clue: 'Stay visible. Stay still. Let the dark do the typing.',
+    reducedMotionText: 'Fireflies formed a static “md” constellation.',
+  },
+  {
+    id: 'elevator',
+    legacyIds: [],
+    label: 'express elevator',
+    triggerKey: 'bottom-to-top',
+    rewardKey: 'floor-indicator',
+    clue: 'Reach the basement, then return to the roof quickly.',
+    reducedMotionText: 'FLOOR: B → TOP.',
+  },
+  {
+    id: 'shy-volume',
+    legacyIds: [],
+    label: 'the speaker surrendered',
+    triggerKey: 'volume-dwell',
+    rewardKey: 'shy-speaker',
+    clue: 'Give the volume control three seconds of attention.',
+    reducedMotionText: 'The speaker said: “okay, okay.”',
+  },
+  {
+    id: 'welcome-back',
+    legacyIds: [],
+    label: 'signal restored',
+    triggerKey: 'visibility-return',
+    rewardKey: 'signal-postcard',
+    clue: 'Leave the signal for fifteen seconds, then return.',
+    reducedMotionText: 'SIGNAL RESTORED. The page kept your place.',
+  },
+] as const;
+
+export type EggDefinition = (typeof EGG_CATALOG)[number];
+export type EggId = EggDefinition['id'];
+export type EggRewardKey = EggDefinition['rewardKey'];
+
+export const EGG_COUNT = EGG_CATALOG.length;
+
+const BY_ID = new Map<string, EggId>();
+for (const egg of EGG_CATALOG) {
+  BY_ID.set(egg.id, egg.id);
+  for (const legacyId of egg.legacyIds) BY_ID.set(legacyId, egg.id);
+}
+
+export const canonicalEggId = (id: unknown): EggId | null =>
+  typeof id === 'string' ? (BY_ID.get(id) ?? null) : null;
+
+export const eggDefinition = (id: EggId): EggDefinition =>
+  EGG_CATALOG.find((egg) => egg.id === id)!;

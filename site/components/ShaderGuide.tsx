@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { shaderAudio, NOTE_COLUMNS, NOTE_ROWS, BPM } from './shaderAudio';
+import { emitPlaygroundSignal } from './easter-eggs/events';
 
 /**
  * Full-page WebGL overlay that guides the eye toward key conversion points —
@@ -993,9 +994,11 @@ export const ShaderGuide: React.FC = () => {
         if (volley.t) {
           volley.t.excite = 1.5;
           // the puzzle listens for volleys delivered to specific buttons
-          window.dispatchEvent(new CustomEvent('mdflow:volley', {
-            detail: { target: volley.t.el.dataset.shaderTarget || '' },
-          }));
+          emitPlaygroundSignal({
+            kind: 'volley-complete',
+            target: volley.t.el.dataset.shaderTarget || '',
+            landed: volley.landed,
+          });
         }
         if (volley.cx || volley.cy) addShock(volley.cx, volley.cy, 1.3, SK_HERO);
         shaderAudio.celebrate(volley.freqs);
@@ -1108,7 +1111,13 @@ export const ShaderGuide: React.FC = () => {
     // so pointing at it never works: build a shift+click pen around it and
     // CLOSE the shape — any monster inside the gate dissolves into light.
     const monsters: Monster[] = [];
-    let nextMonsterAt = performance.now() + 12000 + Math.random() * 18000;
+    let gameArmed = false;
+    let nextMonsterAt = Infinity;
+    const armMonsterGame = () => {
+      if (gameArmed) return;
+      gameArmed = true;
+      nextMonsterAt = performance.now() + 5000 + Math.random() * 5000;
+    };
 
     // ---- the heart defense: aliens raid your hearts, pickups restore ----
     let hearts = MAX_HEARTS;
@@ -1231,7 +1240,7 @@ export const ShaderGuide: React.FC = () => {
       shaderAudio.bossSpawn(seed);
       emitHearts('boss');
     };
-    const captureMonster = (mn: Monster) => {
+    const captureMonster = (mn: Monster, method: 'gate' | 'darts' = 'gate') => {
       mn.pop = 0.001; // the dissolve animation takes it from here
       addShock(mn.x, mn.y, mn.boss ? 1.6 : 1.1, SK_HERO);
       energyTarget = 1;
@@ -1262,10 +1271,8 @@ export const ShaderGuide: React.FC = () => {
           later(spawnBoss, 1400);
         }
       }
-      // the easter-egg layer counts the hunt
-      window.dispatchEvent(new CustomEvent('mdflow:monster', {
-        detail: { x: mn.x, y: mn.y, seed: mn.seed },
-      }));
+      // The easter-egg layer counts the hunt without conflating gate and dart captures.
+      emitPlaygroundSignal({ kind: 'monster-captured', method, seed: mn.seed });
     };
 
     // the aliens win: they gather center-stage and taunt-dance to the
@@ -1300,6 +1307,7 @@ export const ShaderGuide: React.FC = () => {
     // shift+click chain: consecutive shift-clicks connect into shapes
     let chain: { pts: { x: number; y: number }[]; lastAt: number } | null = null;
     const onShiftClick = (x: number, y: number) => {
+      armMonsterGame();
       lastEventT = performance.now();
       const now = performance.now();
       if (!chain || now - chain.lastAt > 8000) {
@@ -1319,7 +1327,7 @@ export const ShaderGuide: React.FC = () => {
         const cx = chain.pts.reduce((s, p) => s + p.x, x) / (chain.pts.length + 1);
         const cy = chain.pts.reduce((s, p) => s + p.y, y) / (chain.pts.length + 1);
         addShock(cx, cy, 1.2, SK_HERO);
-        window.dispatchEvent(new CustomEvent('mdflow:shape')); // puzzle hook
+        emitPlaygroundSignal({ kind: 'shape-closed', points: [...chain.pts, { x, y }] });
         // THE GATE: the closed shape is a capture net — every pixel
         // monster inside the polygon dissolves; near-misses bolt away
         const poly = [...chain.pts, { x, y }];
@@ -1524,6 +1532,7 @@ export const ShaderGuide: React.FC = () => {
       const dy = drag.y0 - e.clientY;
       const stretch = Math.hypot(dx, dy);
       if (drag.moved && stretch > 24) {
+        armMonsterGame();
         // slingshot: power comes from stretch PLUS how long it was held —
         // patience charges the shot
         const holdBoost = Math.min(0.5, (performance.now() - drag.t0) / 8000);
@@ -1789,6 +1798,7 @@ export const ShaderGuide: React.FC = () => {
     // hidden summon hook: fills the monster roster and (optionally) puts
     // them straight on the warpath — playtesting and e2e checks use this
     const onInvasion = (ev: Event) => {
+      armMonsterGame();
       const d = (ev as CustomEvent<{ raidMs?: number; boss?: boolean }>).detail ?? {};
       if (d.boss) spawnBoss();
       else while (monsters.filter(m => !m.boss).length < MONSTER_CAP) spawnMonster();
@@ -2100,7 +2110,7 @@ export const ShaderGuide: React.FC = () => {
         shaderAudio.holdCharge(holdP);
         if (holdP >= 1 && !drag.full) {
           drag.full = true; // puzzle hook: a click held to FULL charge
-          window.dispatchEvent(new CustomEvent('mdflow:fullcharge'));
+          emitPlaygroundSignal({ kind: 'full-charge' });
         }
         holdPulseAcc += dt;
         if (holdP > 0 && holdPulseAcc > 0.55 - holdP * 0.35) {
@@ -2190,7 +2200,7 @@ export const ShaderGuide: React.FC = () => {
       // A shared AABB lets each particle reject the whole set in one test.
       const bounceBodies: {
         cx: number; cy: number; hw: number; hh: number; r: number; circle: boolean;
-        note: number;
+        note: number; target: 'eggo' | 'letter' | 'other';
       }[] = [];
       let bbMinX = Infinity, bbMinY = Infinity, bbMaxX = -Infinity, bbMaxY = -Infinity;
       const haveParticles = particles.some(p => p.active);
@@ -2206,6 +2216,9 @@ export const ShaderGuide: React.FC = () => {
             r: Math.max(r.width, r.height) / 2,
             circle: b.circle,
             note: b.note,
+            target: b.el.matches('[data-shader-egg]') || Boolean(b.el.querySelector('[data-shader-egg]'))
+              ? 'eggo'
+              : b.note >= 0 ? 'letter' : 'other',
           });
           bbMinX = Math.min(bbMinX, r.left);
           bbMinY = Math.min(bbMinY, r.top);
@@ -2332,7 +2345,7 @@ export const ShaderGuide: React.FC = () => {
             addShock(p.x, p.y, mn.boss ? 0.7 : 0.5, mn.boss ? SK_HERO : SK_DROPLET);
             p.active = false;
             volleySparkResolved(p, false);
-            if (mn.hp <= 0) captureMonster(mn);
+            if (mn.hp <= 0) captureMonster(mn, 'darts');
             else shaderAudio.monsterHit(mn.seed, mn.boss);
             break;
           }
@@ -2381,12 +2394,13 @@ export const ShaderGuide: React.FC = () => {
             p.y = oy;
             // the rubber sheet takes the hit: StretchySheet listens and
             // dents its mesh at the impact point, along the incoming path
-            window.dispatchEvent(new CustomEvent('mdflow:sparkhit', {
-              detail: {
-                x: ox, y: oy, vx: ivx, vy: ivy,
-                p: Math.min(1, Math.hypot(ivx, ivy) / 900),
-              },
-            }));
+            emitPlaygroundSignal({
+              kind: 'spark-impact',
+              target: B.target,
+              point: { x: ox, y: oy },
+              velocity: { x: ivx, y: ivy },
+              power: Math.min(1, Math.hypot(ivx, ivy) / 900),
+            });
             const nowHit = performance.now();
             if (B.note >= 0) {
               // the name is a glockenspiel: each letter bumper rings its own
@@ -2412,7 +2426,7 @@ export const ShaderGuide: React.FC = () => {
 
       // ---- pixel monsters: spawn, swim, raid, herd, flee, dissolve ----
       const nowMs = performance.now();
-      if (nowMs > nextMonsterAt && !document.hidden) {
+      if (gameArmed && nowMs > nextMonsterAt && !document.hidden) {
         nextMonsterAt = nowMs + 35000 + Math.random() * 35000;
         spawnMonster();
       }
@@ -2507,19 +2521,22 @@ export const ShaderGuide: React.FC = () => {
           const dyA = anchor.y - mn.y;
           const dA = Math.max(Math.hypot(dxA, dyA), 1);
           if (dA < (mn.boss ? 30 + mn.size : 46)) {
-            // the boss empties the whole rack in one touch
-            hearts = mn.boss ? 0 : hearts - 1;
-            emitHearts('steal');
-            shaderAudio.heartSteal(mn.seed);
-            addShock(anchor.x, anchor.y, mn.boss ? -1.4 : -0.8, SK_HERO);
+            const shielded = document.documentElement.dataset.eggShield === 'true';
+            if (!shielded) {
+              // the boss empties the whole rack in one touch
+              hearts = mn.boss ? 0 : hearts - 1;
+              emitHearts('steal');
+              shaderAudio.heartSteal(mn.seed);
+              nextHeartAt = Math.min(nextHeartAt, nowMs + 8000 + Math.random() * 8000);
+            }
+            addShock(anchor.x, anchor.y, shielded ? 1.1 : mn.boss ? -1.4 : -0.8, SK_HERO);
             mn.raiding = false;
             mn.raidAt = nowMs + 12000 + Math.random() * 10000;
-            // victory hop: it bolts off with the loot
+            // Shielded raiders ricochet empty-handed; otherwise this is their
+            // victory hop with the stolen heart.
             mn.vx += -(dxA / dA) * (mn.boss ? 420 : 750);
             mn.vy += -(dyA / dA) * (mn.boss ? 420 : 750) - 150;
-            // a replacement heart will drift in eventually
-            nextHeartAt = Math.min(nextHeartAt, nowMs + 8000 + Math.random() * 8000);
-            if (hearts <= 0) alienVictory(mn.boss);
+            if (!shielded && hearts <= 0) alienVictory(mn.boss);
           } else {
             // the giant lumbers; the small ones dart
             const acc = mn.boss ? 520 : 900;
