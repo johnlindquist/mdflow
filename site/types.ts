@@ -1,8 +1,8 @@
 export interface TerminalLine {
   id: string;
-  type: 'input' | 'output' | 'error' | 'info';
+  type: 'input' | 'continuation' | 'label' | 'info' | 'output' | 'error';
   content: string;
-  typingDelay?: number;
+  ariaLabel?: string;
 }
 
 export interface DemoScenario {

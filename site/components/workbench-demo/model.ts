@@ -131,7 +131,7 @@ function baseState(storyId: StoryId, play: boolean, runToken: number): DemoState
     };
 }
 
-export function initialDemoState(storyId: StoryId = 'project-setup', play = false): DemoState {
+export function initialDemoState(storyId: StoryId = 'quick-create', play = false): DemoState {
     return baseState(storyId, play, 1);
 }
 

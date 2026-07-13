@@ -79,7 +79,7 @@ export const FlowWorkbenchDemo: React.FC = () => {
     const [state, dispatch] = useReducer(
         demoReducer,
         undefined,
-        () => initialDemoState('project-setup', false),
+        () => initialDemoState('quick-create', false),
     );
     const [size, setSize] = useState({ cols: 92, rows: 26 });
     const [ready, setReady] = useState(false);
@@ -375,9 +375,6 @@ export const FlowWorkbenchDemo: React.FC = () => {
         '--term-color-6': '#67e8f9',
         '--term-color-7': '#e4e4e7',
         '--term-font-family': '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
-        '--term-font-size': '13px',
-        '--term-row-height': '18px',
-        '--term-line-height': '1.35',
         background: '#070708',
     } as React.CSSProperties;
 
@@ -448,21 +445,21 @@ export const FlowWorkbenchDemo: React.FC = () => {
                     className="mb-12 text-center"
                 >
                     <p className="mb-4 font-mono text-xs uppercase tracking-[0.3em] text-orange-400">
-                        four ways to start
+                        flow workbench
                     </p>
                     <h2
                         id="workbench-title"
                         className="select-none font-display text-4xl font-bold tracking-tighter text-white md:text-6xl"
                     >
-                        SET UP A PROJECT. CREATE A FLOW.<br />
+                        CREATE IT. RUN IT.<br />
                         <span className="bg-gradient-to-r from-orange-400 via-amber-200 to-white bg-clip-text text-transparent">
-                            IMPROVE IT. TAKE IT EVERYWHERE.
+                            IMPROVE IT WITH EVIDENCE.
                         </span>
                     </h2>
                     <p className="mx-auto mt-6 max-w-3xl text-lg font-light leading-relaxed text-zinc-400">
-                        These browser-only fixtures show a guided engine inspecting a project and suggesting flows,
-                        then how <span className="font-mono text-white">md</span> creates one from an empty terminal,
-                        evolves it from evidence, and resolves personal flows everywhere.
+                        Start with the shortest path: describe one repeatable outcome, review the local write,
+                        then run the new flow. The other walkthroughs cover guided setup, evidence-gated proposals,
+                        and personal flows.
                     </p>
                 </motion.div>
 
@@ -713,7 +710,7 @@ export const FlowWorkbenchDemo: React.FC = () => {
                                         current.cols === cols && current.rows === rows ? current : { cols, rows }
                                     ))}
                                     onError={(error) => setTerminalError(error instanceof Error ? error.message : String(error))}
-                                    className="h-full !rounded-none !p-4 !shadow-none"
+                                    className="workbench-terminal h-full !rounded-none !p-4 !shadow-none"
                                     style={terminalStyle}
                                 />
                             )}

@@ -67,8 +67,8 @@ function checkpoint(state: DemoState) {
 describe('semantic story compiler', () => {
     it('keeps the four stories in onboarding order with unique semantic beats and one final gate', () => {
         expect(STORIES.map((story) => story.id)).toEqual([
-            'project-setup',
             'quick-create',
+            'project-setup',
             'evolve-safely',
             'personal-flows',
         ]);

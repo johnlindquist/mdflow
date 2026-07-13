@@ -1,6 +1,6 @@
 export const STORY_IDS = [
-    'project-setup',
     'quick-create',
+    'project-setup',
     'evolve-safely',
     'personal-flows',
 ] as const;
@@ -299,7 +299,7 @@ function defineStory(source: StorySource): StoryDefinition {
 
 const projectSetup = defineStory({
     id: 'project-setup',
-    number: '01',
+    number: '02',
     title: 'Add flows to your project',
     shortTitle: 'Project setup',
     summary: 'Let a guided session inspect the repo, suggest a numbered roster, and wait for your approval.',
@@ -356,7 +356,7 @@ const projectSetup = defineStory({
 
 const quickCreate = defineStory({
     id: 'quick-create',
-    number: '02',
+    number: '01',
     title: 'Create one in seconds',
     shortTitle: 'Quick create',
     summary: 'Answer one question and create one project flow.',
@@ -520,8 +520,8 @@ const personalFlows = defineStory({
 });
 
 export const STORIES: readonly StoryDefinition[] = [
-    projectSetup,
     quickCreate,
+    projectSetup,
     evolveSafely,
     personalFlows,
 ] as const;

@@ -13,7 +13,7 @@ export const Editor: React.FC<EditorProps> = ({ filename, content, onChange, rea
   const lines = content.split('\n');
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#0d1117]/95 backdrop-blur-md border border-white/10 rounded-xl overflow-hidden font-mono text-sm shadow-2xl relative">
+    <div className="w-full h-full flex flex-col bg-[#0d1117]/95 backdrop-blur-md border border-white/10 rounded-xl overflow-hidden font-mono shadow-2xl relative">
       {/* Top Gradient Line */}
       <div className="h-1 w-full bg-gradient-to-r from-blue-500 via-cyan-500 to-emerald-500"></div>
       
@@ -26,28 +26,28 @@ export const Editor: React.FC<EditorProps> = ({ filename, content, onChange, rea
       </div>
 
       {/* Editor Body */}
-      <div className="flex-1 overflow-y-auto relative flex">
+      <div className="flex-1 overflow-auto relative flex min-w-0">
         {/* Line Numbers */}
-        <div className="py-6 px-4 text-right bg-white/[0.02] border-r border-white/5 text-zinc-600 select-none min-w-[3.5rem] font-mono text-xs">
+        <div className="editor-code py-4 sm:py-5 px-3 text-right bg-white/[0.02] border-r border-white/5 text-zinc-600 select-none min-w-[3rem] font-mono text-xs">
           {lines.map((_, i) => (
-            <div key={i} className="leading-6">{i + 1}</div>
+            <div key={i}>{i + 1}</div>
           ))}
         </div>
 
         {/* Content Area */}
         {readOnly ? (
-            <div className="p-6 flex-1">
+            <code className="editor-code block p-4 sm:p-5 flex-1 min-w-0">
             {lines.map((line, i) => (
-                <div key={i} className="leading-6 whitespace-pre-wrap break-all text-sm font-medium">
+                <span key={i} className="block whitespace-pre-wrap font-medium">
                 <HighlightLine line={line} />
-                </div>
+                </span>
             ))}
-            </div>
+            </code>
         ) : (
-            <textarea 
+            <textarea
                 value={content}
                 onChange={(e) => onChange && onChange(e.target.value)}
-                className="flex-1 p-6 bg-transparent text-zinc-200 resize-none focus:outline-none leading-6 font-mono font-medium"
+                className="editor-code flex-1 min-w-0 p-4 sm:p-5 bg-transparent text-zinc-200 resize-none focus:outline-none font-mono font-medium"
                 spellCheck={false}
             />
         )}

@@ -127,7 +127,12 @@ export const Evolve: React.FC = () => {
                         transition={{ duration: 0.5 }}
                         className="min-h-[380px]"
                     >
-                        <Terminal lines={TRANSCRIPT} title="proposal-first evolution" isLive />
+                        <Terminal
+                            lines={TRANSCRIPT}
+                            title="proposal-first evolution"
+                            illustrative
+                            caption="Condensed example of evidence-gated evolution; no engine or file write occurs in this browser"
+                        />
                     </motion.div>
                 </div>
 

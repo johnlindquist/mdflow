@@ -211,21 +211,21 @@ export const ManPage: React.FC = () => {
             <div>
               <h3 className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-yellow-400 font-bold mb-4 uppercase text-lg tracking-widest flex items-center gap-2">
                  <span className="w-2 h-2 bg-amber-500 rounded-full"></span>
-                AGENT LIBRARY
+                FLOW ROSTERS
               </h3>
               <p className="pl-6 border-l border-zinc-800 leading-relaxed text-zinc-400 max-w-2xl mb-6">
-                Store agents in <span className="font-mono text-amber-400">~/.mdflow/</span> for global access or <span className="font-mono text-amber-400">.mdflow/</span> per project.
-                Run <span className="font-mono text-white">md</span> without arguments to pick from available agents. Add to your PATH for tab completion anywhere.
+                Keep project jobs in the Git-tracked <span className="font-mono text-amber-400">./flows/</span> roster and personal jobs in <span className="font-mono text-amber-400">~/.mdflow/</span>.
+                Run <span className="font-mono text-white">md</span> without arguments to browse the flows available in the current project.
               </p>
               <div className="pl-6 border-l border-zinc-800 space-y-6">
                 <div className="bg-[#050505] p-6 rounded-lg border border-zinc-800 shadow-inner group hover:border-amber-500/30 transition-colors">
-                  <p className="text-zinc-500 mb-2 text-xs uppercase tracking-wider"># Global agents</p>
-                  <p className="text-lg font-mono">~/.mdflow/<span className="text-amber-400">review.claude.md</span></p>
-                  <p className="text-lg font-mono">~/.mdflow/<span className="text-amber-400">commit.agy.md</span></p>
+                  <p className="text-zinc-500 mb-2 text-xs uppercase tracking-wider"># Project + personal flows</p>
+                  <p className="text-lg font-mono">./flows/<span className="text-amber-400">review.md</span></p>
+                  <p className="text-lg font-mono">~/.mdflow/<span className="text-amber-400">daily-plan.md</span></p>
                 </div>
                 <div className="bg-[#050505] p-6 rounded-lg border border-zinc-800 shadow-inner group hover:border-yellow-500/30 transition-colors">
-                  <p className="text-zinc-500 mb-2 text-xs uppercase tracking-wider"># Interactive file picker</p>
-                  <p className="text-lg"><span className="text-orange-500 font-bold">md</span> <span className="text-zinc-500">← picks from ~/.mdflow/ and .mdflow/</span></p>
+                  <p className="text-zinc-500 mb-2 text-xs uppercase tracking-wider"># Open the Workbench</p>
+                  <p className="text-lg"><span className="text-orange-500 font-bold">md</span> <span className="text-zinc-500">← browse project and personal flows</span></p>
                 </div>
                 <div className="bg-[#050505] p-6 rounded-lg border border-zinc-800 shadow-inner group hover:border-amber-500/30 transition-colors">
                   <p className="text-zinc-500 mb-2 text-xs uppercase tracking-wider"># Add to PATH for autocomplete</p>

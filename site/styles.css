@@ -1,3 +1,62 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer components {
+  .terminal-transcript {
+    font-size: 0.875rem;
+    line-height: 1.55;
+    scrollbar-gutter: stable;
+  }
+
+  .terminal-command {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre;
+    color: rgb(244 244 245);
+    scrollbar-width: thin;
+  }
+
+  .terminal-output {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .editor-code {
+    font-size: 0.875rem;
+    line-height: 1.55;
+  }
+
+  .workbench-terminal {
+    --term-font-size: 14px;
+    --term-row-height: 20px;
+    --term-line-height: 1.4;
+  }
+
+  @media (min-width: 640px) {
+    .terminal-transcript,
+    .editor-code {
+      font-size: 0.9375rem;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .workbench-terminal {
+      --term-font-size: 15px;
+      --term-row-height: 21px;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-cursor {
+    display: none;
+  }
+
+  .hero-demo-float,
+  .hero-ambient {
+    animation: none !important;
+    transform: none !important;
+  }
+}
