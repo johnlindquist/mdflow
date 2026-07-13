@@ -163,19 +163,19 @@ export const CraftedBy: React.FC = () => {
     }, []);
 
     return (
-        <section className="relative py-28 px-6">
+        <section className="relative px-5 py-24 sm:px-6 sm:py-28">
             <motion.div
                 initial={{ opacity: 0, y: 24 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, margin: '-80px' }}
                 transition={{ duration: 0.6 }}
                 data-shader-credit
-                className="select-none max-w-3xl mx-auto flex flex-col sm:flex-row items-center gap-10 rounded-2xl border border-orange-500/15 bg-[#0a0a0c]/70 backdrop-blur-sm p-6 sm:p-12 shadow-[0_0_50px_-12px_rgba(249,115,22,0.3),0_0_120px_-30px_rgba(249,115,22,0.2)]"
+                className="select-none mx-auto flex max-w-3xl flex-col items-center gap-8 rounded-2xl border border-orange-500/15 bg-[#0a0a0c]/70 p-6 shadow-[0_0_50px_-12px_rgba(249,115,22,0.3),0_0_120px_-30px_rgba(249,115,22,0.2)] backdrop-blur-sm sm:flex-row sm:gap-10 sm:p-12"
             >
                 {/* grabbable rubber-sheet eggo — stretch it, it snaps back;
                     dots treat it as a round bumper */}
                 <div data-shader-bounce="circle" className="shrink-0">
-                    <EggoInteractive />
+                    <EggoInteractive className="scale-90 sm:scale-100" />
                 </div>
                 <div className="text-center sm:text-left">
                     <div className="text-xs font-mono uppercase tracking-[0.3em] text-zinc-500 mb-2">
@@ -188,7 +188,7 @@ export const CraftedBy: React.FC = () => {
                         text="John Lindquist"
                         className="mx-auto sm:mx-0"
                     />
-                    <p className="mt-3 text-zinc-400 leading-relaxed">
+                    <p className="mt-3 text-sm leading-relaxed text-zinc-400 sm:text-base">
                         <span className="block">
                             Co-founder of{' '}
                             <a
@@ -228,7 +228,6 @@ export const CraftedBy: React.FC = () => {
                         </div>
                         <WorkshopCTA
                             ref={btnRef}
-                            variant="full"
                             shaderTarget="workshop"
                             shaderPriority={1}
                             shaderGravity={1.3}

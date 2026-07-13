@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Hero } from './Hero';
-import { WORKSHOP_URL } from './WorkshopCTA';
+import { WorkshopCTA, WORKSHOP_URL } from './WorkshopCTA';
 
 const APP_SOURCE = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const CRAFTED_BY_SOURCE = readFileSync(new URL('./CraftedBy.tsx', import.meta.url), 'utf8');
@@ -29,17 +29,16 @@ describe('primary marketing invariants', () => {
         expect(markup).toContain('One Markdown file → one repeatable command');
     });
 
-    it('keeps product install primary and the workshop CTA early in Hero', () => {
+    it('keeps product install primary and the playful workshop pitch directly after Hero', () => {
         const markup = renderToStaticMarkup(React.createElement(Hero));
-        const install = markup.indexOf('data-marketing-cta="install"');
-        const workshop = markup.indexOf('data-workshop-placement="hero"');
-        const demo = markup.indexOf('id="how-it-runs"');
+        const hero = APP_SOURCE.indexOf('<Hero />');
+        const workshop = APP_SOURCE.indexOf('<CraftedBy />');
+        const roster = APP_SOURCE.indexOf('<FlowsRoster />');
 
-        expect(install).toBeGreaterThan(-1);
-        expect(workshop).toBeGreaterThan(install);
-        expect(workshop).toBeLessThan(demo);
-        expect(markup).toContain(`href="${WORKSHOP_URL}"`);
-        expect(markup).toContain('Buy workshop tickets');
+        expect(markup).toContain('data-marketing-cta="install"');
+        expect(hero).toBeGreaterThan(-1);
+        expect(workshop).toBeGreaterThan(hero);
+        expect(workshop).toBeLessThan(roster);
     });
 
     it('explains evolution before the generic feature tour', () => {
@@ -51,8 +50,12 @@ describe('primary marketing invariants', () => {
         expect(evolve).toBeLessThan(features);
     });
 
-    it('keeps the full maker section on the shared workshop CTA', () => {
+    it('keeps the full maker section on the shared workshop destination', () => {
+        const markup = renderToStaticMarkup(React.createElement(WorkshopCTA));
+
         expect(CRAFTED_BY_SOURCE).toContain('<WorkshopCTA');
-        expect(CRAFTED_BY_SOURCE).toContain('variant="full"');
+        expect(markup).toContain(`href="${WORKSHOP_URL}"`);
+        expect(markup).toContain('data-workshop-placement="full"');
+        expect(markup).toContain('Buy tickets for John Lindquist');
     });
 });

@@ -21,9 +21,10 @@ bun run facts:check    # CI drift gate (fails if stale)
 
 Everything else is hand-written. Preserve the positioning and conversion
 invariants in the root `CLAUDE.md`: the Hero leads with “Markdown Agents that
-Evolve,” the one-flow model supports it, and an early CTA promotes John
-Lindquist’s Agentic Software Factory Workshop. Shaders and easter eggs remain
-editable, but they do not outrank those goals.
+Evolve,” the one-flow model supports it, and the full playful maker/workshop
+pitch follows the Hero immediately. Its Eggo interaction, animated ticket
+track, shaders, and CTA are part of the sales experience, not footer
+decoration.
 
 ## Run locally
 

@@ -648,10 +648,11 @@ export const StretchName: React.FC<{
         document.fonts?.ready.then(() => { if (alive) setReady(r => r + 1); }).catch(() => {});
         return () => { alive = false; };
     }, []);
-    // shrink the whole sheet (art + font) on narrow screens: a fixed 340px
-    // sheet is the widest thing on a phone and forces horizontal overflow
+    // Keep an extra visual gutter inside the workshop card on narrow screens.
+    // The card already owns page + panel padding; this inset stops the name
+    // from visually pressing against those boundaries at phone widths.
     const [art] = useState(() => {
-        const w = typeof window === 'undefined' ? 340 : Math.min(340, window.innerWidth - 96);
+        const w = typeof window === 'undefined' ? 340 : Math.min(340, window.innerWidth - 120);
         const s = w / 340;
         return { w, h: Math.round(58 * s), font: Math.round(46 * s) };
     });
@@ -711,7 +712,7 @@ export const StretchName: React.FC<{
                     c2.fillText(text, 2, h / 2 + 2);
                 }}
                 fallback={
-                    <span className="font-display text-4xl sm:text-5xl font-bold tracking-tight text-zinc-200">
+                    <span className="font-display text-3xl font-bold tracking-tight text-zinc-200 sm:text-5xl">
                         {text}
                     </span>
                 }

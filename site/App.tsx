@@ -217,6 +217,7 @@ export default function App() {
 
       <main className="relative z-10">
         <Hero />
+        <CraftedBy />
         <FlowsRoster />
         <FlowWorkbenchDemo />
         <Evolve />
@@ -239,7 +240,6 @@ export default function App() {
 
         <AgentPrompts />
         <ManPage />
-        <CraftedBy />
       </main>
 
       <footer className="py-16 border-t border-white/10 text-center relative overflow-hidden bg-zinc-950">

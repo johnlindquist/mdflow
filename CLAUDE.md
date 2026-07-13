@@ -77,10 +77,12 @@ The website has two durable primary goals:
 It explains how mdflow works; it must not replace the evolve promise as the H1
 or dominant positioning.
 
-Keep the product/install CTA visually primary for open-source onboarding. Keep
-a clearly labeled **“Buy workshop tickets”** CTA inside or immediately adjacent
-to the Hero. A fuller maker/workshop section may remain later in the page, but
-it does not substitute for the early conversion point.
+Keep the product/install CTA visually primary for open-source onboarding.
+Directly after the Hero, render the full `CraftedBy` maker/workshop sales pitch
+with its interactive Eggo, animated ticket track, shader response, and workshop
+button. That playfulness is part of the conversion experience, not optional
+footer decoration. A compact workshop link inside the Hero may supplement this
+section, but it must never replace it or move the full pitch later in the page.
 
 Preserve the current one-flow examples, `./flows` roster, Workbench, demos,
 shaders, and easter eggs unless a task explicitly calls for redesigning them.

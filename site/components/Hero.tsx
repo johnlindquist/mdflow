@@ -3,7 +3,6 @@ import { Copy, Check, Zap, ChevronRight } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Editor } from './Editor';
 import { Terminal } from './Terminal';
-import { WorkshopCTA, WORKSHOP_TITLE } from './WorkshopCTA';
 import { TerminalLine } from '../types';
 import facts from '../src/facts.json';
 
@@ -150,25 +149,6 @@ export const Hero: React.FC = () => {
                                 <ChevronRight size={16} className="transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none" aria-hidden="true" />
                             </a>
                         </div>
-
-                        <aside
-                            aria-labelledby="hero-workshop-title"
-                            data-marketing-slot="early-workshop"
-                            className="mt-5 flex flex-col gap-4 rounded-xl border border-orange-400/25 bg-orange-500/[0.07] p-4 sm:flex-row sm:items-center sm:justify-between"
-                        >
-                            <div className="min-w-0">
-                                <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-orange-300">
-                                    John Lindquist&apos;s workshop
-                                </p>
-                                <p id="hero-workshop-title" className="mt-1 font-semibold text-white">
-                                    {WORKSHOP_TITLE}
-                                </p>
-                                <p className="mt-1 text-sm leading-relaxed text-zinc-400">
-                                    Go from one repeatable flow to an agentic software factory.
-                                </p>
-                            </div>
-                            <WorkshopCTA variant="hero" />
-                        </aside>
 
                         <p className="mt-4 max-w-xl text-sm leading-relaxed text-zinc-400">
                             <span className="font-mono text-zinc-200">npx mdflow init</span> creates a starter{' '}
