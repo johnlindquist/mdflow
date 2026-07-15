@@ -309,12 +309,22 @@ describe("md doctor", () => {
 		);
 		const beforeProject = snapshot(project);
 		const beforeHome = snapshot(home);
+		// The spawned Bun runtime derives its transpiler/install caches from
+		// $HOME when BUN_INSTALL isn't inherited (CI runners): those .pile
+		// cache writes would land inside the snapshotted fake HOME and fail
+		// the "writes nothing" assertion for an mdflow-unrelated reason. Pin
+		// both cache roots outside the snapshots so the assertion measures
+		// doctor, not the runtime.
+		const bunCache = mkdtempSync(join(tmpdir(), "mdflow-doctor-buncache-"));
+		roots.push(bunCache);
 		const result = await spawnMd(["doctor", "--json"], {
 			cwd: project,
 			env: {
 				HOME: home,
 				PATH: `${bin}:${process.env.PATH ?? ""}`,
 				MDFLOW_EVAL_RESULTS: join(home, "eval-results.json"),
+				BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(bunCache, "transpiler"),
+				BUN_INSTALL_CACHE_DIR: join(bunCache, "install"),
 			},
 		});
 		parseDoctorJson(result.stdout);
