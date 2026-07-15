@@ -1,3 +1,18 @@
+# [4.7.0](https://github.com/johnlindquist/mdflow/compare/v4.6.1...v4.7.0) (2026-07-15)
+
+
+### Bug Fixes
+
+* **security:** close the six release-gating gaps from the Oracle follow-up review ([7e37faf](https://github.com/johnlindquist/mdflow/commit/7e37faf4d10dd09bdb5d21a21f7a29fb63a17799))
+* **security:** fail-closed managed blocks, symlink containment, strict consent boundaries ([98961e7](https://github.com/johnlindquist/mdflow/commit/98961e7c2447fbbf2850f69f1bc28c93ab7f7161))
+* **security:** fail-closed README sync, non-regular config refusal, indeterminate roster warnings ([2155949](https://github.com/johnlindquist/mdflow/commit/215594903306a712925cd96d7c83f25e38f0e06d))
+
+
+### Features
+
+* **doctor:** add agent operations contract, md doctor, and managed roster card ([31ff40d](https://github.com/johnlindquist/mdflow/commit/31ff40dd239a55f8506c3b762eef67842a625a52))
+* **init:** first-run agent handoff and flows-first agent guidance opt-in ([4ce2b8f](https://github.com/johnlindquist/mdflow/commit/4ce2b8f16c3b0ee0517b41b97618b91805d70330))
+
 ## [4.6.1](https://github.com/johnlindquist/mdflow/compare/v4.6.0...v4.6.1) (2026-07-14)
 
 
