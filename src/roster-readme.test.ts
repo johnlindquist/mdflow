@@ -3,6 +3,7 @@ import {
 	chmodSync,
 	existsSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	writeFileSync,
@@ -13,6 +14,7 @@ import { tmpdir } from "node:os";
 import {
 	MANAGED_ROSTER_END,
 	MANAGED_ROSTER_START,
+	__setRenameBoundaryTestHook,
 	inspectRosterReadme,
 	syncRosterReadme,
 } from "./roster-readme";
@@ -241,6 +243,67 @@ describe("managed roster README", () => {
 			chmodSync(path, 0o644);
 		}
 		expect(readFileSync(path, "utf8")).toBe("# Team notes\n\nUser-owned text.\n");
+	});
+
+	it("refuses the rename when the second read observes changed bytes; temp is removed", () => {
+		const root = project();
+		flow(root, "review.md", "Review changes");
+		const path = join(root, "flows", "README.md");
+		writeFileSync(path, "# Team notes\n\nUser-owned text.\n");
+		// Inspection and the first mutating read SUCCEED; the fault fires at
+		// the rename boundary, mutating the target so the second read sees
+		// different bytes.
+		__setRenameBoundaryTestHook((target) => {
+			writeFileSync(target, "# Team notes\n\nConcurrent edit.\n");
+		});
+		let result: ReturnType<typeof syncRosterReadme>;
+		try {
+			result = syncRosterReadme(root);
+		} finally {
+			__setRenameBoundaryTestHook(null);
+		}
+		expect(result.state).toBe("invalid");
+		expect(result.changed).toBe(false);
+		expect(result.error).toContain("changed while syncing");
+		expect(readFileSync(path, "utf8")).toBe(
+			"# Team notes\n\nConcurrent edit.\n",
+		);
+		const temps = readdirSync(join(root, "flows")).filter((name) =>
+			name.endsWith(".tmp"),
+		);
+		expect(temps).toEqual([]);
+	});
+
+	it("refuses the rename when the second read fails with a non-absence error", () => {
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			// Privileged processes can read mode-000 files; the byte-mismatch
+			// regression above covers the same refusal path portably.
+			return;
+		}
+		const root = project();
+		flow(root, "review.md", "Review changes");
+		const path = join(root, "flows", "README.md");
+		writeFileSync(path, "# Team notes\n\nUser-owned text.\n");
+		__setRenameBoundaryTestHook((target) => {
+			chmodSync(target, 0o000); // EACCES on the rename-boundary re-read
+		});
+		let result: ReturnType<typeof syncRosterReadme>;
+		try {
+			result = syncRosterReadme(root);
+		} finally {
+			__setRenameBoundaryTestHook(null);
+			chmodSync(path, 0o644);
+		}
+		expect(result.state).toBe("invalid");
+		expect(result.changed).toBe(false);
+		expect(result.error).toContain("cannot read");
+		expect(readFileSync(path, "utf8")).toBe(
+			"# Team notes\n\nUser-owned text.\n",
+		);
+		const temps = readdirSync(join(root, "flows")).filter((name) =>
+			name.endsWith(".tmp"),
+		);
+		expect(temps).toEqual([]);
 	});
 
 	it("refuses a non-regular README instead of treating it as absent", () => {

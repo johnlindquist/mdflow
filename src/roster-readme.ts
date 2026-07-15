@@ -327,6 +327,7 @@ export function syncRosterReadme(
 		if (expected.mode !== null) chmodSync(temp, expected.mode);
 		// Rename-boundary compare-and-swap: refuse if the target's bytes
 		// changed since the read this content was computed from.
+		renameBoundaryTestHook?.(target);
 		const current = readTarget();
 		if (current.source !== expected.source)
 			throw new ContainmentError(
@@ -358,6 +359,19 @@ export function syncRosterReadme(
 		};
 	}
 	return { ...verified, changed: true };
+}
+
+/**
+ * TEST-ONLY fault-injection seam: invoked with the canonical target
+ * immediately before the rename-boundary re-read, so regressions can
+ * deterministically make that read fail or its bytes mismatch. Never set
+ * outside tests.
+ */
+let renameBoundaryTestHook: ((target: string) => void) | null = null;
+export function __setRenameBoundaryTestHook(
+	hook: ((target: string) => void) | null,
+): void {
+	renameBoundaryTestHook = hook;
 }
 
 export function rosterReadmePath(projectRoot: string): string {
