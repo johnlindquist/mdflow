@@ -54,6 +54,10 @@ import type { AgentFrontmatter } from "./types";
 import { ensureFlowIdentity } from "./evolution-core";
 import { resolveProjectRoot } from "./project-root";
 import { renderAgentContractMarkdown } from "./agent-contract";
+import {
+	inspectAgentGuidance,
+	syncAgentGuidance,
+} from "./agent-guidance";
 import { inspectRunnableFlowSource, syncRosterReadme } from "./roster-readme";
 
 const ASSETS_DIR = join(import.meta.dir, "..", "assets", "init");
@@ -63,6 +67,8 @@ interface InitOptions {
 	engine?: string;
 	yes: boolean;
 	guided: boolean;
+	agents: boolean;
+	printGuide: boolean;
 	help: boolean;
 }
 
@@ -75,7 +81,13 @@ interface CatalogEntry {
 }
 
 function parseInitArgs(args: string[]): InitOptions {
-	const options: InitOptions = { yes: false, guided: false, help: false };
+	const options: InitOptions = {
+		yes: false,
+		guided: false,
+		agents: false,
+		printGuide: false,
+		help: false,
+	};
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		if (!arg) continue;
@@ -85,6 +97,10 @@ function parseInitArgs(args: string[]): InitOptions {
 			options.yes = true;
 		} else if (arg === "--guided" || arg === "-g") {
 			options.guided = true;
+		} else if (arg === "--agents") {
+			options.agents = true;
+		} else if (arg === "--print-guide") {
+			options.printGuide = true;
 		} else if (arg === "--help" || arg === "-h") {
 			options.help = true;
 		}
@@ -400,6 +416,24 @@ evolve:
 }
 
 /**
+ * Opt the project into flows-first agent guidance (AGENTS.md / CLAUDE.md)
+ * and report the writes in the init change-line format.
+ */
+export function applyAgentGuidance(cwd: string): string[] {
+	const before = new Map(
+		inspectAgentGuidance(cwd).map((entry) => [entry.file, entry.state]),
+	);
+	return syncAgentGuidance(cwd, { optIn: true }).map((entry) => {
+		if (entry.state === "invalid")
+			return `  skipped ${entry.file} (${entry.error})`;
+		if (!entry.changed)
+			return `  skipped ${entry.file} (agent guidance already current)`;
+		const verb = before.get(entry.file) === "missing" ? "created" : "updated";
+		return `  ${verb} ${entry.file} (flows-first agent guidance)`;
+	});
+}
+
+/**
  * True once a project has at least one canonical flow. Plain `md init` uses
  * this guard to stay idempotent: it does not inject starter flows into a roster
  * someone already owns. Explicit --yes and guided setup remain additive.
@@ -504,6 +538,11 @@ Flags:
   --engine, -e <name>   Engine CLI to guide the session (and project default)
   --guided, -g          Launch the project-aware guided setup session
   --yes, -y             Skip the guided session; scaffold starter flows directly
+  --agents              Also write flows-first agent guidance blocks into
+                        AGENTS.md and CLAUDE.md (same opt-in as
+                        \`md roster sync --agents\`)
+  --print-guide         Print the guided-setup prompt to stdout for pasting
+                        into any agent harness (FREE, no engine launch)
   --help, -h            Show this help
 
 Examples:
@@ -511,7 +550,112 @@ Examples:
   md init --guided               # project-aware interactive setup
   md init --engine claude        # guided by claude
   md init --yes --engine claude  # non-interactive scaffold (agents use this)
+  md init --yes --agents         # scaffold + AGENTS.md/CLAUDE.md guidance
+  md init --print-guide          # copy the setup prompt into your own agent
 `);
+}
+
+export type FirstRunChoice =
+	| { type: "guided"; engine: string }
+	| { type: "scaffold" }
+	| { type: "print" }
+	| { type: "skip" };
+
+/** Pure choice list for the bare-`md` first-run prompt (tested directly). */
+export function buildFirstRunChoices(
+	detected: string[],
+): Array<{ name: string; value: FirstRunChoice }> {
+	return [
+		...detected.map((engine) => ({
+			name: `Guided setup with ${engine} (launches your ${engine} session)`,
+			value: { type: "guided", engine } as FirstRunChoice,
+		})),
+		{
+			name: "Scaffold starter flows now (no engine invocations)",
+			value: { type: "scaffold" },
+		},
+		{
+			name: "Print the setup prompt to paste into any agent (free)",
+			value: { type: "print" },
+		},
+		{
+			name: "Not now — continue to the Workbench",
+			value: { type: "skip" },
+		},
+	];
+}
+
+/**
+ * Bare `md` first-run handoff: when the Workbench would open onto zero
+ * runnable flows, offer setup instead of an empty roster. The heavy lifting
+ * is meant to be agent-driven — the headline option hands the guided setup
+ * prompt to an installed engine; printing it covers harnesses mdflow cannot
+ * launch. Returns an exit code when the session was handled here, or null to
+ * continue into the normal Workbench.
+ */
+export async function runFirstRunSetup(
+	cwd: string = process.cwd(),
+): Promise<number | null> {
+	const projectRoot = resolveProjectRoot(cwd).projectRoot;
+	const detected = detectInstalledEngines();
+	console.log("No flows found — mdflow isn't set up in this project yet.");
+	try {
+		const choice = await select<FirstRunChoice>({
+			message: "How should this project get its flow roster?",
+			choices: buildFirstRunChoices(detected),
+		});
+
+		if (choice.type === "skip") return null;
+
+		if (choice.type === "print") {
+			console.log("");
+			console.log(
+				buildGuidePrompt(detected[0] ?? DEFAULT_ENGINE, detected, loadCatalog()),
+			);
+			console.error(
+				"\nPaste this prompt into your agent to run the mdflow guided setup.",
+			);
+			return 0;
+		}
+
+		if (choice.type === "guided") {
+			console.log(
+				`Launching ${choice.engine} interactively with the mdflow setup guide — this uses your ${choice.engine} session.`,
+			);
+			const guidePrompt = buildGuidePrompt(
+				choice.engine,
+				detected,
+				loadCatalog(),
+			);
+			const exitCode = await launchGuidedSession(
+				choice.engine,
+				guidePrompt,
+				projectRoot,
+			);
+			console.log("");
+			await printGuidedReceipt(projectRoot);
+			return exitCode;
+		}
+
+		const scaffoldEngine = detected[0] ?? DEFAULT_ENGINE;
+		console.log(`Scaffolding starter flows (engine: ${scaffoldEngine}):`);
+		const changes = scaffoldStarterFlows(projectRoot, scaffoldEngine);
+		const makePrimary = await confirm({
+			message:
+				"Make flows the primary way agents work in this repo? (adds a managed mdflow section to AGENTS.md and CLAUDE.md)",
+			default: true,
+		});
+		if (makePrimary) changes.push(...applyAgentGuidance(projectRoot));
+		printInitReceipt(changes);
+		return 0;
+	} catch (err) {
+		// Inquirer throws on Ctrl+C — treat as a clean cancel, not a crash.
+		if (err instanceof Error && err.name === "ExitPromptError") {
+			console.log("Cancelled. Nothing written.");
+			return 130;
+		}
+		throw err;
+	}
 }
 
 export async function runInit(args: string[]): Promise<number> {
@@ -526,6 +670,23 @@ export async function runInit(args: string[]): Promise<number> {
 	const projectRoot = resolveProjectRoot(process.cwd()).projectRoot;
 	const detected = detectInstalledEngines();
 	const isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+
+	// FREE handoff: print the guided-setup prompt for pasting into any agent
+	// harness (including ones that are not on this machine's PATH). stdout is
+	// only the prompt so it can be piped; the hint goes to stderr.
+	if (options.printGuide) {
+		const engine = options.engine ?? detected[0] ?? DEFAULT_ENGINE;
+		process.stdout.write(
+			`${buildGuidePrompt(engine, detected, loadCatalog())}\n`,
+		);
+		if (process.stderr.isTTY) {
+			console.error(
+				"\nPaste this prompt into your agent to run the mdflow guided setup.",
+			);
+		}
+		return 0;
+	}
+
 	// An explicit engine historically meant "guide setup with this engine".
 	// Keep that contract while making plain `md init` deterministic.
 	const guided = !options.yes && (options.guided || Boolean(options.engine));
@@ -556,11 +717,12 @@ export async function runInit(args: string[]): Promise<number> {
 	// its established additive behavior.
 	if (!guided) {
 		const scaffoldEngine = engine ?? DEFAULT_ENGINE;
-		const alreadyInitialized = !options.yes && hasFlowRoster(projectRoot);
-		const changes = alreadyInitialized
+		const rosterExists = !options.yes && hasFlowRoster(projectRoot);
+		const changes = rosterExists
 			? []
 			: scaffoldStarterFlows(projectRoot, scaffoldEngine);
-		printInitReceipt(changes, alreadyInitialized);
+		if (options.agents) changes.push(...applyAgentGuidance(projectRoot));
+		printInitReceipt(changes, rosterExists && changes.length === 0);
 		return 0;
 	}
 

@@ -526,6 +526,17 @@ export async function handleMaCommands(args: CliArgs): Promise<HandleMaCommandsR
   // No file and no flags - show the Flow Workbench if both streams are interactive.
   if (!args.filePath && !args.help) {
     if (process.stdin.isTTY && process.stdout.isTTY) {
+      // First run: when no runnable flow exists anywhere (documents don't
+      // count), offer setup — agent-guided, scaffold, or a printed handoff
+      // prompt — instead of opening an empty Workbench. "Not now" falls
+      // through to the Workbench exactly as before.
+      const { collectRoster } = await import("./roster");
+      const roster = await collectRoster();
+      if (roster.flows.length === 0) {
+        const { runFirstRunSetup } = await import("./init");
+        const exitCode = await runFirstRunSetup();
+        if (exitCode !== null) throw new EarlyExitRequest("", exitCode);
+      }
       const mdFiles = await findAgentFiles();
       const selection = await showInteractiveSelector(mdFiles);
       if (selection) {

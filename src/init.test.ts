@@ -12,6 +12,8 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 import {
+	applyAgentGuidance,
+	buildFirstRunChoices,
 	buildGuidePrompt,
 	buildInitReceipt,
 	detectInstalledEngines,
@@ -212,6 +214,46 @@ process.exit(await runInit([]));`,
 		expect(existsSync(join(dir, "flows"))).toBe(false);
 	});
 
+	it("prints the guided-setup prompt headlessly with --print-guide and writes nothing", () => {
+		const helper = join(dir, "run-print-guide.ts");
+		writeFileSync(
+			helper,
+			`import { runInit } from ${JSON.stringify(join(import.meta.dir, "init.ts"))};
+process.exit(await runInit(process.argv.slice(2)));`,
+		);
+		const result = Bun.spawnSync(["bun", "run", helper, "--print-guide"], {
+			cwd: dir,
+		});
+		expect(result.exitCode).toBe(0);
+		const stdout = result.stdout.toString();
+		expect(stdout).toContain("You are the mdflow setup guide");
+		expect(stdout).toContain("Agent operations contract");
+		expect(stdout).toContain("# Catalog — inspiration, adapt or ignore");
+		expect(existsSync(join(dir, "flows"))).toBe(false);
+		expect(existsSync(join(dir, ".mdflow.yaml"))).toBe(false);
+	});
+
+	it("opts into flows-first agent guidance with --agents", () => {
+		const helper = join(dir, "run-agents-init.ts");
+		writeFileSync(
+			helper,
+			`import { runInit } from ${JSON.stringify(join(import.meta.dir, "init.ts"))};
+process.exit(await runInit(process.argv.slice(2)));`,
+		);
+		const result = Bun.spawnSync(["bun", "run", helper, "--yes", "--agents"], {
+			cwd: dir,
+		});
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.toString()).toContain("mdflow is ready");
+		expect(readFileSync(join(dir, "AGENTS.md"), "utf-8")).toContain(
+			"md doctor --json",
+		);
+		expect(readFileSync(join(dir, "CLAUDE.md"), "utf-8")).toContain(
+			"mdflow flows",
+		);
+		expect(existsSync(join(dir, "flows", "review.md"))).toBe(true);
+	});
+
 	it("scaffolds at the nearest project root when invoked from a nested directory", () => {
 		const projectRoot = join(dir, "project");
 		const nested = join(projectRoot, "packages", "app", "src");
@@ -232,6 +274,48 @@ process.exit(await runInit([]));`,
 		expect(existsSync(join(projectRoot, ".mdflow.yaml"))).toBe(true);
 		expect(existsSync(join(nested, "flows"))).toBe(false);
 		expect(existsSync(join(nested, ".mdflow.yaml"))).toBe(false);
+	});
+});
+
+describe("first-run setup", () => {
+	it("leads with guided handoff per detected engine and always offers free exits", () => {
+		const choices = buildFirstRunChoices(["claude", "codex"]);
+		expect(choices.map((choice) => choice.value)).toEqual([
+			{ type: "guided", engine: "claude" },
+			{ type: "guided", engine: "codex" },
+			{ type: "scaffold" },
+			{ type: "print" },
+			{ type: "skip" },
+		]);
+		expect(choices[0]?.name).toContain("claude session");
+	});
+
+	it("offers scaffold, print, and skip even with no engines installed", () => {
+		expect(buildFirstRunChoices([]).map((choice) => choice.value.type)).toEqual(
+			["scaffold", "print", "skip"],
+		);
+	});
+
+	it("applyAgentGuidance reports created files then current on repeat", () => {
+		const first = applyAgentGuidance(dir);
+		expect(first).toEqual([
+			"  created AGENTS.md (flows-first agent guidance)",
+			"  created CLAUDE.md (flows-first agent guidance)",
+		]);
+		const second = applyAgentGuidance(dir);
+		expect(second).toEqual([
+			"  skipped AGENTS.md (agent guidance already current)",
+			"  skipped CLAUDE.md (agent guidance already current)",
+		]);
+	});
+
+	it("applyAgentGuidance appends to an existing CLAUDE.md without touching user text", () => {
+		writeFileSync(join(dir, "CLAUDE.md"), "# House rules\n\nKeep me.\n");
+		const lines = applyAgentGuidance(dir);
+		expect(lines).toContain("  updated CLAUDE.md (flows-first agent guidance)");
+		const content = readFileSync(join(dir, "CLAUDE.md"), "utf-8");
+		expect(content.startsWith("# House rules\n\nKeep me.\n")).toBe(true);
+		expect(content).toContain("mdflow flows");
 	});
 });
 

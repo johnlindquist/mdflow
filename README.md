@@ -16,8 +16,18 @@ npx mdflow init
 
 One command safely creates a starter `./flows` roster and `.mdflow.yaml` with
 zero engine invocations; repeat runs leave an existing roster untouched. Then
-bare `md` opens the Flow Workbench. Want a repo-tailored setup conversation?
-Run `md init --guided` to launch an installed agent CLI with the setup guide.
+bare `md` opens the Flow Workbench — and on a machine with no flows at all, it
+offers first-run setup instead of an empty screen: guided setup with an
+installed agent CLI, a deterministic scaffold, or a printed setup prompt to
+paste into any agent. Want the repo-tailored setup conversation directly? Run
+`md init --guided` (or `md init --print-guide` to copy the same guide into
+your own agent session).
+
+Prefer flows as the primary way agents work in your repo? Opt in with
+`md roster sync --agents`: it maintains one marker-managed mdflow block in
+`AGENTS.md` and `CLAUDE.md` so coding agents discover the roster and hand
+matching tasks off to flows, and it never touches your text outside the
+markers. Guided setup asks this as an explicit question.
 
 ## For coding agents
 

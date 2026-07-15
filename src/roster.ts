@@ -17,6 +17,7 @@ import { resolveEngine, hasInteractiveMarker } from "./command";
 import { loadFullConfig, isInteractiveModeEnabled } from "./config";
 import { isCompatOnlyFrontmatter } from "./compat";
 import { resolveProjectRoot } from "./project-root";
+import { syncAgentGuidance } from "./agent-guidance";
 import { syncRosterReadme } from "./roster-readme";
 import type { AgentFrontmatter, FormInputs, InputDefinition } from "./types";
 
@@ -287,9 +288,12 @@ export async function runRoster(
 	if (args[0] === "sync") {
 		const json = args.includes("--json");
 		const check = args.includes("--check");
+		const agents = args.includes("--agents");
 		const unknown = args
 			.slice(1)
-			.filter((arg) => arg !== "--json" && arg !== "--check");
+			.filter(
+				(arg) => arg !== "--json" && arg !== "--check" && arg !== "--agents",
+			);
 		if (unknown.length > 0) {
 			const message = `Unknown roster sync option: ${unknown[0]}`;
 			if (json)
@@ -322,16 +326,28 @@ export async function runRoster(
 			else process.stderr.write(`Roster README sync failed: ${message}\n`);
 			return 1;
 		}
-		const ok = result.state === "current";
+		// Agent guidance blocks (AGENTS.md / CLAUDE.md). Default sync only
+		// refreshes files that already opted in via markers; --agents is the
+		// explicit "flows are the primary workflow" opt-in that creates them.
+		const guidance = syncAgentGuidance(projectRoot, { check, optIn: agents });
+		const guidanceOk = guidance.every((entry) =>
+			agents
+				? entry.state === "current"
+				: entry.state !== "stale" && entry.state !== "invalid",
+		);
+
+		const ok = result.state === "current" && guidanceOk;
 		if (json) {
 			process.stdout.write(
-				`${JSON.stringify({ type: "mdflow.roster-sync", protocolVersion: 1, effect: check ? "FREE" : "LOCAL_WRITE", ok, path: result.path, state: result.state, changed: result.changed, error: result.error })}\n`,
+				`${JSON.stringify({ type: "mdflow.roster-sync", protocolVersion: 1, effect: check ? "FREE" : "LOCAL_WRITE", ok, path: result.path, state: result.state, changed: result.changed, error: result.error, agents: guidance.map((entry) => ({ file: entry.file, path: entry.path, state: entry.state, changed: entry.changed, error: entry.error })) })}\n`,
 			);
-		} else if (result.state === "invalid") {
+			return ok ? 0 : 1;
+		}
+		if (result.state === "invalid") {
 			process.stderr.write(`Roster README is invalid: ${result.error}\n`);
 		} else if (check) {
 			process.stdout.write(
-				ok
+				result.state === "current"
 					? `Roster README is current: ${result.path}\n`
 					: `Roster README is stale: ${result.path}\n`,
 			);
@@ -341,6 +357,22 @@ export async function runRoster(
 					? `Updated roster README: ${result.path}\n`
 					: `Roster README is current: ${result.path}\n`,
 			);
+		}
+		for (const entry of guidance) {
+			if (entry.state === "invalid") {
+				process.stderr.write(`Agent guidance is invalid: ${entry.error}\n`);
+			} else if (entry.changed) {
+				process.stdout.write(`Updated agent guidance: ${entry.path}\n`);
+			} else if (entry.state === "stale") {
+				process.stdout.write(`Agent guidance is stale: ${entry.path}\n`);
+			} else if (entry.state === "current") {
+				process.stdout.write(`Agent guidance is current: ${entry.path}\n`);
+			} else if (agents && check) {
+				process.stdout.write(
+					`Agent guidance not written yet (${entry.state}): ${entry.path}\n`,
+				);
+			}
+			// missing / not-opted-in without --agents is the normal quiet state.
 		}
 		return ok ? 0 : 1;
 	}

@@ -74,6 +74,51 @@ describe("md doctor", () => {
 		).toBe(true);
 	});
 
+	it("diagnoses opted-in agent guidance drift and stays quiet before opt-in", async () => {
+		const project = root();
+		const homeDir = join(project, "home");
+
+		const before = await collectDoctorReport({
+			cwd: project,
+			homeDir,
+			which: allInstalled,
+		});
+		expect(before.project.agentGuidance).toEqual([
+			{ file: "AGENTS.md", state: "missing" },
+			{ file: "CLAUDE.md", state: "missing" },
+		]);
+		expect(
+			before.diagnostics.some((item) =>
+				item.code.startsWith("AGENT_GUIDANCE"),
+			),
+		).toBe(false);
+
+		const { syncAgentGuidance } = await import("./agent-guidance");
+		syncAgentGuidance(project, { optIn: true });
+		writeFileSync(
+			join(project, "AGENTS.md"),
+			readFileSync(join(project, "AGENTS.md"), "utf8").replace(
+				"md doctor --json",
+				"md doctor --old",
+			),
+		);
+
+		const after = await collectDoctorReport({
+			cwd: project,
+			homeDir,
+			which: allInstalled,
+		});
+		expect(after.project.agentGuidance).toEqual([
+			{ file: "AGENTS.md", state: "stale" },
+			{ file: "CLAUDE.md", state: "current" },
+		]);
+		const stale = after.diagnostics.find(
+			(item) => item.code === "AGENT_GUIDANCE_STALE",
+		);
+		expect(stale?.severity).toBe("warning");
+		expect(stale?.action?.argv).toEqual(["md", "roster", "sync"]);
+	});
+
 	it("reports stable engine, eval, capability, hook, and roster diagnostics", async () => {
 		const project = root();
 		mkdirSync(join(project, "flows"));

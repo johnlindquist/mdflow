@@ -42,7 +42,7 @@ export const MANAGEMENT_COMMANDS = [
 	},
 	{
 		name: "init",
-		usage: "init [--guided] [--engine <e>] [--yes]",
+		usage: "init [--guided] [--engine <e>] [--yes] [--agents] [--print-guide]",
 		summary: "Initialize a project flow roster",
 		json: false,
 	},
@@ -116,7 +116,7 @@ export const MANAGEMENT_COMMANDS = [
 	},
 	{
 		name: "roster",
-		usage: "roster --json | roster sync [--check] [--json]",
+		usage: "roster --json | roster sync [--check] [--agents] [--json]",
 		summary: "Inspect flows or synchronize the managed operator card",
 		json: true,
 	},
@@ -165,6 +165,14 @@ export const OPERATIONS = [
 		effect: "ENGINE",
 		consent: "interactive-only",
 		sourceMayChange: true,
+	},
+	{
+		id: "project.init-handoff",
+		command: "md init --print-guide",
+		summary:
+			"Print the guided-setup prompt for pasting into any agent harness",
+		effect: "FREE",
+		consent: "none",
 	},
 	{
 		id: "flow.create-preview",
@@ -316,7 +324,17 @@ export const OPERATIONS = [
 	{
 		id: "roster.sync",
 		command: "md roster sync",
-		summary: "Synchronize the managed operator card",
+		summary:
+			"Synchronize the managed operator card and any opted-in agent guidance blocks",
+		effect: "LOCAL_WRITE",
+		consent: "explicit-local-effect",
+		sourceMayChange: true,
+	},
+	{
+		id: "roster.sync-agents",
+		command: "md roster sync --agents",
+		summary:
+			"Opt the project into flows-first agent guidance blocks in AGENTS.md and CLAUDE.md",
 		effect: "LOCAL_WRITE",
 		consent: "explicit-local-effect",
 		sourceMayChange: true,

@@ -31,6 +31,7 @@ Start every maintenance task with `md doctor --json`. Branch on stable diagnosti
 - **FREE** `md doctor --json` — Inspect engines, flows, proof, hooks, compatibility, and next actions.
 - **LOCAL_WRITE** `md init --yes` — Create a deterministic starter roster.
 - **ENGINE** `md init --guided` — Launch an engine-guided setup session that may write an approved roster.
+- **FREE** `md init --print-guide` — Print the guided-setup prompt for pasting into any agent harness.
 - **FREE** `md create <intent> --dry-run` — Preview flow creation without writing.
 - **LOCAL_WRITE** `md create <intent>` — Create a flow and fail-closed draft eval suite.
 - **FREE** `md explain <flow.md> --json` — Resolve one invocation without launching its engine; URL imports and context providers may resolve.
@@ -49,7 +50,8 @@ Start every maintenance task with `md doctor --json`. Branch on stable diagnosti
 - **LOCAL_WRITE** `md evolve apply <run-id>` — Atomically apply a reviewed proposal.
 - **FREE** `md roster --json` — Enumerate discoverable flows.
 - **FREE** `md roster sync --check` — Check whether the managed operator card is current.
-- **LOCAL_WRITE** `md roster sync` — Synchronize the managed operator card.
+- **LOCAL_WRITE** `md roster sync` — Synchronize the managed operator card and any opted-in agent guidance blocks.
+- **LOCAL_WRITE** `md roster sync --agents` — Opt the project into flows-first agent guidance blocks in AGENTS.md and CLAUDE.md.
 
 ### Safety invariants
 - `SEPARATE_RUN_CONSENT`: A real flow run, eval run, proposal run, and source mutation require separate consent.
@@ -110,7 +112,11 @@ Rules:
    an eval, it's a wish.
 4. Keep the managed block in `flows/README.md` current with `md roster sync`.
    Preserve all user-authored text outside the markers. Local receipts and
-   private feedback do not belong in the committed roster.
+   private feedback do not belong in the committed roster. If the user
+   explicitly chooses flows as the primary agent workflow, opt in with
+   `md roster sync --agents` — it maintains one marker-managed block in
+   `AGENTS.md`/`CLAUDE.md`; never hand-edit that block and never add it
+   without the user's decision.
 5. Pin the project's default engine in `.mdflow.yaml` (`engine: pi`,
    `engine: claude`, whatever CLI the user has). Individual flows only pin an
    engine when the job demands a specific one.

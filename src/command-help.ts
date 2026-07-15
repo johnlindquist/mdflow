@@ -86,15 +86,21 @@ Examples:
 Related: _hooks frontmatter key (false disables; a path overrides), --_hooks CLI flag`,
 
 	roster: `Usage: md roster --json
-       md roster sync [--check] [--json]
+       md roster sync [--check] [--agents] [--json]
 
 Print every runnable flow as one Flow UX Protocol JSON object. Sync updates
 only mdflow's marked operator-card block in flows/README.md and preserves all
 user-authored text. sync is LOCAL WRITE; sync --check is FREE and never writes.
 
+--agents opts the project into flows-first agent guidance: it creates or
+extends a managed mdflow block in AGENTS.md and CLAUDE.md at the project root
+so coding agents hand matching tasks off to flows. Plain sync refreshes those
+blocks only in files that already carry the markers; it never adds them.
+
 Examples:
   md roster --json | jq -r '.flows[].id'
   md roster sync
+  md roster sync --agents
   md roster sync --check --json`,
 
 	install: `Usage: md install <url|gh:org/repo/path/to/flow.md[@ref]> [--global]

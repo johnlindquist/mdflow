@@ -29,13 +29,14 @@ Follow these steps in order. Steps 1–2 you do silently; step 3 is a conversati
 
 2. __Propose.__ Design 4–7 flows SPECIFIC to this repository. You are free to invent — the catalog at the bottom is inspiration, not a menu. The best roster usually mixes one or two universal flows (review is almost always worth it) with flows only this repo would want: a flow that knows this project's test runner, its changelog format, its deploy checklist, its domain vocabulary. Prefer engine-neutral filenames (`review.md`, not `review.claude.md`) and let `.mdflow.yaml` pin the project default engine; use an engine-specific filename only when a flow genuinely wants a specific engine.
 
-3. __Converse.__ Present the proposal as a numbered list: flow name, one line on what it does, and what it inlines (diffs, logs, files). Remind the user each real run launches a paid flow invocation with provider-dependent downstream cost. Ask which to keep, drop, or change, and confirm the project's default engine (suggest __ENGINE__ since they chose it for this session, but list the detected alternatives: __ENGINES_DETECTED__). Wait for their answer. Iterate until they say go.
+3. __Converse.__ Present the proposal as a numbered list: flow name, one line on what it does, and what it inlines (diffs, logs, files). Remind the user each real run launches a paid flow invocation with provider-dependent downstream cost. Ask which to keep, drop, or change, and confirm the project's default engine (suggest __ENGINE__ since they chose it for this session, but list the detected alternatives: __ENGINES_DETECTED__). Then ask one workflow question, framed by behavior, not by files: should flows become the primary way agents work in this repository, or stay an optional tool? Explain that choosing primary adds one mdflow-managed block to `AGENTS.md` and `CLAUDE.md` at the repo root (via `md roster sync --agents`) so coding agents discover the roster and hand matching tasks off to flows; everything outside that marked block stays untouched. Wait for their answer. Iterate until they say go.
 
 4. __Write.__ Create:
    - `flows/<name>.md` for each approved flow — frontmatter with at least `description:`, a focused body, imports for the context it needs.
    - `flows/<name>.eval.ts` with 1–3 focused behavioral cases for each flow. Prefer deterministic invariants over exact prose. If a case reproduces recorded feedback, set `evidence: ["fb_..."]`; only that linkage can support a verified-improvement claim.
    - `flows/README.md` — preserve user-authored text and update only mdflow's managed operator-card block (equivalent to `md roster sync`), so every teammate and agent sees the current source roster.
    - `.mdflow.yaml` at the repo root with `engine: <confirmed default>` and `evolve.mode: suggest`. Suggest mode surfaces evidence after normal and workflow runs but never spends an engine invocation or edits a flow on its own.
+   - Only if the user chose flows as the primary agent workflow in step 3: run `md roster sync --agents` to create or update the managed guidance block in `AGENTS.md` and `CLAUDE.md`. Never hand-edit those files — the command owns exactly its marker-delimited block and preserves all user-authored text.
    - For every interactive specialist, explicitly classify it as either seeded (a deliberate default first turn) or waiting. Waiting specialists MUST use the exact interactive wait contract above; do not invent a seed prompt.
 
 5. __Verify — free only.__ For each flow, run `md flows/<name>.md --_dry-run` and `md eval flows/<name>.md --plan`. Show the command plan, engine-resolution rung, eval case count, and paid-invocation estimate. Call out inline commands that were deliberately skipped. If a dry run fails, fix the flow and re-verify. NEVER do a real flow or eval run.
@@ -44,7 +45,7 @@ Follow these steps in order. Steps 1–2 you do silently; step 3 is a conversati
 
 # Hard rules
 
-- Only create or modify files inside `flows/` plus the single `.mdflow.yaml` at the repo root. Touch nothing else.
+- Only create or modify files inside `flows/` plus the single `.mdflow.yaml` at the repo root. One exception: when the user explicitly chose flows as the primary agent workflow, run `md roster sync --agents` for `AGENTS.md`/`CLAUDE.md` — never write those files any other way. Touch nothing else.
 - Never execute a real engine or eval run. `--_dry-run`, `md explain`, `md eval --plan`, and `md evolve plan` are the only mdflow invocations you may make.
 - Do not write files until the user approves the roster in step 3.
 - If `flows/` already exists, read it first and treat this session as additive: propose complements, and never overwrite an existing flow without explicit permission.

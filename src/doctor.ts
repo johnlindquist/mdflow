@@ -28,6 +28,10 @@ import {
 } from "./hooks";
 import { parseFrontmatter } from "./parse";
 import { isRegistryPath, resolveProjectRoot } from "./project-root";
+import {
+	inspectAgentGuidance,
+	type AgentGuidanceState,
+} from "./agent-guidance";
 import { inspectRosterReadme, type RosterReadmeState } from "./roster-readme";
 import { collectRoster, type FlowSource, type RosterFlow } from "./roster";
 import type { AgentFrontmatter, GlobalConfig } from "./types";
@@ -55,6 +59,8 @@ export type DoctorDiagnosticCode =
 	| "ROSTER_README_MISSING"
 	| "ROSTER_README_STALE"
 	| "ROSTER_MARKERS_INVALID"
+	| "AGENT_GUIDANCE_STALE"
+	| "AGENT_GUIDANCE_INVALID"
 	| "COMPAT_OLDER_MAJOR"
 	| "COMPAT_NEWER_MAJOR"
 	| "LEDGER_INVALID";
@@ -127,6 +133,7 @@ export interface DoctorReport {
 		configFiles: string[];
 		defaultEngine: { name: string; installed: boolean };
 		rosterReadme: { path: string; state: RosterReadmeState };
+		agentGuidance: Array<{ file: string; state: AgentGuidanceState }>;
 	};
 	engines: { registered: string[]; installed: string[] };
 	summary: {
@@ -489,6 +496,29 @@ export async function collectDoctorReport(
 			message: readme.error ?? "Managed roster markers are invalid.",
 		});
 
+	// Agent guidance is opt-in: missing / not-opted-in files are the normal
+	// quiet state, so only opted-in files that drifted are diagnosed.
+	const agentGuidance = inspectAgentGuidance(root);
+	for (const guidance of agentGuidance) {
+		if (guidance.state === "stale")
+			diagnostics.push({
+				code: "AGENT_GUIDANCE_STALE",
+				severity: "warning",
+				path: posixRelative(root, guidance.path),
+				message: `Managed agent guidance block in ${guidance.file} is stale.`,
+				action: action(["md", "roster", "sync"], "LOCAL_WRITE"),
+			});
+		if (guidance.state === "invalid")
+			diagnostics.push({
+				code: "AGENT_GUIDANCE_INVALID",
+				severity: "error",
+				path: posixRelative(root, guidance.path),
+				message:
+					guidance.error ??
+					`Managed agent guidance markers in ${guidance.file} are invalid.`,
+			});
+	}
+
 	const currentVersion = mdflowVersion();
 	const flows: DoctorFlowReport[] = [];
 	for (const flow of projectFlows) {
@@ -574,6 +604,10 @@ export async function collectDoctorReport(
 				path: posixRelative(root, readme.path),
 				state: readme.state,
 			},
+			agentGuidance: agentGuidance.map((guidance) => ({
+				file: guidance.file,
+				state: guidance.state,
+			})),
 		},
 		engines: {
 			registered,

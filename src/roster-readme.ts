@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { resolveEngine } from "./command";
+import { findManagedBlock, upsertManagedBlock } from "./managed-block";
 import { isCompatOnlyFrontmatter } from "./compat";
 import { parseFrontmatter } from "./parse";
 import type { AgentFrontmatter } from "./types";
@@ -183,55 +184,24 @@ ${table}
 ${MANAGED_ROSTER_END}`;
 }
 
-function markerRanges(
-	source: string,
-): { start: number; end: number } | { error: string } | null {
-	const starts: number[] = [];
-	const ends: number[] = [];
-	let offset = 0;
-	let fence: "```" | "~~~" | null = null;
-	for (const lineWithEol of source.match(/.*(?:\r?\n|$)/g) ?? []) {
-		if (!lineWithEol) continue;
-		const line = lineWithEol.replace(/\r?\n$/, "");
-		const trimmed = line.trim();
-		if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
-			const marker = trimmed.startsWith("```") ? "```" : "~~~";
-			fence = fence === marker ? null : (fence ?? marker);
-		} else if (!fence && trimmed === MANAGED_ROSTER_START) {
-			starts.push(offset + line.indexOf(MANAGED_ROSTER_START));
-		} else if (!fence && trimmed === MANAGED_ROSTER_END) {
-			ends.push(offset + line.indexOf(MANAGED_ROSTER_END));
-		}
-		offset += lineWithEol.length;
-	}
-	if (starts.length === 0 && ends.length === 0) return null;
-	if (starts.length !== 1 || ends.length !== 1)
-		return {
-			error:
-				"managed roster markers must appear exactly once outside code fences",
-		};
-	const start = starts[0];
-	const endMarker = ends[0];
-	if (start === undefined || endMarker === undefined)
-		return { error: "managed roster marker offsets are unavailable" };
-	const end = endMarker + MANAGED_ROSTER_END.length;
-	if (end <= start) return { error: "managed roster markers are out of order" };
-	return { start, end };
-}
+const ROSTER_MARKERS = {
+	start: MANAGED_ROSTER_START,
+	end: MANAGED_ROSTER_END,
+} as const;
 
 function desiredSource(
 	source: string | null,
 	block: string,
 ): { source?: string; error?: string } {
-	if (source === null) return { source: `# Flow roster\n\n${block}\n` };
-	const range = markerRanges(source);
-	if (range && "error" in range) return { error: range.error };
-	if (range)
-		return {
-			source: `${source.slice(0, range.start)}${block}${source.slice(range.end)}`,
-		};
-	const separator = source.endsWith("\n") ? "\n" : "\n\n";
-	return { source: `${source}${separator}${block}\n` };
+	const result = upsertManagedBlock(
+		source,
+		block,
+		ROSTER_MARKERS,
+		(managed) => `# Flow roster\n\n${managed}\n`,
+	);
+	if (result.error)
+		return { error: `managed roster ${result.error.replace(/^managed /, "")}` };
+	return result;
 }
 
 export function inspectRosterReadme(

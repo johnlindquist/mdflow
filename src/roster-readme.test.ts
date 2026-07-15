@@ -165,6 +165,50 @@ describe("managed roster README", () => {
 		expect(payload).toMatchObject({ type: "mdflow.roster-sync", ok: false });
 	});
 
+	it("syncs agent guidance files only on explicit --agents opt-in", async () => {
+		const root = project();
+		flow(root, "review.md", "Review changes");
+		const env = { HOME: join(root, "home") };
+
+		const plain = await spawnMd(["roster", "sync", "--json"], {
+			cwd: root,
+			env,
+		});
+		expect(plain.exitCode).toBe(0);
+		const plainPayload = JSON.parse(plain.stdout);
+		expect(plainPayload.ok).toBe(true);
+		expect(
+			plainPayload.agents.map((entry: any) => [entry.file, entry.state]),
+		).toEqual([
+			["AGENTS.md", "missing"],
+			["CLAUDE.md", "missing"],
+		]);
+
+		const optIn = await spawnMd(["roster", "sync", "--agents", "--json"], {
+			cwd: root,
+			env,
+		});
+		expect(optIn.exitCode).toBe(0);
+		const optInPayload = JSON.parse(optIn.stdout);
+		expect(optInPayload.ok).toBe(true);
+		expect(
+			optInPayload.agents.map((entry: any) => [
+				entry.file,
+				entry.state,
+				entry.changed,
+			]),
+		).toEqual([
+			["AGENTS.md", "current", true],
+			["CLAUDE.md", "current", true],
+		]);
+		expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toContain(
+			"md doctor --json",
+		);
+		expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toContain(
+			"mdflow flows",
+		);
+	});
+
 	it("records source proof only, never private receipt state", () => {
 		const root = project();
 		flow(root, "review.md", "Review changes");
