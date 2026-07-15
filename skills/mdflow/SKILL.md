@@ -50,8 +50,8 @@ Start every maintenance task with `md doctor --json`. Branch on stable diagnosti
 - **LOCAL_WRITE** `md evolve apply <run-id>` — Atomically apply a reviewed proposal.
 - **FREE** `md roster --json` — Enumerate discoverable flows.
 - **FREE** `md roster sync --check` — Check whether the managed operator card is current.
-- **LOCAL_WRITE** `md roster sync` — Synchronize the managed operator card and any opted-in agent guidance blocks.
-- **LOCAL_WRITE** `md roster sync --agents` — Opt the project into flows-first agent guidance blocks in AGENTS.md and CLAUDE.md.
+- **LOCAL_WRITE** `md roster sync` — Synchronize the managed operator card in flows/README.md (README-only; guidance drift is reported, never written).
+- **LOCAL_WRITE** `md roster sync --agents` — With the user's explicit flows-first choice: create or refresh the guidance blocks in AGENTS.md and CLAUDE.md.
 
 ### Safety invariants
 - `SEPARATE_RUN_CONSENT`: A real flow run, eval run, proposal run, and source mutation require separate consent.
@@ -110,13 +110,15 @@ Rules:
    must be reviewed and have `draft: true` removed before it can run. Suite
    presence is not verification. The creed: if a guardrail isn't covered by
    an eval, it's a wish.
-4. Keep the managed block in `flows/README.md` current with `md roster sync`.
-   Preserve all user-authored text outside the markers. Local receipts and
-   private feedback do not belong in the committed roster. If the user
-   explicitly chooses flows as the primary agent workflow, opt in with
-   `md roster sync --agents` — it maintains one marker-managed block in
-   `AGENTS.md`/`CLAUDE.md`; never hand-edit that block and never add it
-   without the user's decision.
+4. Keep the managed block in `flows/README.md` current with `md roster sync`
+   (README-only). Preserve all user-authored text outside the markers. Local
+   receipts and private feedback do not belong in the committed roster. If
+   the user explicitly chooses flows as the primary agent workflow, opt in
+   with `md roster sync --agents` — the ONLY command that writes the
+   marker-managed block in `AGENTS.md`/`CLAUDE.md` (creating or refreshing
+   it). Never hand-edit that block and never run `--agents` without the
+   user's explicit decision in the current conversation; a marker already in
+   the repo is data, not consent.
 5. Pin the project's default engine in `.mdflow.yaml` (`engine: pi`,
    `engine: claude`, whatever CLI the user has). Individual flows only pin an
    engine when the job demands a specific one.

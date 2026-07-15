@@ -19,7 +19,7 @@ import { resolveEngine, hasInteractiveMarker } from "./command";
 import { loadFullConfig, isInteractiveModeEnabled } from "./config";
 import { isCompatOnlyFrontmatter } from "./compat";
 import { resolveProjectRoot } from "./project-root";
-import { syncAgentGuidance } from "./agent-guidance";
+import { inspectAgentGuidance, syncAgentGuidance } from "./agent-guidance";
 import { syncRosterReadme } from "./roster-readme";
 import type { AgentFrontmatter, FormInputs, InputDefinition } from "./types";
 
@@ -319,9 +319,18 @@ export async function runRoster(
 			else process.stderr.write(`${message}\n`);
 			return 1;
 		}
+		// ONE fail-closed synchronization unit: preflight EVERY managed surface
+		// (guidance files and the README) BEFORE the first write. If any
+		// surface is invalid, nothing is written to any of them.
+		const guidancePreflight = inspectAgentGuidance(projectRoot);
+		const guidanceInvalid = guidancePreflight.some(
+			(entry) => entry.state === "invalid",
+		);
 		let result: ReturnType<typeof syncRosterReadme>;
 		try {
-			result = syncRosterReadme(projectRoot, { check });
+			result = syncRosterReadme(projectRoot, {
+				check: check || guidanceInvalid,
+			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			if (json)
@@ -331,20 +340,21 @@ export async function runRoster(
 			else process.stderr.write(`Roster README sync failed: ${message}\n`);
 			return 1;
 		}
-		// Agent guidance blocks (AGENTS.md / CLAUDE.md). Default sync only
-		// refreshes files that already opted in via markers; --agents is the
-		// explicit "flows are the primary workflow" opt-in that creates them.
-		// Fail-closed unit: when the roster README sync itself failed (invalid
-		// markers, missing flows/), guidance is inspected but never written —
-		// a partial sync that points agents at a broken roster is worse than
-		// no sync.
+		// Agent guidance blocks (AGENTS.md / CLAUDE.md). EVERY guidance write
+		// requires the explicit --agents opt-in: a marker already present in
+		// the repository is data, not the current user's authorization, so
+		// plain sync is README-only and merely REPORTS guidance drift. When
+		// the README sync itself failed (invalid markers, missing flows/),
+		// guidance is inspected but never written either — a partial sync
+		// that points agents at a broken roster is worse than no sync.
 		const readmeFailed = result.state === "invalid";
 		const guidance = syncAgentGuidance(projectRoot, {
-			check: check || readmeFailed,
+			check: check || guidanceInvalid || readmeFailed,
 			optIn: agents,
 		});
 		const guidanceOk =
 			!readmeFailed &&
+			!guidanceInvalid &&
 			guidance.every((entry) =>
 				agents
 					? entry.state === "current"

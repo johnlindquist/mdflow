@@ -376,7 +376,7 @@ export default [{ name: "x", check: () => null }];
 `
     );
 
-    const lines = scaffoldStarterFlows(projectDir, "claude");
+    const { lines } = scaffoldStarterFlows(projectDir, "claude");
 
     // The catalog flow is NOT created, so the planted suite never becomes its
     // guardrail suite (which `md eval review.md` would import and execute).
@@ -393,7 +393,7 @@ export default [{ name: "x", check: () => null }];
     const projectDir = join(tempDir, "project");
     write(join(projectDir, "flows", "review.hooks.ts"), "#!/usr/bin/env bun\nconst handlers = {};\n");
 
-    const lines = scaffoldStarterFlows(projectDir, "claude");
+    const { lines } = scaffoldStarterFlows(projectDir, "claude");
 
     expect(existsSync(join(projectDir, "flows", "review.md"))).toBe(false);
     expect(lines.join("\n")).toMatch(/orphan sidecar/i);

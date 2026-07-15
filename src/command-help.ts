@@ -93,9 +93,10 @@ only mdflow's marked operator-card block in flows/README.md and preserves all
 user-authored text. sync is LOCAL WRITE; sync --check is FREE and never writes.
 
 --agents opts the project into flows-first agent guidance: it creates or
-extends a managed mdflow block in AGENTS.md and CLAUDE.md at the project root
-so coding agents hand matching tasks off to flows. Plain sync refreshes those
-blocks only in files that already carry the markers; it never adds them.
+refreshes one managed mdflow block in AGENTS.md and CLAUDE.md at the project
+root so coding agents hand matching tasks off to flows. EVERY guidance write
+requires --agents (a marker already in the repo is data, not the current
+user's authorization); plain sync is README-only and reports guidance drift.
 
 Examples:
   md roster --json | jq -r '.flows[].id'

@@ -129,6 +129,39 @@ describe("md doctor", () => {
 		).toBe(true);
 	});
 
+	it("suppresses mutating actions everywhere they surface, not only nextActions", async () => {
+		const project = root();
+		mkdirSync(join(project, "flows"));
+		// Structural error (invalid config) ALONGSIDE a valid flow that would
+		// otherwise earn LOCAL_WRITE actions (missing eval suite, missing
+		// roster README): none of those may leak through diagnostics[].action
+		// or the rendered text while the error is present.
+		writeFileSync(join(project, ".mdflow.yaml"), "engine: [unterminated\n");
+		writeFileSync(
+			join(project, "flows", "task.md"),
+			"---\ndescription: Task\n_flow_id: flow_task\n---\nBody\n",
+		);
+		const report = await collectDoctorReport({
+			cwd: project,
+			homeDir: join(project, "home"),
+			which: allInstalled,
+		});
+		expect(
+			report.diagnostics.some((item) => item.code === "CONFIG_INVALID"),
+		).toBe(true);
+		const leakedActions = report.diagnostics.filter(
+			(item) => item.action && item.action.effect !== "FREE",
+		);
+		expect(leakedActions).toEqual([]);
+		expect(
+			report.nextActions.every((item) => item.effect === "FREE"),
+		).toBe(true);
+		const { renderDoctorText } = await import("./doctor");
+		const text = renderDoctorText(report);
+		expect(text).not.toContain("Next [LOCAL_WRITE]");
+		expect(text).not.toContain("Next [ENGINE]");
+	});
+
 	it("diagnoses opted-in agent guidance drift and stays quiet before opt-in", async () => {
 		const project = root();
 		const homeDir = join(project, "home");
@@ -171,7 +204,7 @@ describe("md doctor", () => {
 			(item) => item.code === "AGENT_GUIDANCE_STALE",
 		);
 		expect(stale?.severity).toBe("warning");
-		expect(stale?.action?.argv).toEqual(["md", "roster", "sync"]);
+		expect(stale?.action?.argv).toEqual(["md", "roster", "sync", "--agents"]);
 	});
 
 	it("reports stable engine, eval, capability, hook, and roster diagnostics", async () => {

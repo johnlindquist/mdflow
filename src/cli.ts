@@ -1,6 +1,6 @@
 import { Glob } from "bun";
 import { basename, join, delimiter } from "path";
-import { realpathSync, readFileSync, readdirSync, existsSync } from "fs";
+import { realpathSync, readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { EarlyExitRequest } from "./errors";
 import { LRUCache } from "./cache";
@@ -526,34 +526,15 @@ export async function handleMaCommands(args: CliArgs): Promise<HandleMaCommandsR
   // No file and no flags - show the Flow Workbench if both streams are interactive.
   if (!args.filePath && !args.help) {
     if (process.stdin.isTTY && process.stdout.isTTY) {
-      // First run: when the project is CLEANLY empty of runnable flows,
-      // offer setup — agent-guided, scaffold, or a printed handoff prompt —
-      // instead of opening an empty Workbench. "Not now" falls through to
-      // the Workbench exactly as before.
-      //
-      // Tri-state on purpose: an enumeration warning (unreadable directory,
-      // invalid flow, broken config) or a legacy project `.mdflow/*.md`
-      // roster is INDETERMINATE, not proof of absence — those open the
-      // Workbench rather than a setup wizard for a project someone owns.
-      const { collectRoster } = await import("./roster");
-      const roster = await collectRoster();
-      const legacyFlowsPresentOrIndeterminate = (() => {
-        if (!roster.projectRoot) return true;
-        try {
-          return readdirSync(join(roster.projectRoot, PROJECT_AGENTS_DIR)).some(
-            (name) => name.toLowerCase().endsWith(".md"),
-          );
-        } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          return code !== "ENOENT" && code !== "ENOTDIR";
-        }
-      })();
-      if (
-        roster.flows.length === 0 &&
-        roster.warnings.length === 0 &&
-        !legacyFlowsPresentOrIndeterminate
-      ) {
-        const { runFirstRunSetup } = await import("./init");
+      // First run: when THIS PROJECT has no owned roster (canonical flows/,
+      // legacy .mdflow/, or project registry — global flows and cwd
+      // documents are irrelevant to project initialization), offer setup
+      // instead of an empty Workbench. Indeterminate inspection suppresses
+      // the wizard. "Not now" falls through to the Workbench as before.
+      const { runFirstRunSetup, shouldOfferFirstRunSetup } = await import(
+        "./init"
+      );
+      if (await shouldOfferFirstRunSetup()) {
         const exitCode = await runFirstRunSetup();
         if (exitCode !== null) throw new EarlyExitRequest("", exitCode);
       }

@@ -1741,6 +1741,7 @@ export class CliRunner {
 					interactive: interactiveMode,
 					env: extractEnvVars(frontmatter),
 					rawOutput: parsed.rawOutput,
+					allowNested: parsed.allowNested,
 				},
 				parsed.jsonMode,
 			);
@@ -2444,6 +2445,7 @@ export class CliRunner {
 		let contextOnly = false,
 			quiet = false,
 			noMenu = false,
+			allowNested = false,
 			noHistory = false,
 			noEvolve = false,
 			resume = false;
@@ -2499,6 +2501,14 @@ export class CliRunner {
 		if (noMenuIdx !== -1) {
 			noMenu = true;
 			remainingArgs.splice(noMenuIdx, 1);
+		}
+		// Deliberate nested-run override. This is a CLI-only consent: flow
+		// frontmatter (_env) must never be able to grant it, so it is consumed
+		// here and never derived from the environment or the flow file.
+		const allowNestedIdx = remainingArgs.indexOf("--_allow-nested");
+		if (allowNestedIdx !== -1) {
+			allowNested = true;
+			remainingArgs.splice(allowNestedIdx, 1);
 		}
 		const jsonIdx = remainingArgs.indexOf("--json");
 		if (jsonIdx !== -1) {
@@ -2601,6 +2611,7 @@ export class CliRunner {
 			contextOnly,
 			quiet,
 			noMenu,
+			allowNested,
 			noHistory,
 			noEvolve,
 			resume,

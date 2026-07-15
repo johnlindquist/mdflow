@@ -578,6 +578,12 @@ export interface RunContext {
    */
   interactive?: boolean;
   /**
+   * Deliberate consent for a NESTED engine run (a run started from inside
+   * another mdflow-launched engine session). Set only by the CLI-consumed
+   * --_allow-nested flag — never from flow frontmatter or the environment.
+   */
+  allowNested?: boolean;
+  /**
    * Called with each output chunk as it arrives (mode "stream" only).
    * stderr chunks are delivered only when captureStderr is enabled.
    */
@@ -757,18 +763,23 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
   // it would load the outer flow's project config instead of its own.
   const runEnv: Record<string, string | undefined> = { ...adapterEnv, ...process.env, ...env };
   delete runEnv.MDFLOW_CONFIG_CWD;
-  // Recursion marker: an engine session spawned by mdflow (and anything it
-  // shells out to, including nested `md` calls) can detect that it is
-  // already running inside a consented flow. The flows-first agent guidance
-  // block instructs agents to never hand off to another flow when this is
-  // set — recursive handoff multiplies cost without a new consent boundary.
-  // A nested run is surfaced loudly (but not blocked: piped multi-agent
-  // compositions are legitimate) so silent recursion cannot accumulate cost.
-  if (process.env.MDFLOW_ACTIVE_FLOW) {
-    console.error(
-      "Warning [NESTED_FLOW]: this engine run was started from inside " +
-        "another mdflow-launched session; recursive flow handoff multiplies " +
-        "cost without a new consent boundary.",
+  // Recursion boundary: an engine session spawned by mdflow injects
+  // MDFLOW_ACTIVE_FLOW into its child env, so a nested `md` invocation from
+  // inside that session (agent shell tools, inline commands) can be detected
+  // here. A nested ENGINE run is REJECTED by default — it would spend
+  // another paid invocation without a new user consent boundary. The only
+  // override is the CLI-consumed --_allow-nested flag (ctx.allowNested);
+  // flow frontmatter _env can never grant it. Ordinary shell pipelines
+  // (`md plan.md | md build.md`) are unaffected: siblings spawned by the
+  // user's shell never inherit an engine child's marker.
+  if (process.env.MDFLOW_ACTIVE_FLOW && !ctx.allowNested) {
+    throw new CommandError(
+      "Nested flow run rejected (NESTED_FLOW): this engine run was started " +
+        "from inside another mdflow-launched session. Recursive flow " +
+        "handoff spends another engine invocation without a new consent " +
+        "boundary. If this nesting is deliberate, re-run with " +
+        "--_allow-nested.",
+      { errorCode: "COMMAND_EXECUTION_FAILED", context: { command: normalizedCommand } },
     );
   }
   runEnv.MDFLOW_ACTIVE_FLOW = "1";

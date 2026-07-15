@@ -59,8 +59,16 @@ export function containedWritePath(
 		let stats: ReturnType<typeof lstatSync> | null = null;
 		try {
 			stats = lstatSync(path);
-		} catch {
-			stats = null; // Missing components are created by the caller (mkdir/wx).
+		} catch (error) {
+			// Only genuine absence is "missing" (the caller creates it with
+			// mkdir/wx). Permission errors, I/O errors, and everything else are
+			// indeterminate — fail closed instead of assuming a safe write.
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code !== "ENOENT" && code !== "ENOTDIR")
+				throw new ContainmentError(
+					`cannot inspect write path ${path}: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			stats = null;
 		}
 		if (!stats) continue;
 		if (stats.isSymbolicLink())
@@ -88,8 +96,12 @@ export function assertPlainDirectory(path: string): void {
 	let stats: ReturnType<typeof lstatSync> | null = null;
 	try {
 		stats = lstatSync(path);
-	} catch {
-		return; // Absent is fine — the caller creates it.
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ENOENT" || code === "ENOTDIR") return; // Caller creates it.
+		throw new ContainmentError(
+			`cannot inspect directory ${path}: ${error instanceof Error ? error.message : String(error)}`,
+		);
 	}
 	if (stats.isSymbolicLink())
 		throw new ContainmentError(

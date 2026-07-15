@@ -536,7 +536,9 @@ export async function collectDoctorReport(
 				severity: "warning",
 				path: posixRelative(root, guidance.path),
 				message: `Managed agent guidance block in ${guidance.file} is stale.`,
-				action: action(["md", "roster", "sync"], "LOCAL_WRITE"),
+				// Guidance writes always require the explicit --agents opt-in;
+				// plain roster sync is README-only.
+				action: action(["md", "roster", "sync", "--agents"], "LOCAL_WRITE"),
 			});
 		if (guidance.state === "invalid")
 			diagnostics.push({
@@ -599,16 +601,26 @@ export async function collectDoctorReport(
 		`${a.path ?? ""}:${a.code}`.localeCompare(`${b.path ?? ""}:${b.code}`),
 	);
 
-	// Fail closed on next actions: while ANY structural error is present, a
+	// Fail closed on actions: while ANY structural error is present, a
 	// diagnostic-driven agent must not be handed LOCAL_WRITE/ENGINE commands —
-	// mutating a structurally broken project compounds the breakage. FREE
-	// inspection actions remain.
+	// mutating a structurally broken project compounds the breakage. The
+	// suppression applies to the diagnostics themselves (JSON
+	// diagnostics[].action and the text renderer's "Next" lines), not just
+	// the top-level nextActions list. FREE inspection actions remain.
 	const hasStructuralErrors = diagnostics.some(
 		(item) => item.severity === "error",
 	);
-	const nextActions = diagnostics.flatMap((diagnostic, index) =>
-		diagnostic.action &&
-		(!hasStructuralErrors || diagnostic.action.effect === "FREE")
+	const safeDiagnostics = hasStructuralErrors
+		? diagnostics.map((diagnostic): DoctorDiagnostic => {
+				if (!diagnostic.action || diagnostic.action.effect === "FREE")
+					return diagnostic;
+				const { action: dropped, ...rest } = diagnostic;
+				void dropped;
+				return rest;
+			})
+		: diagnostics;
+	const nextActions = safeDiagnostics.flatMap((diagnostic, index) =>
+		diagnostic.action
 			? [
 					{
 						id: `diagnostic.${index + 1}`,
@@ -653,12 +665,13 @@ export async function collectDoctorReport(
 		},
 		summary: {
 			flows: flows.length,
-			structuralErrors: diagnostics.filter((item) => item.severity === "error")
-				.length,
+			structuralErrors: safeDiagnostics.filter(
+				(item) => item.severity === "error",
+			).length,
 			eval: evalSummary,
 		},
 		flows,
-		diagnostics,
+		diagnostics: safeDiagnostics,
 		nextActions,
 		executionBoundary:
 			"No engines, eval suites, hook programs, inline commands, executable fences, URLs, or context providers were executed; no files were written.",

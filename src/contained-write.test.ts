@@ -90,10 +90,14 @@ describe("symlinked project layouts are refused end to end", () => {
 
 	it("init refuses a dangling .mdflow.yaml symlink instead of creating its target", () => {
 		symlinkSync(join(victim, "planted.yaml"), join(dir, ".mdflow.yaml"));
-		const lines = scaffoldStarterFlows(dir, "pi");
-		expect(lines.some((line) => line.includes("refused .mdflow.yaml"))).toBe(
-			true,
-		);
+		const result = scaffoldStarterFlows(dir, "pi");
+		expect(
+			result.lines.some((line) => line.includes("refused .mdflow.yaml")),
+		).toBe(true);
+		// A refused required component is a structured non-success, never
+		// summarized into "ready".
+		expect(result.ok).toBe(false);
+		expect(result.refused).toBeGreaterThan(0);
 		expect(existsSync(join(victim, "planted.yaml"))).toBe(false);
 	});
 

@@ -304,11 +304,24 @@ export async function postFlightReport(cwd: string): Promise<string[]> {
 	return lines;
 }
 
+export interface ScaffoldResult {
+	lines: string[];
+	refused: number;
+	failed: number;
+	/** True only when nothing was refused and nothing failed. */
+	ok: boolean;
+}
+
 /**
  * Zero-engine-turn fallback: scaffold the starter catalog. Never overwrites.
+ * The result is STRUCTURED — callers branch on `ok`/`refused`/`failed`, never
+ * on the prose lines — so a refused or failed component can never be
+ * summarized into a success.
  */
-export function scaffoldStarterFlows(cwd: string, engine: string): string[] {
+export function scaffoldStarterFlows(cwd: string, engine: string): ScaffoldResult {
 	const lines: string[] = [];
+	let refused = 0;
+	let failed = 0;
 	const flowsDir = join(cwd, "flows");
 	const catalog = loadCatalog();
 
@@ -335,6 +348,7 @@ export function scaffoldStarterFlows(cwd: string, engine: string): string[] {
 			const orphans = [evalTarget, hooksTarget]
 				.filter((path) => existsSync(path))
 				.map((path) => `flows/${basename(path)}`);
+			refused++;
 			lines.push(
 				`  refused flows/${entry.name} (orphan sidecar ${orphans.join(", ")} already exists — ` +
 					`init never adopts executable files it did not write; remove the file(s) and re-run)`,
@@ -414,7 +428,10 @@ export function scaffoldStarterFlows(cwd: string, engine: string): string[] {
 	const readmeExisted = existsSync(readmePath);
 	const rosterResult = syncRosterReadme(cwd);
 	if (rosterResult.state === "invalid") {
-		lines.push(`  skipped flows/README.md (${rosterResult.error})`);
+		// An unsyncable operator card is a FAILED required component, not a
+		// preserved file.
+		failed++;
+		lines.push(`  failed flows/README.md (${rosterResult.error})`);
 	} else if (rosterResult.changed) {
 		lines.push(
 			`  ${readmeExisted ? "updated" : "created"} flows/README.md (managed operator card)`,
@@ -434,6 +451,7 @@ export function scaffoldStarterFlows(cwd: string, engine: string): string[] {
 		configStats = null;
 	}
 	if (configStats?.isSymbolicLink()) {
+		refused++;
 		lines.push(
 			`  refused ${PROJECT_CONFIG_FILE} (symlink — init never writes through symlinks)`,
 		);
@@ -457,7 +475,7 @@ evolve:
 		);
 	}
 
-	return lines;
+	return { lines, refused, failed, ok: refused === 0 && failed === 0 };
 }
 
 /**
@@ -475,9 +493,12 @@ export function applyAgentGuidance(cwd: string): {
 	);
 	let ok = true;
 	const lines = syncAgentGuidance(cwd, { optIn: true }).map((entry) => {
-		if (entry.state === "invalid") {
+		// Any entry carrying an error — invalid itself, OR withheld because a
+		// sibling was invalid / an earlier write failed — is a FAILED requested
+		// write, never a quiet skip.
+		if (entry.state === "invalid" || entry.error) {
 			ok = false;
-			return `  failed ${entry.file} (${entry.error})`;
+			return `  failed ${entry.file} (${entry.error ?? "invalid guidance state"})`;
 		}
 		if (!entry.changed)
 			return `  skipped ${entry.file} (agent guidance already current)`;
@@ -541,8 +562,11 @@ export function buildInitReceipt(
 	const preserved = count("skipped");
 	const refused = count("refused");
 	const failed = count("failed");
+	const incomplete = refused + failed;
 	const summary = [
-		`mdflow is ready — ${created} ${created === 1 ? "file" : "files"} created for this project.`,
+		incomplete > 0
+			? `mdflow setup is INCOMPLETE — ${created} ${created === 1 ? "file" : "files"} created; ${incomplete} required ${incomplete === 1 ? "write" : "writes"} did not happen.`
+			: `mdflow is ready — ${created} ${created === 1 ? "file" : "files"} created for this project.`,
 	];
 	if (updated > 0)
 		summary.push(`${updated} ${updated === 1 ? "file was" : "files were"} updated.`);
@@ -624,7 +648,8 @@ Flags:
                         AGENTS.md and CLAUDE.md (same opt-in as
                         \`md roster sync --agents\`)
   --print-guide         Print the guided-setup prompt to stdout for pasting
-                        into any agent harness (FREE, no engine launch)
+                        into any agent harness (FREE, no engine launch;
+                        combines only with --engine to pick the named engine)
   --help, -h            Show this help
 
 Examples:
@@ -673,11 +698,54 @@ export function buildFirstRunChoices(
 }
 
 /**
- * Bare `md` first-run handoff: when the Workbench would open onto zero
- * runnable flows, offer setup instead of an empty roster. The heavy lifting
- * is meant to be agent-driven — the headline option hands the guided setup
- * prompt to an installed engine; printing it covers harnesses mdflow cannot
- * launch. Returns an exit code when the session was handled here, or null to
+ * First-run predicate — PROJECT initialization, decided from project-owned
+ * locations ONLY: the canonical `flows/` roster, the legacy project
+ * `.mdflow/` roster, and the project registry. Global (`~/.mdflow`) flows,
+ * PATH files, and cwd documents are irrelevant to whether THIS project has a
+ * roster, so they neither suppress nor trigger setup. Any indeterminacy —
+ * roster warnings, unreadable directories, unresolvable roots — suppresses
+ * the wizard: a project we cannot cleanly inspect is not "empty".
+ */
+export async function shouldOfferFirstRunSetup(
+	options: { cwd?: string; homeDir?: string } = {},
+): Promise<boolean> {
+	const cwd = options.cwd ?? process.cwd();
+	try {
+		const { collectRoster } = await import("./roster");
+		const roster = await collectRoster({
+			cwd,
+			...(options.homeDir ? { homeDir: options.homeDir } : {}),
+			sources: ["project"],
+		});
+		if (!roster.projectRoot) return false;
+		if (roster.flows.length > 0 || roster.warnings.length > 0) return false;
+		// Legacy project roster and project registry are project-owned too.
+		for (const dir of [
+			join(roster.projectRoot, ".mdflow"),
+			join(roster.projectRoot, ".mdflow", "registry"),
+		]) {
+			try {
+				if (
+					readdirSync(dir).some((name) => name.toLowerCase().endsWith(".md"))
+				)
+					return false;
+			} catch (error) {
+				const code = (error as NodeJS.ErrnoException).code;
+				if (code !== "ENOENT" && code !== "ENOTDIR") return false;
+			}
+		}
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Bare `md` first-run handoff: when the project has no owned roster, offer
+ * setup instead of an empty roster. The heavy lifting is meant to be
+ * agent-driven — the headline option hands the guided setup prompt to an
+ * installed engine; printing it covers harnesses mdflow cannot launch.
+ * Returns an exit code when the session was handled here, or null to
  * continue into the normal Workbench.
  */
 export async function runFirstRunSetup(
@@ -733,7 +801,8 @@ export async function runFirstRunSetup(
 			default: true,
 		});
 		console.log(`Scaffolding starter flows (engine: ${scaffoldEngine}):`);
-		const changes = scaffoldStarterFlows(projectRoot, scaffoldEngine);
+		const scaffold = scaffoldStarterFlows(projectRoot, scaffoldEngine);
+		const changes = [...scaffold.lines];
 		let guidanceOk = true;
 		if (makePrimary) {
 			const guidance = applyAgentGuidance(projectRoot);
@@ -741,7 +810,7 @@ export async function runFirstRunSetup(
 			guidanceOk = guidance.ok;
 		}
 		printInitReceipt(changes);
-		return guidanceOk ? 0 : 1;
+		return scaffold.ok && guidanceOk ? 0 : 1;
 	} catch (err) {
 		// Inquirer throws on Ctrl+C — treat as a clean cancel, not a crash.
 		if (err instanceof Error && err.name === "ExitPromptError") {
@@ -818,9 +887,10 @@ export async function runInit(args: string[]): Promise<number> {
 	if (!guided) {
 		const scaffoldEngine = engine ?? DEFAULT_ENGINE;
 		const rosterExists = !options.yes && hasFlowRoster(projectRoot);
-		const changes = rosterExists
-			? []
+		const scaffold = rosterExists
+			? { lines: [], refused: 0, failed: 0, ok: true }
 			: scaffoldStarterFlows(projectRoot, scaffoldEngine);
+		const changes = [...scaffold.lines];
 		let guidanceOk = true;
 		if (options.agents) {
 			const guidance = applyAgentGuidance(projectRoot);
@@ -828,7 +898,7 @@ export async function runInit(args: string[]): Promise<number> {
 			guidanceOk = guidance.ok;
 		}
 		printInitReceipt(changes, rosterExists && changes.length === 0);
-		return guidanceOk ? 0 : 1;
+		return scaffold.ok && guidanceOk ? 0 : 1;
 	}
 
 	try {
@@ -860,9 +930,9 @@ export async function runInit(args: string[]): Promise<number> {
 				return 0;
 			}
 			console.log(`Scaffolding starter flows (engine: ${DEFAULT_ENGINE}):`);
-			const changes = scaffoldStarterFlows(projectRoot, DEFAULT_ENGINE);
-			printInitReceipt(changes);
-			return 0;
+			const fallback = scaffoldStarterFlows(projectRoot, DEFAULT_ENGINE);
+			printInitReceipt(fallback.lines);
+			return fallback.ok ? 0 : 1;
 		}
 
 		if (existsSync(join(projectRoot, "flows"))) {
@@ -893,9 +963,9 @@ export async function runInit(args: string[]): Promise<number> {
 				return 0;
 			}
 			console.log(`Scaffolding starter flows (engine: ${engine}):`);
-			const changes = scaffoldStarterFlows(projectRoot, engine);
-			printInitReceipt(changes);
-			return 0;
+			const declined = scaffoldStarterFlows(projectRoot, engine);
+			printInitReceipt(declined.lines);
+			return declined.ok ? 0 : 1;
 		}
 
 		const guidePrompt = buildGuidePrompt(engine, detected, loadCatalog());

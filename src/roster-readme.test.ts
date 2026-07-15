@@ -226,6 +226,63 @@ describe("managed roster README", () => {
 		expect(existsSync(join(root, "CLAUDE.md"))).toBe(false);
 	});
 
+	it("writes nothing at all when any guidance file is invalid (one unit)", async () => {
+		const root = project();
+		flow(root, "review.md", "Review changes");
+		const env = { HOME: join(root, "home") };
+		// Make the README stale (never synced) AND AGENTS.md invalid
+		// (duplicated live markers): the unit must not write the README either.
+		writeFileSync(
+			join(root, "AGENTS.md"),
+			[
+				"<!-- mdflow:agents:start contract=1 -->",
+				"<!-- mdflow:agents:end -->",
+				"<!-- mdflow:agents:start contract=1 -->",
+				"<!-- mdflow:agents:end -->",
+				"",
+			].join("\n"),
+		);
+		const result = await spawnMd(["roster", "sync", "--agents", "--json"], {
+			cwd: root,
+			env,
+		});
+		expect(result.exitCode).toBe(1);
+		const payload = JSON.parse(result.stdout);
+		expect(payload.ok).toBe(false);
+		// README was NOT written despite being stale.
+		expect(existsSync(join(root, "flows", "README.md"))).toBe(false);
+		// CLAUDE.md was NOT created despite the --agents opt-in.
+		expect(existsSync(join(root, "CLAUDE.md"))).toBe(false);
+	});
+
+	it("plain sync never writes guidance files, even stale opted-in ones", async () => {
+		const root = project();
+		flow(root, "review.md", "Review changes");
+		const env = { HOME: join(root, "home") };
+		const optIn = await spawnMd(["roster", "sync", "--agents", "--json"], {
+			cwd: root,
+			env,
+		});
+		expect(JSON.parse(optIn.stdout).ok).toBe(true);
+		const path = join(root, "AGENTS.md");
+		const tampered = readFileSync(path, "utf8").replace(
+			"md doctor --json",
+			"md doctor --old",
+		);
+		writeFileSync(path, tampered);
+		const plain = await spawnMd(["roster", "sync", "--json"], {
+			cwd: root,
+			env,
+		});
+		const payload = JSON.parse(plain.stdout);
+		expect(plain.exitCode).toBe(1);
+		expect(payload.ok).toBe(false);
+		const agents = payload.agents.find((e: any) => e.file === "AGENTS.md");
+		expect(agents.state).toBe("stale");
+		expect(agents.changed).toBe(false);
+		expect(readFileSync(path, "utf8")).toBe(tampered);
+	});
+
 	it("records source proof only, never private receipt state", () => {
 		const root = project();
 		flow(root, "review.md", "Review changes");

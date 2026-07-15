@@ -21,6 +21,7 @@ import {
 	loadCatalog,
 	postFlightReport,
 	scaffoldStarterFlows,
+	shouldOfferFirstRunSetup,
 } from "./init";
 import { getRegisteredAdapters } from "./adapters";
 
@@ -86,7 +87,8 @@ describe("buildGuidePrompt", () => {
 
 describe("scaffoldStarterFlows", () => {
 	it("creates flows/, roster README, and .mdflow.yaml", () => {
-		const lines = scaffoldStarterFlows(dir, "claude");
+		const { lines, ok } = scaffoldStarterFlows(dir, "claude");
+		expect(ok).toBe(true);
 
 		expect(existsSync(join(dir, "flows", "review.md"))).toBe(true);
 		expect(existsSync(join(dir, "flows", "review.eval.ts"))).toBe(true);
@@ -120,7 +122,7 @@ describe("scaffoldStarterFlows", () => {
 		writeFileSync(join(dir, "flows", "review.md"), "MINE");
 		writeFileSync(join(dir, ".mdflow.yaml"), "engine: codex\n");
 
-		const lines = scaffoldStarterFlows(dir, "claude");
+		const { lines } = scaffoldStarterFlows(dir, "claude");
 
 		expect(readFileSync(join(dir, "flows", "review.md"), "utf-8")).toBe("MINE");
 		expect(readFileSync(join(dir, ".mdflow.yaml"), "utf-8")).toBe(
@@ -349,6 +351,68 @@ describe("first-run setup", () => {
 	});
 });
 
+describe("first-run predicate (project-owned locations only)", () => {
+	const home = () => {
+		const homeDir = join(dir, "home");
+		mkdirSync(homeDir, { recursive: true });
+		return homeDir;
+	};
+
+	it("offers setup for a cleanly empty project even when global flows exist", async () => {
+		const homeDir = home();
+		mkdirSync(join(homeDir, ".mdflow"), { recursive: true });
+		writeFileSync(
+			join(homeDir, ".mdflow", "personal.md"),
+			"---\ndescription: personal\n---\nBody\n",
+		);
+		mkdirSync(join(dir, ".git"), { recursive: true });
+		expect(await shouldOfferFirstRunSetup({ cwd: dir, homeDir })).toBe(true);
+	});
+
+	it("suppresses setup when the project owns a canonical flow", async () => {
+		mkdirSync(join(dir, "flows"), { recursive: true });
+		writeFileSync(
+			join(dir, "flows", "review.md"),
+			"---\ndescription: review\n---\nBody\n",
+		);
+		expect(await shouldOfferFirstRunSetup({ cwd: dir, homeDir: home() })).toBe(
+			false,
+		);
+	});
+
+	it("suppresses setup on indeterminate inspection (invalid flow)", async () => {
+		mkdirSync(join(dir, "flows"), { recursive: true });
+		writeFileSync(
+			join(dir, "flows", "broken.md"),
+			"---\ndescription: [unclosed\n---\nBody\n",
+		);
+		expect(await shouldOfferFirstRunSetup({ cwd: dir, homeDir: home() })).toBe(
+			false,
+		);
+	});
+
+	it("suppresses setup when a legacy .mdflow roster or project registry exists", async () => {
+		mkdirSync(join(dir, ".git"), { recursive: true });
+		mkdirSync(join(dir, ".mdflow"), { recursive: true });
+		writeFileSync(
+			join(dir, ".mdflow", "legacy.md"),
+			"---\ndescription: legacy\n---\nBody\n",
+		);
+		expect(await shouldOfferFirstRunSetup({ cwd: dir, homeDir: home() })).toBe(
+			false,
+		);
+		rmSync(join(dir, ".mdflow", "legacy.md"));
+		mkdirSync(join(dir, ".mdflow", "registry"), { recursive: true });
+		writeFileSync(
+			join(dir, ".mdflow", "registry", "installed.md"),
+			"---\ndescription: installed\n---\nBody\n",
+		);
+		expect(await shouldOfferFirstRunSetup({ cwd: dir, homeDir: home() })).toBe(
+			false,
+		);
+	});
+});
+
 describe("strict init argument parsing", () => {
 	const spawnInit = (...flags: string[]) => {
 		const helper = join(dir, "run-strict-init.ts");
@@ -391,6 +455,18 @@ process.exit(await runInit(process.argv.slice(2)));`,
 			expect(result.exitCode).toBe(1);
 			expect(existsSync(join(dir, "flows"))).toBe(false);
 		}
+	});
+
+	it("exits nonzero with an INCOMPLETE receipt when a required write is refused", () => {
+		// Dangling .mdflow.yaml symlink: the config write is refused, so init
+		// must not report "ready" or exit 0.
+		const { symlinkSync } = require("node:fs") as typeof import("node:fs");
+		symlinkSync(join(dir, "nowhere", "planted.yaml"), join(dir, ".mdflow.yaml"));
+		const result = spawnInit("--yes");
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr.toString()).toContain("refused .mdflow.yaml");
+		expect(result.stdout.toString()).toContain("INCOMPLETE");
+		expect(result.stdout.toString()).not.toContain("mdflow is ready");
 	});
 });
 

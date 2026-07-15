@@ -93,7 +93,7 @@ describe("syncAgentGuidance", () => {
 		expect(content).toContain(AGENT_GUIDANCE_START);
 	});
 
-	it("refreshes a stale opted-in block without opt-in", () => {
+	it("never writes without opt-in — a stale block is only reported", () => {
 		syncAgentGuidance(dir, { optIn: true });
 		const path = join(dir, "AGENTS.md");
 		const tampered = readFileSync(path, "utf8").replace(
@@ -101,10 +101,18 @@ describe("syncAgentGuidance", () => {
 			"md doctor --old",
 		);
 		writeFileSync(path, tampered);
-		const results = syncAgentGuidance(dir);
-		const agents = results.find((r) => r.file === "AGENTS.md");
-		expect(agents?.state).toBe("current");
-		expect(agents?.changed).toBe(true);
+		// A marker in the repository is data, not the current user's
+		// authorization: plain sync must not rewrite it.
+		const plain = syncAgentGuidance(dir);
+		const agentsPlain = plain.find((r) => r.file === "AGENTS.md");
+		expect(agentsPlain?.state).toBe("stale");
+		expect(agentsPlain?.changed).toBe(false);
+		expect(readFileSync(path, "utf8")).toBe(tampered);
+		// The explicit opt-in refreshes it.
+		const optIn = syncAgentGuidance(dir, { optIn: true });
+		const agentsOptIn = optIn.find((r) => r.file === "AGENTS.md");
+		expect(agentsOptIn?.state).toBe("current");
+		expect(agentsOptIn?.changed).toBe(true);
 		expect(readFileSync(path, "utf8")).toContain("md doctor --json");
 	});
 

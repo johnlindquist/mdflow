@@ -413,7 +413,7 @@
       {
         "id": "roster.sync",
         "command": "md roster sync",
-        "summary": "Synchronize the managed operator card and any opted-in agent guidance blocks",
+        "summary": "Synchronize the managed operator card in flows/README.md (README-only; guidance drift is reported, never written)",
         "effect": "LOCAL_WRITE",
         "consent": "explicit-local-effect",
         "sourceMayChange": true
@@ -421,7 +421,7 @@
       {
         "id": "roster.sync-agents",
         "command": "md roster sync --agents",
-        "summary": "Opt the project into flows-first agent guidance blocks in AGENTS.md and CLAUDE.md",
+        "summary": "With the user's explicit flows-first choice: create or refresh the guidance blocks in AGENTS.md and CLAUDE.md",
         "effect": "LOCAL_WRITE",
         "consent": "explicit-local-effect",
         "sourceMayChange": true

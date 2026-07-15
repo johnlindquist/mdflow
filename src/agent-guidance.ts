@@ -188,20 +188,41 @@ export function hasAgentGuidance(projectRoot: string): boolean {
 	);
 }
 
-function writeAtomically(
-	path: string,
+/**
+ * Commit one managed write: revalidate containment at write time, stage the
+ * bytes in a same-directory temp file, then re-read the target IMMEDIATELY
+ * before the rename and refuse if it no longer matches the bytes the caller
+ * inspected. All paths are the canonical (checked) target, never the lexical
+ * inspection path.
+ */
+function commitManagedWrite(
+	root: string,
+	file: AgentGuidanceFile,
+	expected: string | null,
 	content: string,
 	mode: number | null,
 ): void {
-	const dir = dirname(path);
+	const target = containedWritePath(root, file);
 	const temp = join(
-		dir,
-		`.${basename(path)}.${process.pid}.${Date.now()}.tmp`,
+		dirname(target),
+		`.${basename(target)}.${process.pid}.${Date.now()}.tmp`,
 	);
 	try {
 		writeFileSync(temp, content, { flag: "wx" });
 		if (mode !== null) chmodSync(temp, mode);
-		renameSync(temp, path);
+		// Rename-boundary compare-and-swap: the window between this read and
+		// the rename is the smallest this API allows.
+		let current: string | null = null;
+		try {
+			current = readFileSync(target, "utf8");
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+			current = null;
+		}
+		if (current !== expected)
+			throw new Error(`${file} changed while syncing — re-run md roster sync`);
+		renameSync(temp, target);
 	} catch (error) {
 		try {
 			if (existsSync(temp)) rmSync(temp, { force: true });
@@ -220,10 +241,13 @@ export interface AgentGuidanceSyncOptions {
 }
 
 /**
- * Bring the managed guidance blocks up to date. Without `optIn`, files that
- * never opted in ("missing" / "not-opted-in") are left untouched; with it,
- * they are created or extended. The operation is fail-closed as a unit: if
- * ANY guidance file is invalid, nothing is written to any of them.
+ * Bring the managed guidance blocks up to date. EVERY write — creating,
+ * extending, or refreshing a stale block — requires `optIn`: a marker
+ * already present in the repository is data, not the current user's
+ * authorization, so plain maintenance surfaces only report drift. The
+ * operation is fail-closed as a unit: if ANY guidance file is invalid,
+ * nothing is written to any of them, and a write failure stops every
+ * remaining write.
  */
 export function syncAgentGuidance(
 	projectRoot: string,
@@ -236,9 +260,8 @@ export function syncAgentGuidance(
 	);
 
 	const needsWrite = (state: AgentGuidanceState): boolean =>
-		state === "stale" ||
-		(Boolean(options.optIn) &&
-			(state === "missing" || state === "not-opted-in"));
+		Boolean(options.optIn) &&
+		(state === "stale" || state === "missing" || state === "not-opted-in");
 
 	// Preflight boundary: one invalid target stops the whole multi-file
 	// operation before the first write.
@@ -255,65 +278,67 @@ export function syncAgentGuidance(
 		}));
 	}
 
-	return inspected.map((entry): AgentGuidanceSyncResult => {
-		if (!needsWrite(entry.state))
-			return { ...publicInspection(entry), changed: false };
+	const results: AgentGuidanceSyncResult[] = [];
+	let writeFailed = false;
+	for (const entry of inspected) {
+		if (!needsWrite(entry.state)) {
+			results.push({ ...publicInspection(entry), changed: false });
+			continue;
+		}
+		if (writeFailed) {
+			// Stop after the first commit failure: continuing would deepen the
+			// partial write the unit exists to prevent.
+			results.push({
+				...publicInspection(entry),
+				changed: false,
+				error:
+					"not written: an earlier guidance write failed (guidance syncs as one fail-closed operation)",
+			});
+			continue;
+		}
 		try {
-			// Containment: never write through a symlinked component or over a
-			// non-regular file, even when the project root itself was reached
-			// through a symlinked prefix.
-			containedWritePath(root, entry.file);
-
-			// Compare-and-swap: refuse to clobber bytes that changed between
-			// inspection and write (editor saves, concurrent processes).
-			let current: string | null = null;
-			try {
-				current = readFileSync(entry.path, "utf8");
-			} catch {
-				current = null;
-			}
-			if (current !== entry.source)
-				return {
-					...publicInspection(entry),
-					state: "invalid",
-					error: `${entry.file} changed while syncing — re-run md roster sync`,
-					changed: false,
-				};
-
 			const desired = upsertManagedBlock(
-				current,
+				entry.source,
 				block,
 				GUIDANCE_MARKERS,
 				(managed) => `${managed}\n`,
 			);
-			if (!desired.source)
-				return {
+			if (!desired.source) {
+				writeFailed = true;
+				results.push({
 					...publicInspection(entry),
 					state: "invalid",
 					error: `${entry.file}: ${desired.error}`,
 					changed: false,
-				};
-			writeAtomically(entry.path, desired.source, entry.mode);
+				});
+				continue;
+			}
+			commitManagedWrite(root, entry.file, entry.source, desired.source, entry.mode);
 			const verified = inspectFile(root, entry.file, block);
-			if (verified.state !== "current")
-				return {
+			if (verified.state !== "current") {
+				writeFailed = true;
+				results.push({
 					...publicInspection(verified),
 					state: "invalid",
 					error: verified.error ?? `${entry.file} did not verify after write`,
 					changed: true,
-				};
-			return { ...publicInspection(verified), changed: true };
+				});
+				continue;
+			}
+			results.push({ ...publicInspection(verified), changed: true });
 		} catch (error) {
+			writeFailed = true;
 			const reason =
 				error instanceof ContainmentError
 					? error.message
 					: `cannot sync ${entry.file}: ${error instanceof Error ? error.message : String(error)}`;
-			return {
+			results.push({
 				...publicInspection(entry),
 				state: "invalid",
 				error: reason,
 				changed: false,
-			};
+			});
 		}
-	});
+	}
+	return results;
 }

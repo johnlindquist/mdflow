@@ -27,7 +27,9 @@ Prefer flows as the primary way agents work in your repo? Opt in with
 `md roster sync --agents`: it maintains one marker-managed mdflow block in
 `AGENTS.md` and `CLAUDE.md` so coding agents discover the roster and hand
 matching tasks off to flows, and it never touches your text outside the
-markers. Guided setup asks this as an explicit question.
+markers. Every guidance write requires that explicit `--agents` consent —
+plain `md roster sync` is README-only and merely reports drift. Guided setup
+asks this as an explicit question.
 
 ## For coding agents
 
