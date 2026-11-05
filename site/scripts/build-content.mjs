@@ -160,11 +160,13 @@ Operations distinguish \`FREE\` (no engine invocation), \`LOCAL_WRITE\` (changes
 
 A real flow run, eval run, evolution proposal, and source-changing apply each require separate consent. Preview eval cost with \`md eval <flow.md> --plan\`; preview evolution with \`md evolve plan <flow.md>\`. Proposals remain private and off-path until an explicit \`md evolve apply <run-id>\`. Context isolation strips supported engine context, not host access or credentials.
 
-## Night shift: optional browser controls
+## Play with the page
 
-The little service hatches on the homepage open five playable instruments. Open [the shortwave door](https://mdflow.dev/#night-shift/radio) or look for an AUX plate. Each room has a desk note if you want a clue. There is no countdown; the organ works with sound off. Escape or **Clock out** closes the door. Discoveries belong to this browser, not a server account.
+[Play FX](https://mdflow.dev/#playground) opens 25 patches on the homepage. Paint with the pointer, pop a bubble for a note, throw slingshot darts at an alien, or bend a shader across the page. The original gestures still work; **Original gestures** in the rack shows examples. [Try comet ink](https://mdflow.dev/#fx/comet) or [summon jellyfish](https://mdflow.dev/#fx/jellies). Nothing needs unlocking. Discoveries are local to this browser.
 
-On the hydrated homepage, browser agents can use \`window.mdflowNightShift\` (version 1). \`inspect()\` returns the rooms, active room, revision, available action strings, instrument settings, printed slip ID and local collection. \`open(roomId)\` operates a door; \`act(action, revision)\` operates the displayed instrument; \`close()\` clocks out. For example, open \`radio\`, read its revision, and send \`listen\` with that revision. Failed commands return \`{ok:false, error, state}\` (closed, stale, unknown room or invalid action). Refresh from the returned state; do not replay stale commands blindly. These are the same controls as the buttons. They do not run CLI commands, access credentials, or change server state.
+The page starts muted. **Listen** in the Tracks bank or **Hear synthwave** on the homepage enables sound. An incoming URL stays muted. **Stop** or Escape releases the current patch. Reduced motion uses still compositions; non-WebGL devices use a canvas rendering. The product documentation works without the playground.
+
+On the hydrated homepage, browser agents can use \`window.mdflowPlayground\` (version 1). \`list()\` returns effect IDs, names, groups and play instructions. \`play(id)\` uses the same instrument as the controls, without changing mute; \`pulse()\` strikes the field or fires at an enemy. \`inspect()\` reports the active ID, activation serial, remaining time, renderer, pointer, enemies, captures and audio output. \`stop(serial)\` refuses a stale activation; \`stop()\` releases the current one. Unknown IDs and idle pulses return explicit errors. These operations affect only the current page, never a CLI or a server.
 
 ## Reference library
 

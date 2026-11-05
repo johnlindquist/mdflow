@@ -8,7 +8,6 @@ interface SplitSectionProps {
   description: string;
   leftContent: React.ReactNode;
   rightContent: React.ReactNode;
-  servicePort?: React.ReactNode;
   reversed?: boolean;
 }
 
@@ -19,7 +18,6 @@ export const SplitSection: React.FC<SplitSectionProps> = ({
   description,
   leftContent,
   rightContent,
-  servicePort,
   reversed = false
 }) => {
   return (
@@ -49,7 +47,6 @@ export const SplitSection: React.FC<SplitSectionProps> = ({
             <p className={`text-zinc-300 text-lg leading-relaxed border-l-2 border-orange-500/50 pl-6 ${reversed ? 'lg:border-l-0 lg:pl-0 lg:border-r-2 lg:pr-6' : ''}`}>
                 {description}
             </p>
-            {servicePort}
         </div>
 
         {/* Grid Container - Auto height on mobile, fixed 360px on desktop */}

@@ -1,0 +1,232 @@
+.play-field {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 32;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+.play-field[hidden] {
+  display: none;
+}
+html[data-play-fx] [data-shader-layer] {
+  z-index: 29;
+}
+html[data-play-fx='crt'] main h1,
+html[data-play-fx='crt'] main h2 {
+  text-shadow:
+    -2px 0 #55f5a7,
+    2px 0 #ad6dd4;
+}
+.fx-rack,
+.fx-playing {
+  position: fixed;
+  z-index: 65;
+  color: #f1f1ec;
+  font:
+    13px/1.4 'JetBrains Mono',
+    ui-monospace,
+    monospace;
+  background: #101214f7;
+  border: 1px solid #575752;
+  box-shadow: 0 12px 50px #0008;
+  border-radius: 10px;
+}
+.fx-rack {
+  right: max(12px, calc((100vw - 1220px) / 2));
+  top: 70px;
+  width: min(410px, calc(100vw - 24px));
+  max-height: calc(100dvh - 84px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 17px;
+}
+.fx-rack header,
+.fx-rack footer,
+.fx-tools,
+.fx-banks {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.fx-eyebrow {
+  color: #fcb36d;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+}
+.fx-rack h2 {
+  font:
+    700 29px/1.12 'Space Grotesk',
+    sans-serif;
+  letter-spacing: -0.05em;
+  margin: 3px 0;
+}
+.fx-rack p {
+  color: #b7bdc0;
+  font-size: 12px;
+  margin: 6px 0 12px;
+}
+.fx-rack button,
+.fx-playing button {
+  cursor: pointer;
+}
+.fx-close {
+  font-size: 23px;
+  padding: 2px 9px;
+  color: #ddd;
+}
+.fx-banks {
+  border-bottom: 1px solid #3a3d3e;
+}
+.fx-banks button {
+  padding: 8px 4px;
+  color: #aeb5b6;
+  font-size: 12px;
+}
+.fx-banks [aria-pressed='true'] {
+  color: #ffc695;
+  border-bottom: 2px solid #fc9a48;
+}
+.fx-patches {
+  display: grid;
+}
+.fx-patches button {
+  text-align: left;
+  display: grid;
+  grid-template-columns: 29px 1fr 14px;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid #303435;
+}
+.fx-patches button:hover strong,
+.fx-patches button:focus-visible strong {
+  color: var(--tone);
+}
+.fx-patches i {
+  font-style: normal;
+  font-size: 20px;
+  color: var(--tone);
+}
+.fx-patches strong,
+.fx-patches small {
+  display: block;
+}
+.fx-patches small {
+  font:
+    12px/1.35 'Inter',
+    sans-serif;
+  color: #b1b9bf;
+  margin-top: 2px;
+}
+.fx-patches b {
+  color: #adb0ab;
+}
+.fx-rack footer {
+  margin-top: 10px;
+  font-size: 10px;
+  color: #a7b0ae;
+}
+.fx-rack footer button {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: 5px 0;
+}
+.fx-classics {
+  padding: 9px 8px;
+}
+.fx-classics li {
+  padding: 7px 0;
+  color: #dadbd6;
+}
+.fx-playing {
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(640px, calc(100vw - 24px));
+  padding: 9px 14px;
+}
+.fx-playing b,
+.fx-playing span {
+  display: block;
+}
+.fx-playing span {
+  color: #d2d4d1;
+  font-size: 11px;
+}
+.fx-tools {
+  justify-content: flex-start;
+  gap: 12px;
+  margin-top: 4px;
+}
+.fx-tools :is(button, a) {
+  font-size: 11px;
+  color: #fcbb8b;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: 3px 0;
+}
+.fx-rack :focus-visible,
+.fx-playing :focus-visible {
+  outline: 2px solid #ffc481;
+  outline-offset: 2px;
+}
+.fx-quick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 8px;
+  margin-top: 17px;
+  font:
+    11px/1.4 'JetBrains Mono',
+    monospace;
+}
+.fx-quick span {
+  color: #c4b5a6;
+}
+.fx-quick a {
+  background: #1e1d21;
+  color: #ffe1c7;
+  border: 1px solid #53463a;
+  padding: 5px 9px;
+  border-radius: 5px;
+}
+.fx-quick a:hover {
+  border-color: #ffb06f;
+}
+.fx-nav {
+  border: 1px solid #b26532;
+  border-radius: 99px;
+  padding: 5px 11px;
+  color: #ffd1a6;
+  background: #48291c;
+  font:
+    600 12px/1.4 'JetBrains Mono',
+    monospace;
+  white-space: nowrap;
+}
+.fx-nav:hover {
+  background: #67351b;
+  color: white;
+}
+@media (max-width: 650px) {
+  .fx-playing {
+    bottom: 48px;
+    max-width: calc(100vw - 18px);
+    width: 360px;
+  }
+  .fx-rack {
+    right: 8px;
+    width: calc(100vw - 16px);
+    padding: 14px;
+  }
+  .fx-banks button {
+    font-size: 11px;
+  }
+  .fx-nav {
+    padding: 5px 8px;
+  }
+}
