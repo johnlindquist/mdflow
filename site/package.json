@@ -7,7 +7,7 @@
     "dev": "portless run --name mdflow vite",
     "dev:raw": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test ./components/workbench-demo/model.test.ts ./components/workbench-demo/screens.test.ts ./middleware.test.ts",
+    "test": "bun test ./components/workbench-demo/model.test.ts ./components/workbench-demo/screens.test.ts ./middleware.test.ts ./components/night-shift/desk.test.ts",
     "build": "vite build && node scripts/prerender.mjs && node scripts/build-content.mjs && node scripts/build-agent-resources.mjs",
     "verify": "bun run test && bun run typecheck && bun run build",
     "preview": "vite preview",

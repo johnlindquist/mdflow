@@ -11,6 +11,7 @@ import { Zap, Volume2, VolumeX } from 'lucide-react';
 import { FlowMark } from './components/FlowMark';
 import { CraftedBy } from './components/CraftedBy';
 import { FlowWorkbenchDemo } from './components/FlowWorkbenchDemo';
+import { rooms, door } from './components/night-shift/rooms';
 
 // Decorative overlays are client-only enhancements. Product content renders
 // on the server and hydrates without waiting for these heavier chunks.
@@ -251,7 +252,7 @@ export default function App() {
           onUnmute={() => withShaderAudio(audio => { audio.setMuted(false); setMuted(false); })}
         />
 
-        {/* 22 hidden easter eggs + the five-star secret puzzle */}
+        {/* Collectible discoveries and the independent five-star puzzle. */}
         <EasterEggs />
 
         {/* heart HUD for the alien defense game (ShaderGuide owns the rules) */}
@@ -303,6 +304,7 @@ export default function App() {
 
         {/* The hero's promise, mechanized: evidence-gated proposals */}
         <Evolve />
+        <aside className="mx-auto max-w-4xl px-6 pb-12"><a href="/the-trust-boundary/" className="group block border-l-2 border-emerald-500/70 bg-emerald-400/[.035] px-6 py-4 hover:bg-emerald-400/[.07]"><span className="block text-xs font-mono uppercase tracking-widest text-emerald-400">Field notes / 01</span><strong className="font-display text-2xl text-white">A prompt is not a shell. ↗</strong><span className="block text-zinc-400">What a file on disk proved that 2,376 passing tests didn’t.</span></a></aside>
 
         {/* Agent-first: copy/paste prompts are the primary onboarding */}
         <AgentPrompts />
@@ -323,6 +325,7 @@ export default function App() {
                     description={demo.description}
                     leftContent={demo.left}
                     rightContent={demo.right}
+                    servicePort={enhanced && rooms[index] && <a href={door(rooms[index].id)} aria-label={`Open ${rooms[index].name} service hatch`} className="mt-4 inline-block rounded-sm border border-zinc-800 px-2 py-1 font-mono text-[10px] tracking-widest text-zinc-400 hover:border-zinc-500 hover:text-amber-300">⌁ AUX / {rooms[index].tag}</a>}
                     reversed={index % 2 !== 0}
                 />
             ))}
@@ -342,6 +345,7 @@ export default function App() {
             </p>
             <nav aria-label="Resources" className="mt-6 flex flex-wrap justify-center gap-x-6 gap-y-3 px-6 text-sm text-zinc-400">
                 <a href="/docs/" className="hover:text-white transition-colors">Docs</a>
+                <a href="/the-trust-boundary/" className="hover:text-white transition-colors">Field notes</a>
                 <a href="/about/" className="hover:text-white transition-colors">About</a>
                 <a href="/contact/" className="hover:text-white transition-colors">Contact</a>
                 <a href="/privacy/" className="hover:text-white transition-colors">Privacy</a>
