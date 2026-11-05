@@ -540,10 +540,10 @@ Body`);
       expect(result.plan!.finalPrompt).toContain("End");
     });
 
-    it("includes pre-hook output in finalPrompt", async () => {
+    it("never executes a pre-hook to construct a dry-run plan", async () => {
       const filePath = join(tempDir, "prehook.claude.md");
       await writeFile(filePath, `---
-pre: echo "HOOK OUTPUT"
+pre: touch prehook-ran && echo "HOOK OUTPUT"
 ---
 Body content`);
 
@@ -551,12 +551,8 @@ Body content`);
       const result = await runtime.run(filePath, { dryRun: true, returnPlan: true });
 
       expect(result.plan).toBeDefined();
-      expect(result.plan!.finalPrompt).toContain("HOOK OUTPUT");
-      expect(result.plan!.finalPrompt).toContain("Body content");
-      // Hook output should come before body
-      const hookIndex = result.plan!.finalPrompt.indexOf("HOOK OUTPUT");
-      const bodyIndex = result.plan!.finalPrompt.indexOf("Body content");
-      expect(hookIndex).toBeLessThan(bodyIndex);
+      expect(result.plan!.finalPrompt).toBe("Body content");
+      expect(await Bun.file(join(tempDir, "prehook-ran")).exists()).toBe(false);
     });
 
     it("still logs to console when returnPlan is false", async () => {

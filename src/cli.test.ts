@@ -121,22 +121,14 @@ describe("agent directory paths", () => {
 });
 
 describe("findAgentFiles", () => {
-	const testProjectDir = join(process.cwd(), ".mdflow-test");
-	const testUserDir = join(homedir(), ".mdflow-test-user");
-
+	const originalCwd = process.cwd();
+	let project: string;
 	beforeEach(() => {
-		// Create test directories
-		if (!existsSync(testProjectDir)) {
-			mkdirSync(testProjectDir, { recursive: true });
-		}
+		project = mkdtempSync(join(tmpdir(), "mdflow-cli-project-"));
+		process.chdir(project);
+		writeFileSync(join(project, "local.echo.md"), "hello");
 	});
-
-	afterEach(() => {
-		// Cleanup test directories
-		if (existsSync(testProjectDir)) {
-			rmSync(testProjectDir, { recursive: true, force: true });
-		}
-	});
+	afterEach(() => { process.chdir(originalCwd); rmSync(project, { recursive: true, force: true }); });
 
 	test("finds files from current directory", async () => {
 		const files = await findAgentFiles();

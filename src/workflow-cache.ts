@@ -1,103 +1,57 @@
-import { createHash } from "crypto";
-import { mkdir, readFile, writeFile } from "fs/promises";
-import { dirname, isAbsolute, join, resolve } from "path";
+import { createHash } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
+import { assertPlainDirectory, containedWritePath } from "./contained-write";
+import { atomicWriteFile } from "./state-file";
+import { MAX_INPUT_SIZE } from "./limits";
 
 export const WORKFLOW_CACHE_DIR = join(".mdflow", ".cache");
-
 export interface WorkflowCacheInput {
   prompt: string;
   args: string[];
   tool: string;
+  /** The effective flow, step, argv mapping and explicit environment. Hashed, never persisted. */
+  context?: string;
   cacheDir?: string;
 }
+export interface WorkflowCachedResult { stdout: string; stderr: string; exitCode: number }
+export interface WorkflowCacheLookupResult { hit: boolean; key: string; result?: WorkflowCachedResult }
 
-export interface WorkflowCachedResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-interface WorkflowCacheRecord {
-  key: string;
-  prompt: string;
-  args: string[];
-  tool: string;
-  result: WorkflowCachedResult;
-  createdAt: string;
-}
-
-export interface WorkflowCacheLookupResult {
-  hit: boolean;
-  key: string;
-  result?: WorkflowCachedResult;
-}
-
-function resolveCacheDir(cacheDir: string = WORKFLOW_CACHE_DIR): string {
-  if (isAbsolute(cacheDir)) return cacheDir;
-  return resolve(process.cwd(), cacheDir);
-}
-
-function resolveCacheFilePath(cacheDir: string, key: string): string {
-  return join(resolveCacheDir(cacheDir), `${key}.json`);
+/** Preflight before any engine spend and check again at the actual read/write. */
+export function workflowCachePath(cacheDir = WORKFLOW_CACHE_DIR, file = "probe.json"): string {
+  const dir = resolve(cacheDir);
+  if (basename(dir) === ".cache" && basename(dirname(dir)) === ".mdflow") {
+    return containedWritePath(dirname(dirname(dir)), ".mdflow", ".cache", file);
+  }
+  assertPlainDirectory(dir);
+  return join(dir, file);
 }
 
 export function createWorkflowCacheKey(input: Omit<WorkflowCacheInput, "cacheDir">): string {
-  const payload = JSON.stringify({
-    prompt: input.prompt,
-    args: input.args,
-    tool: input.tool,
-  });
-
-  return createHash("sha256").update(payload).digest("hex");
+  return createHash("sha256").update(JSON.stringify([2, input.context, input.tool, input.args, input.prompt])).digest("hex");
 }
 
 export async function getCachedResult(input: WorkflowCacheInput): Promise<WorkflowCacheLookupResult> {
   const key = createWorkflowCacheKey(input);
-  const cacheDir = input.cacheDir ?? WORKFLOW_CACHE_DIR;
-  const cachePath = resolveCacheFilePath(cacheDir, key);
-
-  let raw: string;
+  const path = workflowCachePath(input.cacheDir, key + ".json");
   try {
-    raw = await readFile(cachePath, "utf8");
-  } catch {
-    return { hit: false, key };
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as WorkflowCacheRecord;
-    if (parsed.result.exitCode !== 0) {
-      return { hit: false, key };
+    const info = await stat(path);
+    if (!info.isFile() || info.size > MAX_INPUT_SIZE) return { hit: false, key };
+    const record = JSON.parse(await readFile(path, "utf8"));
+    const r = record?.result;
+    if (record?.key === key && r?.exitCode === 0 && typeof r.stdout === "string" && typeof r.stderr === "string") {
+      return { hit: true, key, result: r };
     }
-
-    return {
-      hit: true,
-      key,
-      result: parsed.result,
-    };
-  } catch {
     return { hit: false, key };
+  } catch (err) {
+    if (err instanceof SyntaxError || (err as NodeJS.ErrnoException).code === "ENOENT") return { hit: false, key };
+    throw err;
   }
 }
 
-export async function setCachedResult(
-  input: WorkflowCacheInput,
-  result: WorkflowCachedResult
-): Promise<{ key: string }> {
+export async function setCachedResult(input: WorkflowCacheInput, result: WorkflowCachedResult): Promise<{ key: string }> {
   const key = createWorkflowCacheKey(input);
-  const cacheDir = input.cacheDir ?? WORKFLOW_CACHE_DIR;
-  const cachePath = resolveCacheFilePath(cacheDir, key);
-
-  await mkdir(dirname(cachePath), { recursive: true });
-
-  const record: WorkflowCacheRecord = {
-    key,
-    prompt: input.prompt,
-    args: input.args,
-    tool: input.tool,
-    result,
-    createdAt: new Date().toISOString(),
-  };
-
-  await writeFile(cachePath, JSON.stringify(record, null, 2), "utf8");
+  const content = JSON.stringify({ key, result });
+  if (Buffer.byteLength(content) <= MAX_INPUT_SIZE) atomicWriteFile(workflowCachePath(input.cacheDir, key + ".json"), content);
   return { key };
 }

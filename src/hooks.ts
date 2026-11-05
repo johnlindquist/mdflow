@@ -11,7 +11,8 @@
  * including runtimes and paths that contain spaces or single quotes.
  */
 
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { isRegistryPath } from "./project-root";
 import { basename, dirname, resolve, sep } from "node:path";
 import { CommandError } from "./errors";
 import type { AgentFrontmatter, HooksSpec, ToolAdapter } from "./types";
@@ -153,6 +154,7 @@ export function resolveHooksFile(opts: {
 
   if (opts.frontmatterValue === false) return { kind: "disabled" };
 
+  const remote = opts.isRemote || isRegistryPath(opts.flowPath);
   if (typeof opts.frontmatterValue === "string") {
     const flowDirectory = dirname(resolve(opts.flowPath));
     const path = resolve(flowDirectory, opts.frontmatterValue);
@@ -172,7 +174,7 @@ export function resolveHooksFile(opts: {
     const escapeMessage = () =>
       `_hooks path escapes the flow's directory (${opts.frontmatterValue} → ${path}). ` +
       `Move the hooks file under ${flowDirectory}${sep} or pass --_hooks <path> explicitly.`;
-    if (opts.isRemote) {
+    if (remote) {
       result.rejected =
         "remote flows cannot declare a _hooks path (hook programs run " +
         "unsandboxed on this machine); remove _hooks or run a local copy.";
@@ -210,7 +212,11 @@ export function resolveHooksFile(opts: {
     // (md install downloads only the flow markdown — a sidecar there was
     // planted by something else). Reject loudly rather than silently attach
     // OR silently drop; only a user-typed --_hooks may run hooks for these.
-    if (opts.isRemote && !result.missing) {
+    if (!result.missing && !remote) {
+      const root = realpathSync(dirname(resolve(opts.flowPath)));
+      if (!realpathSync(path).startsWith(root + sep) || !statSync(path).isFile()) result.rejected = "Convention hooks file is not a regular file under the flow directory";
+    }
+    if (remote && !result.missing) {
       result.rejected =
         "hooks file next to a remote/registry flow is not trusted " +
         `(${path}); remove it, or pass --_hooks <path> to consent explicitly.`;

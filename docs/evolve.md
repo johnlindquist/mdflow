@@ -169,12 +169,12 @@ wall-clock `lastCleanAt` claim.
 Every paid proposal gets an `evr_...` run with immutable inputs, JSON results,
 an append-only event journal, prompt and capability diffs, planned/actual
 invocation counts, and a durable decision. Current and proposal evals execute
-from separate repository snapshots under the private run directory.
+from separate repository snapshots under the private run directory. Keep `MDFLOW_EVOLUTION_HOME` outside the source tree. A Git snapshot uses tracked and non-ignored files; a non-Git directory uses filesystem traversal. Both omit common credential names and refuse escaping symlinks. This is not a secret scanner. The maintainer reads its configuration from the project but starts in a temporary working directory, not the live checkout.
 
 Apply acquires a per-flow lock and uses compare-and-swap against the exact base
 hash. Writes use same-directory temp files, fsync, and rename. A human edit made
 after proposal creation is never overwritten. Rollback has the same hash guard,
-and interrupted apply/rollback states recover from content hashes rather than
+and the proposal and rollback artifact bytes must match the recorded hashes before writing. Interrupted apply/rollback states recover from content hashes rather than
 guessing from backup filenames.
 
 ## Security boundary

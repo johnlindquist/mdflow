@@ -3,3 +3,4 @@
 # not bun tests.
 [test]
 root = "src"
+preload = ["./test/isolated-home.ts"]

@@ -16,6 +16,7 @@ function toRunResult(stdout: string, stderr = "", exitCode = 0): RunResult {
 }
 
 const tempDirs: string[] = [];
+async function cacheDirFixture() { const dir = await mkdtemp(join(tmpdir(), "workflow-test-")); tempDirs.push(dir); return dir; }
 
 afterEach(async () => {
   await Promise.all(
@@ -81,6 +82,7 @@ describe("executeWorkflow", () => {
       workflow: parsed,
       defaultTool: "echo",
       args: ["--model", "test"],
+      cacheDir: await cacheDirFixture(),
       runCommandFn,
       captureOutput: "capture",
     });
@@ -124,6 +126,7 @@ describe("executeWorkflow", () => {
       workflow: parsed,
       defaultTool: "echo",
       args: [],
+      cacheDir: await cacheDirFixture(),
       runCommandFn,
       captureOutput: "capture",
     });

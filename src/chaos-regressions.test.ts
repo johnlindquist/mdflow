@@ -876,10 +876,12 @@ describe("registry-installed flows resolve by name", () => {
 		const work = join(dir, "work");
 		mkdirSync(join(home, ".mdflow", "registry"), { recursive: true });
 		mkdirSync(work, { recursive: true });
-		writeFileSync(
-			join(home, ".mdflow", "registry", "installed.echo.md"),
-			"---\n---\nregistry says hi\n",
-		);
+		const flow = "---\n---\nregistry says hi\n";
+		writeFileSync(join(home, ".mdflow", "registry", "installed.echo.md"), flow);
+		writeFileSync(join(home, ".mdflow", "mdflow.lock.json"), JSON.stringify({ entries: {
+			"installed.echo.md": { installedPath: "installed.echo.md", source: "https://example.test/installed.echo.md",
+				sha256: new Bun.CryptoHasher("sha256").update(flow).digest("hex"), installedAt: "2026-01-01T00:00:00Z" },
+		} }));
 		const result = Bun.spawnSync(
 			["bun", "run", join(import.meta.dir, "index.ts"), "installed.echo"],
 			{

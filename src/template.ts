@@ -34,15 +34,16 @@ function shellEscape(str: unknown): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-// Shared Liquid engine instance with lenient settings
-const engine = new Liquid({
-  strictVariables: false, // Don't throw on undefined variables
-  strictFilters: false, // Don't throw on undefined filters
-});
+/** Liquid is a renderer, not a second filesystem import mechanism. */
+export function createTemplateEngine(): Liquid {
+  const engine = new Liquid({ templates: Object.create(null), ownPropertyOnly: true,
+    parseLimit: 10 * 1024 * 1024, memoryLimit: 10 * 1024 * 1024, renderLimit: 5_000 });
+  engine.registerFilter("shell_escape", shellEscape);
+  engine.registerFilter("q", shellEscape);
+  return engine;
+}
 
-// Register security filters for shell escaping
-engine.registerFilter("shell_escape", shellEscape);
-engine.registerFilter("q", shellEscape); // Short alias
+const engine = createTemplateEngine();
 
 /**
  * Extract template variables from content using LiquidJS AST parsing

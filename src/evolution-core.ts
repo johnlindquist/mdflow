@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { parseRawFrontmatter } from "./parse";
 import { parseImports } from "./imports-parser";
 import type { AgentFrontmatter, FrontmatterValue } from "./types";
 
@@ -218,7 +220,13 @@ export function splitFlowDocument(content: string): FlowDocument {
 export function replaceFlowBody(original: string, nextBody: string): string {
   const doc = splitFlowDocument(original);
   const normalized = nextBody.replace(/\r?\n/g, doc.lineEnding).replace(/[\t ]+$/gm, "").replace(/(?:\r?\n)+$/, "");
-  return `${doc.prefix}${normalized}${doc.hadTrailingNewline ? doc.lineEnding : ""}`;
+  const proposal = `${doc.prefix}${normalized}${doc.hadTrailingNewline ? doc.lineEnding : ""}`;
+  const parsed = parseRawFrontmatter(proposal);
+  if (parsed.unclosedFrontmatter || splitFlowDocument(proposal).prefix !== doc.prefix ||
+      !isDeepStrictEqual(parsed.frontmatter, parseRawFrontmatter(original).frontmatter)) {
+    throw new Error("Body-only evolution cannot add or alter a shebang or frontmatter");
+  }
+  return proposal;
 }
 
 /** Give newly created flows a stable identity that survives rename and clone. */

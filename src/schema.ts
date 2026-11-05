@@ -228,6 +228,12 @@ export const frontmatterSchema = z
 
 		// Isolation mode: strip the engine's ambient context (adapter-translated)
 		_isolated: z.boolean().optional(),
+		_max_prompt_tokens: z.number().int().positive().optional(),
+		_max_runtime_ms: z.number().int().positive().max(2_147_483_647).optional(),
+		_output: z.object({
+			format: z.enum(["text", "json", "patch"]).optional(),
+			schema: z.string().min(1).optional(), save: z.string().min(1).optional(), apply: z.boolean().optional(),
+		}).strict().refine(o => !o.apply || !o.format || o.format === "patch", "apply=true requires format=patch").optional(),
 
 		// System prompt override / append (adapter-translated per engine)
 		"_system-prompt": z.string().optional(),

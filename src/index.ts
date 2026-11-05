@@ -126,9 +126,11 @@ async function main() {
   // Run the CLI and exit with the result code
   try {
     const result = await runner.run(process.argv);
+    await pm.releaseResources();
     pm.restoreTerminal();
     process.exit(result.exitCode);
   } catch (err) {
+    await pm.releaseResources();
     pm.restoreTerminal();
     if (err instanceof MdflowError) {
       printTopLevelError(err);

@@ -6,6 +6,11 @@
  * - Exponential backoff retry for transient failures (default: 3 retries, starting at 1s)
  */
 
+import { setTimeout as delay } from "node:timers/promises";
+import { MAX_INPUT_SIZE } from "./limits";
+import { getTimeoutConfig } from "./process-manager";
+import { validateUrl, type ValidateUrlOptions } from "./security";
+
 /** Default timeout in milliseconds */
 export const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -29,6 +34,7 @@ export interface RetryConfig {
 }
 
 export interface FetchOptions extends RequestInit {
+  fetchFn?: typeof fetch;
   /** Timeout in milliseconds (default: 10000) */
   timeoutMs?: number;
   /** Retry configuration */
@@ -115,13 +121,6 @@ export function isRetryableStatus(status: number): boolean {
 }
 
 /**
- * Sleep for a specified duration
- */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
  * Calculate delay for a given retry attempt with exponential backoff
  */
 export function calculateBackoffDelay(
@@ -146,24 +145,15 @@ export async function fetchWithTimeout(
   url: string,
   options: FetchOptions = {}
 ): Promise<Response> {
-  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchOptions } = options;
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, fetchFn = fetch, signal: caller, retry: _retry, ...init } = options;
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const signal = caller ? AbortSignal.any([caller, timeout]) : timeout;
   try {
-    const response = await fetch(url, {
-      ...fetchOptions,
-      signal: controller.signal,
-    });
-    return response;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new FetchTimeoutError(url, timeoutMs);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
+    return await fetchFn(url, { ...init, signal });
+  } catch (cause) {
+    if (caller?.aborted) throw caller.reason;
+    if (timeout.aborted) throw new FetchTimeoutError(url, timeoutMs);
+    throw cause;
   }
 }
 
@@ -179,53 +169,7 @@ export async function fetchWithRetry(
   url: string,
   options: FetchOptions = {}
 ): Promise<Response> {
-  const { retry = {}, ...fetchOptions } = options;
-
-  // If retry is explicitly disabled
-  if (retry === false) {
-    return fetch(url, fetchOptions);
-  }
-
-  const config: Required<RetryConfig> = {
-    maxRetries: retry.maxRetries ?? DEFAULT_RETRY_CONFIG.maxRetries,
-    initialDelayMs: retry.initialDelayMs ?? DEFAULT_RETRY_CONFIG.initialDelayMs,
-    maxDelayMs: retry.maxDelayMs ?? DEFAULT_RETRY_CONFIG.maxDelayMs,
-    backoffMultiplier: retry.backoffMultiplier ?? DEFAULT_RETRY_CONFIG.backoffMultiplier,
-  };
-
-  let lastError: Error = new Error("No attempts made");
-  let attempt = 0;
-
-  while (attempt <= config.maxRetries) {
-    try {
-      const response = await fetch(url, fetchOptions);
-
-      // Check for retryable HTTP status
-      if (isRetryableStatus(response.status) && attempt < config.maxRetries) {
-        lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
-        attempt++;
-        const delay = calculateBackoffDelay(attempt - 1, config);
-        await sleep(delay);
-        continue;
-      }
-
-      return response;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-
-      if (isRetryableError(error) && attempt < config.maxRetries) {
-        attempt++;
-        const delay = calculateBackoffDelay(attempt - 1, config);
-        await sleep(delay);
-        continue;
-      }
-
-      // Non-retryable error or exhausted retries
-      break;
-    }
-  }
-
-  throw new FetchRetryError(url, attempt + 1, lastError);
+  return resilientFetch(url, options);
 }
 
 /**
@@ -286,21 +230,21 @@ export async function resilientFetch(
 
       // Check for retryable HTTP status
       if (isRetryableStatus(response.status) && attempt < config.maxRetries) {
+        await response.body?.cancel();
         lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
         attempt++;
-        const delay = calculateBackoffDelay(attempt - 1, config);
-        await sleep(delay);
+        await delay(calculateBackoffDelay(attempt - 1, config), undefined, { signal: options.signal ?? undefined });
         continue;
       }
 
       return response;
     } catch (error) {
+      options.signal?.throwIfAborted();
       lastError = error instanceof Error ? error : new Error(String(error));
 
       if (isRetryableError(error) && attempt < config.maxRetries) {
         attempt++;
-        const delay = calculateBackoffDelay(attempt - 1, config);
-        await sleep(delay);
+        await delay(calculateBackoffDelay(attempt - 1, config), undefined, { signal: options.signal ?? undefined });
         continue;
       }
 
@@ -310,4 +254,49 @@ export async function resilientFetch(
   }
 
   throw new FetchRetryError(url, attempt + 1, lastError);
+}
+
+/** Download a flow or context as bounded UTF-8. The deadline covers headers,
+ * redirects, retry delays AND the final chunk; no redirect is followed before
+ * checking its destination. Executable downloads default to same-origin. */
+export async function fetchTextResource(url: string, opts: {
+  policy?: ValidateUrlOptions; headers?: Record<string, string>; fetchFn?: typeof fetch;
+  timeoutMs?: number; maxBytes?: number;
+} = {}) {
+  const timeoutMs = opts.timeoutMs ?? getTimeoutConfig().fetchTimeout;
+  const signal = AbortSignal.timeout(timeoutMs);
+  const limit = opts.maxBytes ?? MAX_INPUT_SIZE;
+  const initial = validateUrl(url, opts.policy ?? {});
+  let current = initial;
+  try {
+    for (let hops = 0; ; hops++) {
+      const response = await resilientFetch(current.href, { headers: opts.headers, redirect: "manual", signal, timeoutMs, fetchFn: opts.fetchFn });
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        await response.body?.cancel();
+        const location = response.headers.get("location");
+        if (!location || hops >= 5) throw new Error("Missing location or too many redirects");
+        current = validateUrl(new URL(location, current).href, opts.policy ?? {});
+        if (!opts.policy && current.origin !== initial.origin) throw new Error("Cross-origin flow redirect refused; use the final URL explicitly");
+        continue;
+      }
+      const tooLarge = () => new Error(`Download exceeds the ${limit} byte limit`);
+      if (response.ok && Number(response.headers.get("content-length")) > limit) {
+        await response.body?.cancel(); throw tooLarge();
+      }
+      const chunks: Uint8Array[] = [];
+      if (response.ok && response.body) {
+        let bytes = 0;
+        for await (const chunk of response.body) {
+          bytes += chunk.byteLength;
+          if (bytes > limit) throw tooLarge();
+          chunks.push(chunk);
+        }
+      } else { await response.body?.cancel(); }
+      const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks));
+      return { ok: response.ok, status: response.status, statusText: response.statusText, headers: response.headers, text };
+    }
+  } catch (cause) {
+    if (signal.aborted) throw new FetchTimeoutError(initial.href, timeoutMs);
+    throw cause;
+  }
 }

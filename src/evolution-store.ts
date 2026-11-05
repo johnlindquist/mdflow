@@ -1,16 +1,10 @@
 import {
   appendFileSync,
-  chmodSync,
-  closeSync,
   existsSync,
-  fsyncSync,
   mkdirSync,
-  openSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
@@ -200,136 +194,8 @@ export function evolutionRunPath(runId: string): string {
   return join(evolutionRunsPath(), runId);
 }
 
-export function atomicWriteFile(path: string, content: string | Uint8Array, mode?: number): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const temp = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
-  const fd = openSync(temp, "wx", mode ?? 0o600);
-  try {
-    writeFileSync(fd, content);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  if (mode !== undefined) chmodSync(temp, mode);
-  renameSync(temp, path);
-  try {
-    const dirFd = openSync(dirname(path), "r");
-    try { fsyncSync(dirFd); } finally { closeSync(dirFd); }
-  } catch {
-    // Some filesystems do not support fsync on directories.
-  }
-}
-
-export function atomicWriteJson(path: string, value: unknown): void {
-  atomicWriteFile(path, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-export function withAtomicFileLock<T>(
-  targetPath: string,
-  fn: () => T,
-  staleAfterMs = 60_000,
-  contendMs = 5_000,
-): T {
-  const lockPath = `${targetPath}.lock`;
-  mkdirSync(dirname(lockPath), { recursive: true });
-  const acquire = () => openSync(lockPath, "wx", 0o600);
-
-  // Whether the current holder's lock is old enough (and its process gone)
-  // to forcibly take over. Only age proves staleness — a fresh lock whose
-  // metadata hasn't landed yet is busy, never stale.
-  const isStale = (): boolean => {
-    let age = Number.POSITIVE_INFINITY;
-    try {
-      age = Date.now() - statSync(lockPath).mtimeMs;
-    } catch {
-      // Lock vanished between open and stat: the owner finished.
-      return true;
-    }
-    try {
-      const value = JSON.parse(readFileSync(lockPath, "utf8")) as { pid?: number; createdAt?: string };
-      const claimedCreatedAt = value.createdAt ? Date.parse(value.createdAt) : Number.NaN;
-      const claimedAge = Number.isFinite(claimedCreatedAt) ? Date.now() - claimedCreatedAt : age;
-      let alive = false;
-      if (value.pid) {
-        try { process.kill(value.pid, 0); alive = true; } catch {}
-      }
-      return !alive && Math.min(age, claimedAge) > staleAfterMs;
-    } catch {
-      // Unreadable metadata: trust the file's own age only.
-      return age > staleAfterMs;
-    }
-  };
-
-  // The critical section here is a fast small-file write (a receipt append,
-  // a ledger update). Brief contention is normal when parallel eval runs
-  // record results, so busy-losers wait and retry within a bounded window
-  // rather than discarding an already-completed — possibly PAID — run.
-  // Synchronous sleep via Atomics.wait keeps this function synchronous.
-  const sleep = (ms: number) => {
-    try {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-    } catch {
-      // Environments without SharedArrayBuffer: fall back to a short spin.
-      const until = Date.now() + ms;
-      while (Date.now() < until) { /* spin */ }
-    }
-  };
-
-  const deadline = Date.now() + contendMs;
-  let fd: number;
-  let backoff = 15;
-  for (;;) {
-    try {
-      fd = acquire();
-      break;
-    } catch {
-      if (isStale()) {
-        rmSync(lockPath, { force: true });
-        try {
-          fd = acquire();
-          break;
-        } catch {
-          // Another contender won the takeover race; fall through to retry.
-        }
-      }
-      if (Date.now() >= deadline) {
-        throw new Error(`State file is busy: ${targetPath}`);
-      }
-      sleep(Math.min(backoff, Math.max(1, deadline - Date.now())));
-      backoff = Math.min(backoff * 2, 200);
-    }
-  }
-  const token = randomUUID();
-  let closed = false;
-  let tokenWritten = false;
-  try {
-    writeFileSync(fd, `${JSON.stringify({ pid: process.pid, token, createdAt: new Date().toISOString(), targetPath })}\n`);
-    tokenWritten = true;
-    fsyncSync(fd);
-    closeSync(fd);
-    closed = true;
-    return fn();
-  } finally {
-    if (!closed) try { closeSync(fd); } catch {}
-    if (!tokenWritten) {
-      // The metadata write failed before the token landed on disk, so the
-      // zero-byte lock created by our own open("wx") is still ours to remove.
-      rmSync(lockPath, { force: true });
-    } else {
-      // Only release a lock we still own. While fn() ran, another actor may
-      // have removed our lock (e.g. via stale takeover) and installed its own;
-      // unconditionally unlinking would delete THAT owner's lock and let
-      // concurrent writers into the critical section. Unreadable or missing
-      // lock files are treated as "not ours — do not unlink".
-      let owned = false;
-      try {
-        const value = JSON.parse(readFileSync(lockPath, "utf8")) as { token?: string };
-        owned = value.token === token;
-      } catch {}
-      if (owned) rmSync(lockPath, { force: true });
-    }
-  }
-}
+export { atomicWriteFile, atomicWriteJson, withAtomicFileLock } from "./state-file";
+import { acquireStateFileLock, atomicWriteFile, atomicWriteJson, withAtomicFileLock } from "./state-file";
 
 function appendJsonl(path: string, value: unknown): void {
   withAtomicFileLock(path, () => {
@@ -463,7 +329,9 @@ export function createEvolutionRun(input: Omit<EvolutionRunRecord, "schemaVersio
 export function readEvolutionRun(runId: string): EvolutionRunRecord {
   const path = join(evolutionRunPath(runId), "state.json");
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as EvolutionRunRecord;
+    const record = JSON.parse(readFileSync(path, "utf8")) as EvolutionRunRecord;
+    if (record.id !== runId || record.schemaVersion !== 1 || !Array.isArray(record.evidenceIds) || !record.flow?.path) throw new Error("Invalid run identity or shape");
+    return record;
   } catch (error) {
     throw new Error(`Evolution run not found or unreadable: ${runId}`, { cause: error });
   }
@@ -486,13 +354,16 @@ export function appendEvolutionEvent(event: EvolutionRunEvent): void {
 export function writeEvolutionArtifact(runId: string, name: string, content: string | Uint8Array | unknown): string {
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(name)) throw new Error(`Invalid evolution artifact name: ${name}`);
   const path = join(evolutionRunPath(runId), name);
-  if (existsSync(path)) throw new Error(`Evolution artifact is immutable and already exists: ${name}`);
-  if (typeof content === "string" || content instanceof Uint8Array) atomicWriteFile(path, content);
-  else atomicWriteJson(path, content);
+  withAtomicFileLock(path, () => {
+    if (existsSync(path)) throw new Error(`Evolution artifact is immutable and already exists: ${name}`);
+    if (typeof content === "string" || content instanceof Uint8Array) atomicWriteFile(path, content);
+    else atomicWriteJson(path, content);
+  });
   return path;
 }
 
 export function readEvolutionArtifact(runId: string, name: string): string {
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(name)) throw new Error("Invalid evolution artifact name: " + name);
   return readFileSync(join(evolutionRunPath(runId), name), "utf8");
 }
 
@@ -519,7 +390,7 @@ export function pruneEvolutionData(olderThanMs: number, now = Date.now()): { run
     for (const statePath of new Bun.Glob("evr_*/state.json").scanSync({ cwd: runRoot, absolute: true })) {
       try {
         const run = JSON.parse(readFileSync(statePath, "utf8")) as EvolutionRunRecord;
-        const protectedState = run.status === "applied" || run.status === "applying" || run.status === "rolling_back";
+        const protectedState = ["planned", "drafting", "proposed", "verifying", "applied", "applying", "rolling_back"].includes(run.status);
         if (!protectedState && now - Date.parse(run.updatedAt) >= olderThanMs) {
           for (const id of run.evidenceIds) {
             try { updateEvidenceStatus(id, "open", run.id); } catch {}
@@ -538,8 +409,9 @@ export function pruneEvolutionData(olderThanMs: number, now = Date.now()): { run
       try {
         const job = JSON.parse(readFileSync(statePath, "utf8")) as EvolutionQueueJob;
         if ((job.status === "completed" || job.status === "failed") && now - Date.parse(job.updatedAt) >= olderThanMs) {
+          if (job.id !== basename(statePath, ".json")) continue;
           rmSync(statePath, { force: true });
-          rmSync(job.logPath, { force: true });
+          rmSync(join(jobRoot, job.id + ".log"), { force: true });
           jobs++;
         }
       } catch {}
@@ -555,50 +427,47 @@ export interface FlowLock {
 
 export function acquireFlowLock(flowPath: string, staleAfterMs = 60 * 60 * 1000): FlowLock {
   const flow = identifyFlow(flowPath);
-  const path = join(evolutionHome(), "locks", `${flow.id}.lock`);
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const tryAcquire = (): number => openSync(path, "wx", 0o600);
-  let fd: number;
-  try {
-    fd = tryAcquire();
-  } catch {
-    let stale = false;
-    try {
-      const value = JSON.parse(readFileSync(path, "utf8")) as { pid?: number; createdAt?: string };
-      const age = value.createdAt ? Date.now() - Date.parse(value.createdAt) : Number.POSITIVE_INFINITY;
-      let alive = false;
-      if (typeof value.pid === "number") {
-        try { process.kill(value.pid, 0); alive = true; } catch {}
-      }
-      stale = !alive && age > staleAfterMs;
-    } catch {
-      stale = true;
-    }
-    if (!stale) throw new Error(`Evolution already running for ${flow.relativePath}`);
-    rmSync(path, { force: true });
-    fd = tryAcquire();
+  const target = join(evolutionHome(), "locks", flow.id);
+  try { return { path: target + ".lock", release: acquireStateFileLock(target, staleAfterMs, 0) }; }
+  catch (cause) { throw new Error("Cannot acquire evolution lock (already running or unavailable) for " + flow.relativePath, { cause }); }
+}
+
+function checkedSnapshots(run: EvolutionRunRecord) {
+  const original = readEvolutionArtifact(run.id, "current.md");
+  const proposal = readEvolutionArtifact(run.id, "proposal.md");
+  if (sha256(original) !== run.currentHash || sha256(proposal) !== run.proposalHash) {
+    throw new Error("Evolution artifact hash mismatch: stored bytes do not match the verified run. Source unchanged.");
   }
-  writeFileSync(fd, `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString(), flow })}\n`);
-  fsyncSync(fd);
-  closeSync(fd);
-  let released = false;
-  return {
-    path,
-    release() {
-      if (released) return;
-      released = true;
-      rmSync(path, { force: true });
-    },
-  };
+  return { original, proposal };
+}
+
+export function dismissEvolutionRun(runId: string, reason: string): EvolutionRunRecord {
+  const lock = acquireFlowLock(readEvolutionRun(runId).flow.path);
+  try {
+    const run = recoverLocked(runId);
+    if (run.status === "applied") throw new Error("Run is applied; use rollback to preserve its lineage");
+    const dismissed = updateEvolutionRun(runId, { status: "dismissed", resultReason: reason });
+    for (const id of run.evidenceIds) updateEvidenceStatus(id, "open", runId);
+    return dismissed;
+  } finally { lock.release(); }
 }
 
 export async function applyEvolutionRun(runId: string): Promise<EvolutionRunRecord> {
-  const run = recoverEvolutionRun(runId);
-  if (run.status === "applied") return run;
+  const lock = acquireFlowLock(readEvolutionRun(runId).flow.path);
+  try { return await applyLocked(runId); } finally { lock.release(); }
+}
+
+async function applyLocked(runId: string): Promise<EvolutionRunRecord> {
+  const run = recoverLocked(runId);
+  if (run.status === "applied") {
+    if (currentFlowHash(run.flow.path) !== run.proposalHash) throw new Error("Flow changed after application.");
+    return run;
+  }
   if (run.status !== "verified_improvement" && run.status !== "regression_safe") {
     throw new Error(`Run ${runId} is not applyable (status: ${run.status}).`);
   }
-  const lock = acquireFlowLock(run.flow.path);
+  const { original, proposal } = checkedSnapshots(run);
+  let applying = false;
   let wroteProposal = false;
   try {
     const plan = JSON.parse(readEvolutionArtifact(runId, "plan.json")) as {
@@ -625,17 +494,17 @@ export async function applyEvolutionRun(runId: string): Promise<EvolutionRunReco
     if (sha256(current) !== run.currentHash) {
       throw new Error("Flow changed after the proposal was created. Refusing to overwrite it.");
     }
-    const proposal = readEvolutionArtifact(runId, "proposal.md");
     const mode = statSync(run.flow.path).mode & 0o777;
     updateEvolutionRun(runId, { status: "applying", resultReason: "atomic apply in progress" });
+    applying = true;
     atomicWriteFile(run.flow.path, proposal, mode);
     wroteProposal = true;
     for (const id of run.evidenceIds) updateEvidenceStatus(id, "resolved", runId);
     return updateEvolutionRun(runId, { status: "applied", appliedAt: new Date().toISOString(), resultReason: run.resultReason });
   } catch (error) {
+    if (!applying) throw error; // a failed precondition is read-only
     if (wroteProposal) {
       try {
-        const original = readEvolutionArtifact(runId, "current.md");
         const mode = statSync(run.flow.path).mode & 0o777;
         atomicWriteFile(run.flow.path, original, mode);
       } catch (rollbackError) {
@@ -647,23 +516,28 @@ export async function applyEvolutionRun(runId: string): Promise<EvolutionRunReco
     }
     try { updateEvolutionRun(runId, { status: run.status, resultReason: `apply failed: ${error instanceof Error ? error.message : String(error)}` }); } catch {}
     throw error;
-  } finally {
-    lock.release();
   }
 }
 
 export function rollbackEvolutionRun(runId: string): EvolutionRunRecord {
-  const run = recoverEvolutionRun(runId);
-  if (run.status === "rolled_back") return run;
+  const lock = acquireFlowLock(readEvolutionRun(runId).flow.path);
+  try { return rollbackLocked(runId); } finally { lock.release(); }
+}
+
+function rollbackLocked(runId: string): EvolutionRunRecord {
+  const run = recoverLocked(runId);
+  if (run.status === "rolled_back") {
+    if (currentFlowHash(run.flow.path) !== run.currentHash) throw new Error("Flow changed after rollback.");
+    return run;
+  }
   if (run.status !== "applied" || !run.proposalHash) throw new Error(`Run ${runId} is not currently applied.`);
-  const lock = acquireFlowLock(run.flow.path);
+  const { original, proposal } = checkedSnapshots(run);
   let wroteOriginal = false;
   try {
     const current = readFileSync(run.flow.path, "utf8");
     if (sha256(current) !== run.proposalHash) {
       throw new Error("Flow changed after application. Refusing to overwrite newer edits.");
     }
-    const original = readEvolutionArtifact(runId, "current.md");
     const mode = statSync(run.flow.path).mode & 0o777;
     updateEvolutionRun(runId, { status: "rolling_back", resultReason: "atomic rollback in progress" });
     atomicWriteFile(run.flow.path, original, mode);
@@ -673,7 +547,6 @@ export function rollbackEvolutionRun(runId: string): EvolutionRunRecord {
   } catch (error) {
     if (wroteOriginal) {
       try {
-        const proposal = readEvolutionArtifact(runId, "proposal.md");
         const mode = statSync(run.flow.path).mode & 0o777;
         atomicWriteFile(run.flow.path, proposal, mode);
       } catch (restoreError) {
@@ -682,8 +555,6 @@ export function rollbackEvolutionRun(runId: string): EvolutionRunRecord {
     }
     try { updateEvolutionRun(runId, { status: "applied", resultReason: `rollback failed: ${error instanceof Error ? error.message : String(error)}` }); } catch {}
     throw error;
-  } finally {
-    lock.release();
   }
 }
 
@@ -693,6 +564,11 @@ export function currentFlowHash(path: string): string {
 
 /** Resolve a crash-interrupted apply/rollback from hashes, never guess from a backup filename. */
 export function recoverEvolutionRun(runId: string): EvolutionRunRecord {
+  const lock = acquireFlowLock(readEvolutionRun(runId).flow.path);
+  try { return recoverLocked(runId); } finally { lock.release(); }
+}
+
+function recoverLocked(runId: string): EvolutionRunRecord {
   const run = readEvolutionRun(runId);
   if (run.status !== "applying" && run.status !== "rolling_back") return run;
   const currentHash = currentFlowHash(run.flow.path);

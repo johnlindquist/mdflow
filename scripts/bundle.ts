@@ -41,7 +41,8 @@ const coreFiles = [
   // Imports system
   "src/imports.ts",
   "src/imports-parser.ts",
-  "src/imports-resolver.ts",
+  "src/prompt-render.ts",
+  "src/imports-injector.ts",
   "src/imports-types.ts",
 
   // Config & env

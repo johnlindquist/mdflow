@@ -20,8 +20,8 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import { loadFullConfig } from "./config";
-import { resolveEngine, hasInteractiveMarker } from "./command";
-import { isCompatOnlyFrontmatter } from "./compat";
+import { resolveEngine } from "./command";
+import { isDocument } from "./flow-kind";
 import { resolveEvolutionPolicy } from "./evolution-core";
 import { parseFrontmatter } from "./parse";
 import type { AgentFrontmatter } from "./types";
@@ -780,15 +780,7 @@ function isRunnableFlowFile(path: string): boolean {
 	}
 	try {
 		const resolved = resolveEngine(path, frontmatter, {});
-		const implicit =
-			resolved.source === "env" ||
-			resolved.source === "config" ||
-			resolved.source === "default";
-		return !(
-			implicit &&
-			!hasInteractiveMarker(path) &&
-			isCompatOnlyFrontmatter(frontmatter as Record<string, unknown>)
-		);
+		return !isDocument(path, frontmatter, resolved.source);
 	} catch {
 		return true;
 	}

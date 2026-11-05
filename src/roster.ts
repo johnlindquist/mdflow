@@ -23,7 +23,7 @@ import {
 	loadFullConfig,
 	isInteractiveModeEnabled,
 } from "./config";
-import { isCompatOnlyFrontmatter } from "./compat";
+import { isDocument } from "./flow-kind";
 import { resolveProjectRoot } from "./project-root";
 import { inspectAgentGuidance, syncAgentGuidance } from "./agent-guidance";
 import { syncRosterReadme } from "./roster-readme";
@@ -152,9 +152,6 @@ export function flowIdForPath(
 }
 
 /** True when the engine resolution rung is implicit (env/config/default). */
-function isImplicitEngineSource(source: string): boolean {
-	return source === "env" || source === "config" || source === "default";
-}
 
 /** Collect the roster. Never throws for missing/unreadable directories. */
 export async function collectRoster(
@@ -245,16 +242,7 @@ export async function collectRoster(
 				continue;
 			}
 
-			// Document rule (mirrors cli-runner): a file with no meaningful
-			// frontmatter whose engine only resolved implicitly is not a flow —
-			// unless the `.i.` filename marker declares it runnable.
-			if (
-				isImplicitEngineSource(resolved.source) &&
-				!hasInteractiveMarker(path) &&
-				isCompatOnlyFrontmatter(frontmatter as Record<string, unknown>)
-			) {
-				continue;
-			}
+			if (isDocument(path, frontmatter, resolved.source)) continue;
 
 			const name = fileName.replace(/\.md$/i, "");
 			const id = `${source}:${name}`;

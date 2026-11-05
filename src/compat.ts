@@ -19,7 +19,7 @@
 import { readFileSync, statSync } from "fs";
 import { join } from "path";
 import { parseRawFrontmatter } from "./parse";
-import { atomicWriteFile } from "./evolution-store";
+import { atomicWriteFile } from "./state-file";
 
 /** Frontmatter keys owned by the compat system. */
 export const COMPAT_KEYS = new Set(["_mdflow_version", "_compat"]);

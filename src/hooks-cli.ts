@@ -16,8 +16,11 @@
  * fails loudly with an "edit it manually" pointer instead of guessing.
  */
 
-import { existsSync, readFileSync, writeFileSync, chmodSync, unlinkSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
+import { containedWritePath } from "./contained-write";
+import { atomicWriteFile, withAtomicFileLock } from "./state-file";
+import { isRegistryPath } from "./project-root";
 import {
   CANONICAL_HOOK_EVENTS,
   CODEX_HOOK_EVENT_NAMES,
@@ -219,6 +222,15 @@ export async function runHooksCli(
     return 0;
   }
 
+  if (action === "add" && isRegistryPath(flowPath)) { error("Copy the installed flow to your project before attaching executable hooks."); return 1; }
+  try { containedWritePath(dirname(hooksPath), basename(hooksPath)); } catch (err) { error(String(err)); return 1; }
+  const commit = (expected: string, replacement?: string) => withAtomicFileLock(hooksPath, () => {
+    containedWritePath(dirname(hooksPath), basename(hooksPath));
+    if (readFileSync(hooksPath, "utf8") !== expected) throw new Error("Hooks file changed; inspect it and retry");
+    if (replacement === undefined) unlinkSync(hooksPath);
+    else atomicWriteFile(hooksPath, replacement, 0o755);
+  });
+
   if (action === "add") {
     let events = [...new Set(requested)];
     if (events.length === 0) {
@@ -234,7 +246,7 @@ export async function runHooksCli(
     }
 
     if (!existsSync(hooksPath)) {
-      writeFileSync(hooksPath, renderHooksTemplate(events), { mode: 0o755 });
+      writeFileSync(hooksPath, renderHooksTemplate(events), { mode: 0o755, flag: "wx" });
       log(`Created ${hooksPath}`);
       log(`Handlers: ${events.join(", ")}`);
       log(`It runs automatically on every \`md ${flowArg}\` run.`);
@@ -269,8 +281,7 @@ export async function runHooksCli(
     const insertAt = markerIdx + HANDLERS_OPEN_MARKER.length + 1;
     const updated =
       source.slice(0, insertAt) + renderHandlerBlocks(fresh) + source.slice(insertAt);
-    writeFileSync(hooksPath, updated);
-    chmodSync(hooksPath, 0o755);
+    commit(source, updated);
     log(`Extended ${basename(hooksPath)} with: ${fresh.join(", ")}`);
     log(`Now handles: ${[...existing.events, ...fresh].join(", ")}`);
     return 0;
@@ -282,6 +293,7 @@ export async function runHooksCli(
     return 0;
   }
 
+  const source = readFileSync(hooksPath, "utf8");
   if (requested.length === 0) {
     if (!yes) {
       if (!isTTY) {
@@ -296,12 +308,11 @@ export async function runHooksCli(
         return 1;
       }
     }
-    unlinkSync(hooksPath);
+    commit(source);
     log(`Deleted ${hooksPath}`);
     return 0;
   }
 
-  const source = readFileSync(hooksPath, "utf8");
   let updated = source;
   const removed: CanonicalHookEvent[] = [];
   for (const event of requested) {
@@ -344,12 +355,12 @@ export async function runHooksCli(
       );
       return 1;
     }
-    unlinkSync(hooksPath);
+    commit(source);
     log(`Removed ${removed.join(", ")} — no handlers remained, deleted ${hooksPath}`);
     return 0;
   }
 
-  writeFileSync(hooksPath, updated);
+  commit(source, updated);
   const remaining = listHandledEventsStatic(hooksPath);
   log(`Removed ${removed.join(", ")} from ${basename(hooksPath)}`);
   if (remaining.ok) {

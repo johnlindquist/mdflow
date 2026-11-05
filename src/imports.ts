@@ -1,16 +1,17 @@
 import { resolve, dirname, relative, basename, join } from "path";
-import { realpathSync, existsSync } from "fs";
-import { chmod, unlink } from "fs/promises";
+import { realpathSync, existsSync, statSync } from "fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, platform, tmpdir } from "os";
 import { Glob } from "bun";
 // Lazy-load heavy dependencies for cold start optimization
-import { resilientFetch } from "./fetch";
+import { fetchTextResource } from "./fetch";
 import { MAX_INPUT_SIZE, FileSizeLimitError, exceedsLimit } from "./limits";
 import { estimateTokens, getContextLimit, countTokensAsync } from "./tokenizer";
 import { Semaphore, DEFAULT_CONCURRENCY_LIMIT } from "./concurrency";
 import { substituteTemplateVars } from "./template";
 import { parseImports as parseImportsSafe, hasImportsInContent } from "./imports-parser";
-import type { ImportAction, ExecutableCodeFenceAction, ProviderImportAction } from "./imports-types";
+import type { ImportAction, ProviderImportAction } from "./imports-types";
+import { injectImports } from "./imports-injector";
 import { ImportError, getErrorMessage } from "./errors";
 import { escapeShellArg, sanitizePath, validateUrl } from "./security";
 import { runProvider, resolveContextProviderImport } from "./context-providers";
@@ -148,6 +149,10 @@ export type ResolvedImportsTracker = string[];
 export interface ImportContext {
   /** Environment variables (defaults to process.env) */
   env?: Record<string, string | undefined>;
+  /** Shared across recursive content expansion, independent per top-level render. */
+  budget?: ImportBudget;
+  /** Caller URL policy; a flow cannot relax it via child _env. */
+  policyEnv?: Record<string, string | undefined>;
   /** Track resolved imports for ExecutionPlan */
   resolvedImports?: ResolvedImportsTracker;
   /**
@@ -168,11 +173,6 @@ export interface ImportContext {
    */
   dryRun?: boolean;
   /**
-   * Content-only mode for 3-phase pipeline.
-   * When true, only expand file/url imports; leave commands for later.
-   */
-  _contentOnly?: boolean;
-  /**
    * Internal cache of resolved project root for path traversal checks.
    * This keeps path policy stable across recursive import expansion.
    */
@@ -182,6 +182,21 @@ export interface ImportContext {
    * When set, provider output falls back to summary mode/truncation to stay in budget.
    */
   _context_budget_tokens?: number;
+}
+
+/** Limits fan-out as well as individual reads. Charge before descending or
+ * allocating another batch; repeated imports consume the same allowance. */
+export class ImportBudget {
+  private remainingActions = 1024;
+  private remainingBytes = MAX_INPUT_SIZE;
+  actions(n: number, depth: number): void {
+    this.remainingActions -= n;
+    if (depth > 64 || this.remainingActions < 0) throw new ImportError("Import graph exceeds 64 levels or 1024 actions", { errorCode: "INPUT_LIMIT_EXCEEDED" });
+  }
+  bytes(n: number): void {
+    this.remainingBytes -= n;
+    if (this.remainingBytes < 0) throw new ImportError("Cumulative imported data exceeds 10MB limit", { errorCode: "INPUT_LIMIT_EXCEEDED" });
+  }
 }
 
 const PROJECT_ROOT_MARKERS = [
@@ -396,9 +411,19 @@ function getProjectRoot(currentFileDir: string, importCtx?: ImportContext): stri
 /**
  * Resolve an import path relative to the current file's directory
  */
+function canonicalCandidate(path: string): string {
+  try { return realpathSync(path); } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT" || dirname(path) === path) throw err;
+    return join(canonicalCandidate(dirname(path)), basename(path));
+  }
+}
+
+function containedImportPath(root: string, path: string): string {
+  return sanitizePath(realpathSync(root), canonicalCandidate(path));
+}
+
 function resolveImportPath(importPath: string, currentFileDir: string, projectRoot: string): string {
-  const resolvedImportPath = resolve(currentFileDir, importPath);
-  return sanitizePath(projectRoot, resolvedImportPath);
+  return containedImportPath(projectRoot, resolve(currentFileDir, expandTilde(importPath)));
 }
 
 function parseListFromEnv(value: string | undefined): string[] {
@@ -594,7 +619,7 @@ function extractSymbol(content: string, symbolName: string): string {
  * Load .gitignore patterns from directory and parents
  * Lazy-loads the ignore package on first use
  */
-async function loadGitignore(dir: string): Promise<ReturnType<Awaited<ReturnType<typeof getIgnore>>>> {
+async function loadGitignore(dir: string, projectRoot: string): Promise<ReturnType<Awaited<ReturnType<typeof getIgnore>>>> {
   const ignore = await getIgnore();
   const ig = ignore();
 
@@ -608,10 +633,10 @@ async function loadGitignore(dir: string): Promise<ReturnType<Awaited<ReturnType
 
   // Walk up to find .gitignore files
   let currentDir = dir;
-  const root = resolve("/");
+  const root = realpathSync(projectRoot);
 
-  while (currentDir !== root) {
-    const gitignorePath = resolve(currentDir, ".gitignore");
+  while (true) {
+    const gitignorePath = containedImportPath(root, resolve(currentDir, ".gitignore"));
     const file = Bun.file(gitignorePath);
 
     let gitignoreExists = false;
@@ -631,6 +656,7 @@ async function loadGitignore(dir: string): Promise<ReturnType<Awaited<ReturnType
 
     if (gitignoreExists) {
       try {
+        if (!statSync(gitignorePath).isFile() || exceedsLimit(file.size)) throw new Error("expected a bounded, regular .gitignore file");
         const content = await file.text();
         ig.add(content.split("\n").filter(line => line.trim() && !line.startsWith("#")));
       } catch (err) {
@@ -663,7 +689,7 @@ async function loadGitignore(dir: string): Promise<ReturnType<Awaited<ReturnType
       );
     }
 
-    if (gitDirExists) {
+    if (gitDirExists || currentDir === root) {
       break;
     }
 
@@ -672,29 +698,6 @@ async function loadGitignore(dir: string): Promise<ReturnType<Awaited<ReturnType
 
   return ig;
 }
-
-/**
- * Pattern to match @filepath imports (including globs, line ranges, and symbols)
- * Matches: @~/path/to/file.md, @./relative/path.md, @/absolute/path.md
- * Also: @./src/**\/*.ts, @./file.ts:10-50, @./file.ts#Symbol
- * The path continues until whitespace or end of line
- */
-const FILE_IMPORT_PATTERN = /@(~?[.\/][^\s]+)/g;
-
-/**
- * Pattern to match !`command` inlines
- * Matches: !`any command here`
- * Supports multi-word commands inside backticks
- */
-const COMMAND_INLINE_PATTERN = /!\`([^`]+)\`/g;
-
-/**
- * Pattern to match @url imports
- * Matches: @https://example.com/path, @http://example.com/path
- * Does NOT match emails like foo@example.com (requires http:// or https://)
- * The URL continues until whitespace or end of line
- */
-const URL_IMPORT_PATTERN = /@(https?:\/\/[^\s]+)/g;
 
 /**
  * Allowed content types for URL imports
@@ -765,7 +768,7 @@ async function processUrlImport(
   verbose: boolean,
   importCtx?: ImportContext
 ): Promise<string> {
-  const policyEnv = importCtx?.env ?? process.env;
+  const policyEnv = importCtx?.policyEnv ?? importCtx?.env ?? process.env;
   const allowlist = readUrlPolicyList(policyEnv, URL_ALLOWLIST_ENV_KEYS);
   const blocklist = readUrlPolicyList(policyEnv, URL_BLOCKLIST_ENV_KEYS);
 
@@ -793,7 +796,8 @@ async function processUrlImport(
   console.error(`[imports] Fetching: ${targetUrl}`);
 
   try {
-    const response = await resilientFetch(targetUrl, {
+    const response = await fetchTextResource(targetUrl, {
+      policy: { allowlist, blocklist },
       headers: {
         "Accept": "text/markdown, application/json, text/plain, */*",
         "User-Agent": "mdflow/1.0",
@@ -813,7 +817,8 @@ async function processUrlImport(
     }
 
     const contentType = response.headers.get("content-type");
-    const content = await response.text();
+    const content = response.text;
+    importCtx?.budget?.bytes(Buffer.byteLength(content));
 
     // Check content type header
     if (contentType && isAllowedContentType(contentType)) {
@@ -985,7 +990,8 @@ async function processGlobImport(
   pattern: string,
   currentFileDir: string,
   projectRoot: string,
-  verbose: boolean
+  verbose: boolean,
+  budget?: ImportBudget,
 ): Promise<string> {
   const resolvedPattern = expandTilde(pattern);
 
@@ -994,7 +1000,7 @@ async function processGlobImport(
   const unsafeGlobBaseDir = extractGlobBaseDir(resolvedPattern, currentFileDir);
   let globBaseDir: string;
   try {
-    globBaseDir = sanitizePath(projectRoot, unsafeGlobBaseDir);
+    globBaseDir = containedImportPath(projectRoot, unsafeGlobBaseDir);
   } catch (err) {
     throw createImportError(
       `Glob import "${pattern}" escapes project root "${projectRoot}".`,
@@ -1013,13 +1019,12 @@ async function processGlobImport(
   }
 
   // Load gitignore from the glob's base directory, not the agent file's directory
-  const ig = await loadGitignore(globBaseDir);
+  const ig = await loadGitignore(globBaseDir, projectRoot);
 
   // Collect matching files
   // Use the resolved base directory as cwd for proper pattern matching
   const glob = new Glob(resolvedPattern.startsWith("/") ? resolvedPattern : pattern.replace(/^\.\//, ""));
   const files: Array<{ path: string; content: string }> = [];
-  let totalChars = 0;
 
   const skippedBinaryFiles: string[] = [];
 
@@ -1027,7 +1032,7 @@ async function processGlobImport(
     for await (const file of glob.scan({ cwd: currentFileDir, absolute: true, onlyFiles: true })) {
       let safeFilePath: string;
       try {
-        safeFilePath = sanitizePath(projectRoot, file);
+        safeFilePath = containedImportPath(projectRoot, file);
       } catch (err) {
         throw createImportError(
           `Glob import "${pattern}" resolved a path outside project root.`,
@@ -1071,9 +1076,10 @@ async function processGlobImport(
         throw new FileSizeLimitError(file, bunFile.size);
       }
 
+      budget?.actions(1, 0);
+      budget?.bytes(bunFile.size);
       try {
         const content = await bunFile.text();
-        totalChars += content.length;
         files.push({ path: relativePath, content });
       } catch (err) {
         throw createImportError(
@@ -1234,10 +1240,12 @@ async function processFileImport(
         }
       );
     }
+    if (!statSync(resolvedPath).isFile()) throw createImportError(`Not a regular file: ${originalPath}`, "IMPORT_FILE_READ_FAILED", { resolvedPath });
     return file;
   };
 
   const readImportText = async (file: ReturnType<typeof Bun.file>, resolvedPath: string, originalPath: string): Promise<string> => {
+    importCtx?.budget?.bytes(file.size);
     try {
       return await file.text();
     } catch (err) {
@@ -1256,7 +1264,7 @@ async function processFileImport(
 
   // Check for glob pattern first
   if (isGlobPatternInternal(importPath)) {
-    return processGlobImport(importPath, currentFileDir, projectRoot, verbose);
+    return processGlobImport(importPath, currentFileDir, projectRoot, verbose, importCtx?.budget);
   }
 
   // Check for symbol extraction syntax
@@ -1405,12 +1413,8 @@ async function processFileImport(
   const newStack = new Set(stack);
   newStack.add(canonicalPath);
 
-  // For 3-phase pipeline: if in content-only mode, skip commands in recursive imports
-  if (importCtx?._contentOnly) {
-    return expandContentImports(content, dirname(resolvedPath), newStack, verbose, importCtx);
-  }
-
-  return expandImports(content, dirname(resolvedPath), newStack, verbose, importCtx);
+  // Nested @ imports may supply more context, never new executable actions.
+  return expandContentImports(content, dirname(resolvedPath), newStack, verbose, importCtx);
 }
 
 /**
@@ -1448,15 +1452,8 @@ async function processCommandInline(
 ): Promise<string> {
   const isWin = platform() === "win32";
 
-  // Substitute template variables in command string if provided
-  // This allows commands like !`echo {{ _name }}` to use frontmatter variables
-  let processedCommand = command;
-  if (importCtx?.templateVars && Object.keys(importCtx.templateVars).length > 0) {
-    processedCommand = substituteTemplateVars(command, importCtx.templateVars);
-    if (processedCommand !== command) {
-      console.error(`[imports] Command with vars: ${command} → ${processedCommand}`);
-    }
-  }
+  // Already rendered exactly once from authored source.
+  const processedCommand = command;
 
   // Auto-prefix markdown files with `mdflow` to run them as agents
   let actualCommand = processedCommand;
@@ -1492,684 +1489,147 @@ async function processCommandInline(
   const shell = isWin ? "cmd.exe" : "sh";
   const shellArgs = isWin ? ["/d", "/s", "/c", actualCommand] : ["-c", actualCommand];
 
-  // Track process for timeout cleanup
-  let proc: ReturnType<typeof Bun.spawn> | null = null;
-  let timedOut = false;
+  return runImportProcess([shell, ...shellArgs], commandCwd, env, "Inline command", onProgress);
+}
+
+/** Both executable syntaxes own a process group, drain both pipes, and keep
+ * the deadline live through child exit (even after the pipes close). */
+async function runImportProcess(argv: string[], cwd: string, env: Record<string, string | undefined>, label: string, progress?: (text: string) => void): Promise<string> {
   const pm = getProcessManager();
-
+  pm.signal.throwIfAborted();
+  const proc = Bun.spawn(argv, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: process.platform !== "win32" });
+  pm.register(proc, label);
+  const kill = () => {
+    try { if (process.platform !== "win32") { process.kill(-proc.pid, "SIGKILL"); return; } } catch {}
+    try { proc.kill("SIGKILL"); } catch {}
+  };
+  let bytes = 0;
+  const collect = async (stream: ReadableStream<Uint8Array>, update?: (text: string) => void) => {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of stream) {
+      bytes += chunk.byteLength;
+      if (exceedsLimit(bytes)) throw new Error("combined output exceeds 10MB limit");
+      chunks.push(chunk);
+      update?.(new TextDecoder().decode(chunk));
+    }
+    const buffer = Buffer.concat(chunks);
+    if (buffer.subarray(0, 1024).includes(0)) throw new Error("returned binary data");
+    return buffer.toString("utf8").trim().replace(ANSI_ESCAPE_REGEX, "");
+  };
+  const ms = getCommandTimeout();
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    proc = Bun.spawn([shell, ...shellArgs], {
-      cwd: commandCwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: env as Record<string, string>,
-    });
-
-    // Register with ProcessManager for centralized cleanup on SIGINT/SIGTERM
-    pm.register(proc, `inline: ${actualCommand.slice(0, 40)}`);
-
-    // Buffers for final output
-    const stdoutChunks: Uint8Array[] = [];
-    const stderrChunks: Uint8Array[] = [];
-
-    // Helper to read a stream and trigger callbacks
-    const readStream = async (
-      stream: ReadableStream<Uint8Array>,
-      chunks: Uint8Array[],
-      isStdout: boolean
-    ) => {
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        chunks.push(value);
-
-        // Update dashboard via callback if provided (only for stdout to reduce noise)
-        if (isStdout && onProgress) {
-          onProgress(decoder.decode(value));
-        }
-      }
-    };
-
-    // Improvement #4: Execution timeout using Promise.race
-    // Uses configurable timeout from ProcessManager
-    const commandTimeout = getCommandTimeout();
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
-        timedOut = true;
-        proc?.kill();
-        reject(createImportError(
-          `Inline command timed out after ${commandTimeout}ms: ${actualCommand}`,
-          "IMPORT_COMMAND_FAILED",
-          {
-            command: actualCommand,
-            timeoutMs: commandTimeout,
-            cwd: commandCwd,
-            suggestion: "Increase MDFLOW_COMMAND_TIMEOUT or optimize the command.",
-          }
-        ));
-      }, commandTimeout);
-    });
-
-    // Read streams with timeout (stdout/stderr are guaranteed with "pipe" option)
-    const stdoutStream = proc.stdout as ReadableStream<Uint8Array>;
-    const stderrStream = proc.stderr as ReadableStream<Uint8Array>;
-    await Promise.race([
-      Promise.all([
-        readStream(stdoutStream, stdoutChunks, true),
-        readStream(stderrStream, stderrChunks, false)
-      ]),
-      timeoutPromise
+    const [stdout, stderr, code] = await Promise.race([
+      Promise.all([collect(proc.stdout, progress), collect(proc.stderr), proc.exited]),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms); }),
     ]);
-
+    if (code !== 0) throw new Error(`Exit ${code}: ${(stderr || stdout || "No output").slice(0, 4000)}`);
+    const output = (label === "Code fence" ? [stdout, stderr] : [stderr, stdout]).filter(Boolean).join("\n");
+    return output.length <= MAX_COMMAND_OUTPUT_SIZE ? output : output.slice(0, MAX_COMMAND_OUTPUT_SIZE) +
+      `\n... [Output truncated: ${(output.length - MAX_COMMAND_OUTPUT_SIZE).toLocaleString()} characters removed]`;
+  } catch (cause) {
+    kill();
     await proc.exited;
-
-    // Reconstruct full output as bytes first
-    const stdoutBytes = Buffer.concat(stdoutChunks);
-    const stderrBytes = Buffer.concat(stderrChunks);
-
-    // Improvement #9: Detect and block binary output (check first 1KB for null bytes)
-    const checkChunk = new Uint8Array(stdoutBytes.slice(0, 1024));
-    if (checkChunk.includes(0)) {
-      throw createImportError(
-        `Inline command returned binary data and cannot be embedded as text: ${actualCommand}`,
-        "IMPORT_COMMAND_FAILED",
-        {
-          command: actualCommand,
-          cwd: commandCwd,
-          suggestion: "Modify the command to output plain text.",
-        }
-      );
-    }
-
-    // Decode to strings
-    let stdout = new TextDecoder().decode(stdoutBytes).trim();
-    let stderr = new TextDecoder().decode(stderrBytes).trim();
-
-    // Improvement #6: Strip ANSI escape codes from output
-    stdout = stdout.replace(ANSI_ESCAPE_REGEX, '');
-    stderr = stderr.replace(ANSI_ESCAPE_REGEX, '');
-
-    // Improvement #10: Detailed error reporting with stderr
-    if (proc.exitCode !== 0) {
-      const errorOutput = stderr || stdout || "No output";
-      throw createImportError(
-        `Inline command failed (Exit ${proc.exitCode}): ${actualCommand}\nOutput: ${errorOutput}`,
-        "IMPORT_COMMAND_FAILED",
-        {
-          command: actualCommand,
-          exitCode: proc.exitCode,
-          cwd: commandCwd,
-          suggestion: "Run the command manually to debug and ensure it exits with code 0.",
-        }
-      );
-    }
-
-    // Combine stdout and stderr (stderr first if both exist)
-    let output: string;
-    if (stderr && stdout) {
-      output = `${stderr}\n${stdout}`;
-    } else {
-      output = stdout || stderr || "";
-    }
-
-    // Improvement #8: Enforce output size limits
-    if (output.length > MAX_COMMAND_OUTPUT_SIZE) {
-      const truncatedChars = output.length - MAX_COMMAND_OUTPUT_SIZE;
-      output = output.slice(0, MAX_COMMAND_OUTPUT_SIZE) +
-        `\n... [Output truncated: ${truncatedChars.toLocaleString()} characters removed]`;
-    }
-
-    // Command output is processed after LiquidJS (Phase 3), so no template escaping needed
-    return output;
-  } catch (err) {
-    if (err instanceof ImportError) {
-      throw err;
-    }
-    throw createImportError(
-      `Inline command failed: ${actualCommand} - ${getErrorMessage(err)}`,
-      "IMPORT_COMMAND_FAILED",
-      {
-        command: actualCommand,
-        cwd: commandCwd,
-        timedOut,
-        suggestion: "Verify shell command syntax and required tools in PATH.",
-      },
-      err
-    );
-  }
+    throw createImportError(`${label} failed: ${getErrorMessage(cause)}`, "IMPORT_COMMAND_FAILED", { cwd }, cause);
+  } finally { clearTimeout(timer); pm.unregister(proc); }
 }
 
-/**
- * Process an executable code fence by writing to temp file, making executable, and running
- */
 async function processExecutableCodeFence(
-  action: { shebang: string; language: string; code: string },
-  currentFileDir: string,
-  verbose: boolean,
-  importCtx?: ImportContext
+  action: { shebang: string; language: string; code: string }, dir: string, verbose: boolean, ctx?: ImportContext,
 ): Promise<string> {
-  const { shebang, language, code } = action;
-  const fullScript = `${shebang}\n${code}`;
-
-  if (importCtx?.dryRun) {
-    console.error(`[imports] Dry-run: Skipping code fence (${language}): ${shebang}`);
-    return "[Dry Run: Code fence not executed]";
-  }
-
-  console.error(`[imports] Executing code fence (${language}): ${shebang}`);
-
-  const ext = { ts: 'ts', js: 'js', py: 'py', sh: 'sh', bash: 'sh' }[language] ?? language;
-  const tmpFile = join(tmpdir(), `mdflow-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`);
-
+  if (ctx?.dryRun) return "[Dry Run: Code fence not executed]";
+  const temp = await mkdtemp(join(tmpdir(), "mdflow-fence-"));
   try {
-    try {
-      await Bun.write(tmpFile, fullScript);
-      await chmod(tmpFile, 0o755);
-    } catch (err) {
-      throw createImportError(
-        `Failed to prepare executable code fence temp file "${tmpFile}".`,
-        "IMPORT_FILE_READ_FAILED",
-        {
-          tmpFile,
-          language,
-          suggestion: "Verify temporary directory permissions and free disk space.",
-        },
-        err
-      );
-    }
-
-    const proc = Bun.spawn([tmpFile], {
-      cwd: importCtx?.invocationCwd ?? currentFileDir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: (importCtx?.env ?? process.env) as Record<string, string>,
-    });
-
-    let stdout = "";
-    let stderr = "";
-    try {
-      stdout = await new Response(proc.stdout).text();
-      stderr = await new Response(proc.stderr).text();
-    } catch (err) {
-      throw createImportError(
-        `Failed to capture executable code fence output for "${tmpFile}".`,
-        "IMPORT_COMMAND_FAILED",
-        {
-          tmpFile,
-          language,
-          suggestion: "Ensure the script writes text output and does not terminate abruptly.",
-        },
-        err
-      );
-    }
-
-    await proc.exited;
-
-    if (proc.exitCode !== 0) {
-      const errorOutput = stderr || stdout || "No output";
-      throw createImportError(
-        `Code fence failed (Exit ${proc.exitCode}): ${errorOutput}`,
-        "IMPORT_COMMAND_FAILED",
-        {
-          tmpFile,
-          language,
-          exitCode: proc.exitCode,
-          suggestion: "Run the script manually to debug the failure.",
-        }
-      );
-    }
-
-    // Command output is processed after LiquidJS (Phase 3), so no template escaping needed
-    return (stdout + stderr).trim().replace(ANSI_ESCAPE_REGEX, '');
-  } catch (err) {
-    if (err instanceof ImportError) {
-      throw err;
-    }
-    throw createImportError(
-      `Executable code fence failed: ${getErrorMessage(err)}`,
-      "IMPORT_COMMAND_FAILED",
-      {
-        tmpFile,
-        language,
-        suggestion: "Validate the script interpreter and command dependencies.",
-      },
-      err
-    );
-  } finally {
-    try {
-      await unlink(tmpFile);
-    } catch (err) {
-      if (verbose) {
-        const cleanupErr = createImportError(
-          `Failed to clean up temp code fence file "${tmpFile}".`,
-          "IMPORT_FILE_READ_FAILED",
-          {
-            tmpFile,
-            suggestion: "Remove the temp file manually if it persists.",
-          },
-          err
-        );
-        console.error(`[imports] ${cleanupErr.message}`);
-      }
-    }
-  }
+    const ext = /^[a-zA-Z0-9]+$/.test(action.language) ? action.language : "script";
+    const path = join(temp, "script." + ext);
+    await writeFile(path, action.shebang + "\n" + action.code, { flag: "wx", mode: 0o700 });
+    console.error(`[imports] Executing code fence (${ext}): ${action.shebang}`);
+    return await runImportProcess([path], ctx?.invocationCwd ?? dir, ctx?.env ?? process.env, "Code fence");
+  } finally { await rm(temp, { recursive: true, force: true }); }
 }
 
-/** Import types for categorizing imports during parallel resolution */
-type ParsedImport =
-  | { type: 'file'; full: string; path: string; index: number }
-  | { type: 'url'; full: string; url: string; index: number }
-  | { type: 'provider'; full: string; action: ProviderImportAction; index: number }
-  | { type: 'command'; full: string; command: string; index: number }
-  | { type: 'executable_code_fence'; full: string; action: ExecutableCodeFenceAction; index: number };
+export type ExecutableImport = Extract<ImportAction, { type: "command" | "executable_code_fence" }>;
+export type ContentImport = Exclude<ImportAction, ExecutableImport>;
 
-/** Result of resolving an import */
-interface ResolvedImportResult {
-  import: ParsedImport;
-  content: string;
+export function isExecutableImport(action: ImportAction): action is ExecutableImport {
+  return action.type === "command" || action.type === "executable_code_fence";
 }
 
-/**
- * Parse all imports from content in a single pass
- * Returns imports sorted by their position in the content
- */
-function parseAllImports(content: string): ParsedImport[] {
-  const imports: ParsedImport[] = [];
-  let match;
-
-  // Parse file imports
-  FILE_IMPORT_PATTERN.lastIndex = 0;
-  while ((match = FILE_IMPORT_PATTERN.exec(content)) !== null) {
-    if (match[1]) {
-      imports.push({
-        type: 'file',
-        full: match[0],
-        path: match[1],
-        index: match.index,
-      });
-    }
-  }
-
-  // Parse URL imports
-  URL_IMPORT_PATTERN.lastIndex = 0;
-  while ((match = URL_IMPORT_PATTERN.exec(content)) !== null) {
-    if (match[1]) {
-      imports.push({
-        type: 'url',
-        full: match[0],
-        url: match[1],
-        index: match.index,
-      });
-    }
-  }
-
-  // Parse command inlines
-  COMMAND_INLINE_PATTERN.lastIndex = 0;
-  while ((match = COMMAND_INLINE_PATTERN.exec(content)) !== null) {
-    if (match[1]) {
-      imports.push({
-        type: 'command',
-        full: match[0],
-        command: match[1],
-        index: match.index,
-      });
-    }
-  }
-
-  // Sort by index to maintain order
-  imports.sort((a, b) => a.index - b.index);
-
-  return imports;
-}
-
-/**
- * Inject resolved imports back into content
- * Processes in reverse order to preserve indices
- */
-function injectResolvedImports(content: string, resolved: ResolvedImportResult[]): string {
-  let result = content;
-
-  // Sort by index descending to process from end to start (preserves indices)
-  const sortedResolved = [...resolved].sort((a, b) => b.import.index - a.import.index);
-
-  for (const { import: entry, content: replacement } of sortedResolved) {
-    result = result.slice(0, entry.index) + replacement + result.slice(entry.index + entry.full.length);
-  }
-
-  return result;
-}
-
-/**
- * Expand all imports, URL imports, and command inlines in content
- *
- * This is the main entry point that orchestrates the three-phase pipeline:
- * 1. Parse: Find all imports in the content (single pass)
- * 2. Resolve: Fetch content for each import in parallel (with concurrency limit)
- * 3. Inject: Replace import markers with resolved content
- *
- * The parallel resolution uses a semaphore to limit concurrent I/O operations,
- * preventing file descriptor exhaustion when processing many imports.
- *
- * For TTY environments with multiple commands, a live dashboard shows progress
- * with spinners and output previews for each running command.
- *
- * @param content - The markdown content to process
- * @param currentFileDir - Directory of the current file (for relative imports)
- * @param stack - Set of files already being processed (for circular detection)
- * @param verbose - Whether to log import/command activity
- * @param contextOrTracker - Optional ImportContext or array to collect resolved import paths
- * @param concurrencyLimit - Maximum concurrent I/O operations (default: 10)
- * @returns Content with all imports and commands expanded
- */
-export async function expandImports(
-  content: string,
-  currentFileDir: string,
-  stack: ImportStack = new Set(),
-  verbose: boolean = false,
-  contextOrTracker?: ImportContext | ResolvedImportsTracker,
-  concurrencyLimit: number = DEFAULT_CONCURRENCY_LIMIT
+export async function resolveContentAction(
+  action: ContentImport, dir: string, stack: ImportStack, verbose: boolean, ctx: ImportContext,
 ): Promise<string> {
-  // Normalize the 5th parameter - can be either ImportContext or ResolvedImportsTracker (for backward compat)
-  const importCtx: ImportContext = Array.isArray(contextOrTracker)
-    ? { resolvedImports: contextOrTracker }
-    : (contextOrTracker ?? {});
-  const resolvedImportsTracker = importCtx.resolvedImports;
-
-  // Phase 1: Parse all imports using the context-aware parser
-  // SECURITY FIX: Uses parseImportsSafe which ignores imports inside code blocks,
-  // preventing accidental command execution from documentation examples
-  const rawActions = parseImportsSafe(content);
-
-  // Map ImportAction[] from the safe parser to ParsedImport[] for internal processing
-  const imports: ParsedImport[] = rawActions.map(action => {
-    switch (action.type) {
-      case 'file': {
-        // Preserve line range syntax in the path if present
-        let path = action.path;
-        if (action.lineRange) {
-          path = `${action.path}:${action.lineRange.start}-${action.lineRange.end}`;
-        }
-        return { type: 'file' as const, full: action.original, path, index: action.index };
-      }
-      case 'glob':
-        return { type: 'file' as const, full: action.original, path: action.pattern, index: action.index };
-      case 'symbol':
-        return { type: 'file' as const, full: action.original, path: `${action.path}#${action.symbol}`, index: action.index };
-      case 'url':
-        return { type: 'url' as const, full: action.original, url: action.url, index: action.index };
-      case 'provider':
-        return { type: 'provider' as const, full: action.original, action, index: action.index };
-      case 'command':
-        return { type: 'command' as const, full: action.original, command: action.command, index: action.index };
-      case 'executable_code_fence':
-        return { type: 'executable_code_fence' as const, full: action.original, action, index: action.index };
-      default:
-        // Should never happen, but TypeScript needs exhaustive handling
-        return null as never;
+  switch (action.type) {
+    case "url":
+      ctx.resolvedImports?.push(action.url);
+      return processUrlImport(action.url, verbose, ctx);
+    case "provider": {
+      ctx.resolvedImports?.push(action.original);
+      const content = await processProviderImport(action, dir, verbose, ctx);
+      ctx.budget?.bytes(Buffer.byteLength(content));
+      return content;
     }
-  });
-
-  // If no imports, return content as-is
-  if (imports.length === 0) {
-    return content;
+    case "glob": return processFileImport(action.pattern, dir, stack, verbose, ctx);
+    case "symbol": return processFileImport(action.path + "#" + action.symbol, dir, stack, verbose, ctx);
+    case "file": {
+      const range = action.lineRange;
+      return processFileImport(range ? action.path + ":" + range.start + "-" + range.end : action.path, dir, stack, verbose, ctx);
+    }
   }
+}
 
-  // Create semaphore for concurrency limiting
-  const semaphore = new Semaphore(concurrencyLimit);
-
-  // Initialize dashboard if we have any commands/fences and are in a TTY environment
-  const commandImports = imports.filter(i => i.type === 'command' || i.type === 'executable_code_fence');
-  const useDashboard = commandImports.length > 0 && process.stderr.isTTY && !verbose;
-  const dashboard = useDashboard ? new ParallelDashboard() : null;
-
-  if (dashboard) dashboard.start();
-
+/** Runs already bound actions, never discovers executable syntax in rendered text. */
+export async function executeImportActions(
+  actions: ExecutableImport[], dir: string, verbose: boolean, ctx: ImportContext, limit = DEFAULT_CONCURRENCY_LIMIT,
+) {
+  const gate = new Semaphore(limit);
+  const dashboard = actions.length && process.stderr.isTTY && !verbose ? new ParallelDashboard() : null;
+  dashboard?.start();
   try {
-    // Phase 2: Resolve all imports in parallel with concurrency limiting
-    const resolvePromises = imports.map(async (entry): Promise<ResolvedImportResult> => {
-      return semaphore.run(async () => {
-        let resolvedContent: string;
-
-        switch (entry.type) {
-          case 'file':
-            resolvedContent = await processFileImport(entry.path, currentFileDir, stack, verbose, importCtx);
-            break;
-          case 'url':
-            resolvedContent = await processUrlImport(entry.url, verbose, importCtx);
-            // Track URL imports
-            if (resolvedImportsTracker) {
-              resolvedImportsTracker.push(entry.url);
-            }
-            break;
-          case 'provider':
-            resolvedContent = await processProviderImport(entry.action, currentFileDir, verbose, importCtx);
-            // Track provider imports
-            if (resolvedImportsTracker) {
-              resolvedImportsTracker.push(entry.action.original);
-            }
-            break;
-          case 'command':
-            // Register with dashboard if active
-            const cmdId = Math.random().toString(36).substring(7);
-            if (dashboard) dashboard.register(cmdId, entry.command);
-
-            try {
-              resolvedContent = await processCommandInline(
-                entry.command,
-                currentFileDir,
-                verbose,
-                importCtx,
-                (chunk) => {
-                  if (dashboard) dashboard.update(cmdId, chunk);
-                },
-                useDashboard
-              );
-            } finally {
-              if (dashboard) dashboard.finish(cmdId);
-            }
-            break;
-          case 'executable_code_fence':
-            // Register with dashboard
-            const fenceId = Math.random().toString(36).substring(7);
-            if (dashboard) dashboard.register(fenceId, `Code Fence (${entry.action.language || 'script'})`);
-
-            try {
-              resolvedContent = await processExecutableCodeFence(entry.action, currentFileDir, verbose, importCtx);
-            } finally {
-              if (dashboard) dashboard.finish(fenceId);
-            }
-            break;
-        }
-
-        return { import: entry, content: resolvedContent };
-      });
-    });
-
-    // Wait for all resolutions to complete
-    const resolvedImports = await Promise.all(resolvePromises);
-
-    // Phase 3: Inject resolved content back into the original
-    return injectResolvedImports(content, resolvedImports);
-  } finally {
-    if (dashboard) dashboard.stop();
-  }
+    return await Promise.all(actions.map((action, i) => gate.run(async () => {
+      const id = String(i);
+      dashboard?.register(id, action.type === "command" ? action.command : "Code (" + action.language + ")");
+      try {
+        const content = action.type === "command"
+          ? await processCommandInline(action.command, dir, verbose, ctx, chunk => dashboard?.update(id, chunk), !!dashboard)
+          : await processExecutableCodeFence(action, dir, verbose, ctx);
+        return { action, content };
+      } finally { dashboard?.finish(id); }
+    })));
+  } finally { dashboard?.stop(); }
 }
 
-/**
- * Check if content contains any imports, URL imports, command inlines, or executable code fences
- */
-export function hasImports(content: string): boolean {
-  // Use context-aware checker from parser which now includes code fences
-  return hasImportsInContent(content);
-}
-
-// ============================================================================
-// 3-Phase Import Pipeline
-// ============================================================================
-// Enables LiquidJS template processing between file imports and command execution:
-// 1. expandContentImports() - Expands @file, @glob, @url, @symbol, @provider
-// 2. LiquidJS templates ({% capture %}, {{ var }}, etc.)
-// 3. expandCommandImports() - Expands !`commands` with resolved template vars
-
-/**
- * Check if content has content imports (file, glob, url, symbol, provider)
- */
-export function hasContentImports(content: string): boolean {
-  const actions = parseImportsSafe(content);
-  return actions.some(a =>
-    a.type === 'file' || a.type === 'glob' || a.type === 'url' || a.type === 'symbol' || a.type === 'provider'
-  );
-}
-
-/**
- * Check if content has command imports (commands, executable code fences)
- */
-export function hasCommandImports(content: string): boolean {
-  const actions = parseImportsSafe(content);
-  return actions.some(a => a.type === 'command' || a.type === 'executable_code_fence');
-}
-
-/**
- * Phase 1: Expand only content imports (file, glob, url, symbol)
- * Leaves !`command` syntax untouched for Phase 3.
- */
 export async function expandContentImports(
-  content: string,
-  currentFileDir: string,
-  stack: ImportStack = new Set(),
-  verbose: boolean = false,
-  importCtx?: ImportContext,
-  concurrencyLimit: number = DEFAULT_CONCURRENCY_LIMIT
+  source: string, dir: string, stack: ImportStack = new Set(), verbose = false,
+  ctx: ImportContext = {}, limit = DEFAULT_CONCURRENCY_LIMIT,
 ): Promise<string> {
-  const ctx: ImportContext = importCtx ?? {};
-  const tracker = ctx.resolvedImports;
-
-  const rawActions = parseImportsSafe(content);
-
-  // Filter to content imports only
-  const contentActions = rawActions.filter(a =>
-    a.type === 'file' || a.type === 'glob' || a.type === 'symbol' || a.type === 'url' || a.type === 'provider'
-  );
-
-  if (contentActions.length === 0) return content;
-
-  const semaphore = new Semaphore(concurrencyLimit);
-
-  const resolved = await Promise.all(
-    contentActions.map(async (action): Promise<ResolvedImportResult> => {
-      return semaphore.run(async () => {
-        let resolvedContent: string;
-        let parsed: ParsedImport;
-
-        if (action.type === 'file') {
-          let path = action.path;
-          if (action.lineRange) {
-            path = `${action.path}:${action.lineRange.start}-${action.lineRange.end}`;
-          }
-          parsed = { type: 'file', full: action.original, path, index: action.index };
-          const contentOnlyCtx: ImportContext = { ...ctx, _contentOnly: true };
-          resolvedContent = await processFileImport(path, currentFileDir, stack, verbose, contentOnlyCtx);
-        } else if (action.type === 'glob') {
-          parsed = { type: 'file', full: action.original, path: action.pattern, index: action.index };
-          const contentOnlyCtx: ImportContext = { ...ctx, _contentOnly: true };
-          resolvedContent = await processFileImport(action.pattern, currentFileDir, stack, verbose, contentOnlyCtx);
-        } else if (action.type === 'symbol') {
-          const path = `${action.path}#${action.symbol}`;
-          parsed = { type: 'file', full: action.original, path, index: action.index };
-          const contentOnlyCtx: ImportContext = { ...ctx, _contentOnly: true };
-          resolvedContent = await processFileImport(path, currentFileDir, stack, verbose, contentOnlyCtx);
-        } else if (action.type === 'provider') {
-          parsed = { type: 'provider', full: action.original, action, index: action.index };
-          resolvedContent = await processProviderImport(action, currentFileDir, verbose, ctx);
-          if (tracker) tracker.push(action.original);
-        } else {
-          // action.type === 'url'
-          parsed = { type: 'url', full: action.original, url: action.url, index: action.index };
-          resolvedContent = await processUrlImport(action.url, verbose, ctx);
-          if (tracker) tracker.push(action.url);
-        }
-
-        return { import: parsed, content: resolvedContent };
-      });
-    })
-  );
-
-  return injectResolvedImports(content, resolved);
+  const gate = new Semaphore(limit);
+  ctx = { ...ctx, budget: ctx.budget ?? new ImportBudget() };
+  const actions = parseImportsSafe(source).filter(a => !isExecutableImport(a));
+  ctx.budget!.actions(actions.length, stack.size);
+  return injectImports(source, await Promise.all(actions.map(action => gate.run(async () => ({
+    action, content: await resolveContentAction(action, dir, stack, verbose, ctx),
+  })))));
 }
 
-/**
- * Phase 3: Expand only command imports (!`commands` and executable code fences)
- * Uses templateVars from LiquidJS processing for variable substitution in commands.
- */
-export async function expandCommandImports(
-  content: string,
-  currentFileDir: string,
-  verbose: boolean = false,
-  importCtx?: ImportContext,
-  concurrencyLimit: number = DEFAULT_CONCURRENCY_LIMIT
+/** Low-level expansion of authored source without whole-prompt Liquid rendering. */
+export async function expandImports(
+  source: string, dir: string, stack: ImportStack = new Set(), verbose = false,
+  contextOrTracker: ImportContext | ResolvedImportsTracker = {}, limit = DEFAULT_CONCURRENCY_LIMIT,
 ): Promise<string> {
-  const ctx: ImportContext = importCtx ?? {};
-
-  const rawActions = parseImportsSafe(content);
-
-  // Filter to command imports only
-  const cmdActions = rawActions.filter(a =>
-    a.type === 'command' || a.type === 'executable_code_fence'
-  );
-
-  if (cmdActions.length === 0) return content;
-
-  const semaphore = new Semaphore(concurrencyLimit);
-  const useDashboard = cmdActions.length > 0 && process.stderr.isTTY && !verbose;
-  const dashboard = useDashboard ? new ParallelDashboard() : null;
-
-  if (dashboard) dashboard.start();
-
-  try {
-    const resolved = await Promise.all(
-      cmdActions.map(async (action): Promise<ResolvedImportResult> => {
-        return semaphore.run(async () => {
-          let resolvedContent: string;
-          let parsed: ParsedImport;
-
-          if (action.type === 'command') {
-            parsed = { type: 'command', full: action.original, command: action.command, index: action.index };
-            const cmdId = Math.random().toString(36).substring(7);
-            if (dashboard) dashboard.register(cmdId, action.command);
-
-            try {
-              resolvedContent = await processCommandInline(
-                action.command, currentFileDir, verbose, ctx,
-                (chunk) => { if (dashboard) dashboard.update(cmdId, chunk); },
-                useDashboard
-              );
-            } finally {
-              if (dashboard) dashboard.finish(cmdId);
-            }
-          } else {
-            // action.type === 'executable_code_fence'
-            parsed = { type: 'executable_code_fence', full: action.original, action, index: action.index };
-            const fenceId = Math.random().toString(36).substring(7);
-            if (dashboard) dashboard.register(fenceId, `Code (${action.language})`);
-
-            try {
-              resolvedContent = await processExecutableCodeFence(action, currentFileDir, verbose, ctx);
-            } finally {
-              if (dashboard) dashboard.finish(fenceId);
-            }
-          }
-
-          return { import: parsed, content: resolvedContent };
-        });
-      })
-    );
-
-    return injectResolvedImports(content, resolved);
-  } finally {
-    if (dashboard) dashboard.stop();
-  }
+  const ctx: ImportContext = Array.isArray(contextOrTracker) ? { resolvedImports: contextOrTracker, budget: new ImportBudget() } : { ...contextOrTracker, budget: contextOrTracker.budget ?? new ImportBudget() };
+  const actions = parseImportsSafe(source);
+  ctx.budget!.actions(actions.length, stack.size);
+  const gate = new Semaphore(limit);
+  const [data, commands] = await Promise.all([
+    Promise.all(actions.filter(a => !isExecutableImport(a)).map(action => gate.run(async () => ({
+      action, content: await resolveContentAction(action, dir, stack, verbose, ctx),
+    })))),
+    executeImportActions(actions.filter(isExecutableImport).map(action => action.type === "command" && ctx.templateVars && Object.keys(ctx.templateVars).length
+      ? { ...action, command: substituteTemplateVars(action.command, ctx.templateVars) } : action), dir, verbose, ctx, limit),
+  ]);
+  return injectImports(source, [...data, ...commands]);
 }
+
+export const hasImports = hasImportsInContent;
+export const hasContentImports = (source: string) => parseImportsSafe(source).some(a => !isExecutableImport(a));
+export const hasCommandImports = (source: string) => parseImportsSafe(source).some(isExecutableImport);

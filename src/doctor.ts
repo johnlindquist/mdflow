@@ -240,7 +240,7 @@ async function inspectFlow(
 ): Promise<DoctorFlowReport> {
 	const { flow, root, installed, diagnostics, currentVersion, config, ledger } =
 		options;
-	const source = readFileSync(flow.path, "utf8");
+	const source = isRegistryPath(flow.path) ? (await import("./registry")).readVerifiedRegistryFlow(flow.path) : readFileSync(flow.path, "utf8");
 	const frontmatter = parseFrontmatter(source).frontmatter as AgentFrontmatter;
 	const displayPath = posixRelative(root, flow.path);
 	if (!frontmatter._flow_id) {

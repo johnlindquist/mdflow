@@ -240,6 +240,7 @@ export async function processStructuredOutput(
 ): Promise<ProcessStructuredOutputResult> {
   const format = options.output.format ?? (options.output.apply ? "patch" : "text");
 
+  if (options.output.apply && format !== "patch") throw new Error("Output apply=true requires format=patch.");
   let value = extractStructured(options.stdout, format);
 
   if (options.output.schema) {
@@ -253,9 +254,6 @@ export async function processStructuredOutput(
 
   let applied = false;
   if (options.output.apply) {
-    if (format !== "patch") {
-      throw new Error("Output apply=true requires format=patch.");
-    }
     if (typeof value !== "string") {
       throw new Error("Patch output must be string data.");
     }

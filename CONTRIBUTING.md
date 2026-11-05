@@ -7,7 +7,7 @@ cover both the intended behavior and the refusal path.
 
 ## Local setup
 
-Install [Bun](https://bun.sh), then:
+Install [Bun](https://bun.sh) (CI pins 1.3.14) and Node/npm, then:
 
 ```bash
 bun install --frozen-lockfile
@@ -23,8 +23,9 @@ bun run verify
 ```
 
 `bun run verify` type-checks the source, runs the full test suite, checks the
-generated public facts, verifies the managed guidance/roster blocks are
-current, and installs the packed npm artifact in a clean temporary consumer.
+generated public facts and managed guidance, then installs the npm tarball in a fresh consumer. The installed bin links must scaffold a roster, plan an eval, dispatch literal stdin to a real local executable, and refuse an incompatible dry-run request.
+
+Use `bun run test:trust` for the focused refusal/consent suite. After installing both lockfiles, `bun run security:check` queries the advisory database: no CLI production advisories, no high/critical CLI development advisories, and no site advisories. It requires network access; a passing scan is not proof of absence of vulnerabilities. Run `bun audit` for the full CLI development report, including advisories below the release threshold.
 
 ## Pull requests
 

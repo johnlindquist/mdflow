@@ -245,7 +245,7 @@ describe("trust decisions", () => {
 
     // Should only appear once in hosts
     const hosts = await loadKnownHosts();
-    const count = Array.from(hosts).filter(d => d === trustedDomain).length;
+    const count = Array.from(hosts).filter(d => d === `https://${trustedDomain}`).length;
     expect(count).toBe(1);
   });
 });

@@ -14,15 +14,19 @@ import { dirname, join, resolve, sep } from "node:path";
  * never consented to. The check follows symlinks (realpath) so an alias
  * outside the registry cannot launder a registry flow into local provenance.
  */
+export function registryLocation(path: string): { owner: string; member: string } | undefined {
+  const marker = sep + ".mdflow" + sep + "registry" + sep;
+  const locate = (candidate: string) => {
+    const at = candidate.lastIndexOf(marker);
+    return at < 0 ? undefined : { owner: candidate.slice(0, at) || sep, member: candidate.slice(at + marker.length).split(sep).join("/") };
+  };
+  const lexical = locate(resolve(path));
+  if (lexical) return lexical;
+  try { return locate(realpathSync(path)); } catch { return undefined; }
+}
+
 export function isRegistryPath(path: string): boolean {
-  const marker = `${sep}.mdflow${sep}registry${sep}`;
-  const resolved = resolve(path);
-  if (resolved.includes(marker)) return true;
-  try {
-    return realpathSync(resolved).includes(marker);
-  } catch {
-    return false;
-  }
+  return registryLocation(path) !== undefined;
 }
 
 export const PROJECT_CONFIG_NAMES = [

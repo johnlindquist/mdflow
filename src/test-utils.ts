@@ -98,13 +98,10 @@ export async function spawnMd(
 ): Promise<SpawnResult> {
   const { cwd = process.cwd(), env = {}, stdin } = options;
 
-  const cmd = stdin
-    ? ["bash", "-c", `echo "${stdin.replace(/"/g, '\\"')}" | bun run ${CLI_PATH} ${args.join(" ")}`]
-    : ["bun", "run", CLI_PATH, ...args];
-
   const proc = spawn({
-    cmd,
+    cmd: [process.execPath, "run", CLI_PATH, ...args],
     cwd,
+    stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
     stdout: "pipe",
     stderr: "pipe",
     env: { ...process.env, ...env },
@@ -120,8 +117,7 @@ export async function spawnMd(
 }
 
 /**
- * Spawn md with piped input using bash pipe syntax.
- * More reliable for complex stdin scenarios.
+ * Pipe exact bytes to md without evaluating test input in a shell.
  */
 export async function spawnMdWithPipe(
   agentPath: string,
@@ -129,23 +125,7 @@ export async function spawnMdWithPipe(
   extraArgs: string[] = [],
   options: { env?: Record<string, string> } = {}
 ): Promise<SpawnResult> {
-  const args = [agentPath, ...extraArgs].join(" ");
-  const cmd = `echo "${pipeInput.replace(/"/g, '\\"')}" | bun run ${CLI_PATH} ${args}`;
-
-  const proc = spawn({
-    cmd: ["bash", "-c", cmd],
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, ...options.env },
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-
-  return { stdout, stderr, exitCode };
+  return spawnMd([agentPath, ...extraArgs], { ...options, stdin: pipeInput });
 }
 
 /**

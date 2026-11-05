@@ -1,7 +1,7 @@
 import { runCommand } from "./command";
 import type { CaptureMode, RunContext, RunResult } from "./command";
 import { substituteTemplateVars } from "./template";
-import { getCachedResult, setCachedResult } from "./workflow-cache";
+import { getCachedResult, setCachedResult, workflowCachePath } from "./workflow-cache";
 
 export interface WorkflowStep {
   id: string;
@@ -50,6 +50,7 @@ export interface ExecuteWorkflowOptions {
   captureOutput?: boolean | CaptureMode;
   resume?: boolean;
   cacheDir?: string;
+  flowIdentity?: string;
   runCommandFn?: (ctx: RunContext) => Promise<RunResult>;
   /** Called just before a non-skipped step executes (or resolves from cache). */
   onStepStart?: (step: WorkflowStep) => void;
@@ -350,15 +351,17 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
     onStepComplete,
   } = options;
 
+  workflowCachePath(cacheDir);
+  const cacheScope = JSON.stringify([options.flowIdentity, [...positionalMappings], Object.entries(env ?? {}).sort()]);
   const context: Record<string, unknown> = {
     ...templateVars,
-    steps: {},
+    steps: Object.create(null),
   };
-  const stepResults: Record<string, WorkflowStepResult> = {};
+  const stepResults: Record<string, WorkflowStepResult> = Object.create(null);
   let workflowExitCode = 0;
 
   for (const batch of workflow.batches) {
-    const batchResults = await Promise.all(
+    const settled = await Promise.allSettled(
       batch.map(async (step): Promise<WorkflowStepResult> => {
         const stepContext = { ...context };
 
@@ -385,15 +388,11 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
 
         const resolvedPrompt = substituteTemplateVars(step.run, stepContext);
 
+        const cacheInput = { prompt: resolvedPrompt, args, tool, cacheDir, context: JSON.stringify([cacheScope, step.id]) };
         onStepStart?.(step);
 
         if (resume) {
-          const cached = await getCachedResult({
-            prompt: resolvedPrompt,
-            args,
-            tool,
-            cacheDir,
-          });
+          const cached = await getCachedResult(cacheInput);
 
           if (cached.hit && cached.result) {
             const cachedResult = toWorkflowStepResult(
@@ -439,12 +438,7 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
 
         if (lastRun.exitCode === 0) {
           await setCachedResult(
-            {
-              prompt: resolvedPrompt,
-              args,
-              tool,
-              cacheDir,
-            },
+            cacheInput,
             {
               stdout: lastRun.stdout,
               stderr: lastRun.stderr,
@@ -468,6 +462,8 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
       })
     );
 
+    // No output from a still-running sibling may follow a terminal event.
+    const batchResults = settled.map(item => { if (item.status === "rejected") throw item.reason; return item.value; });
     for (let i = 0; i < batch.length; i++) {
       const step = batch[i];
       const result = batchResults[i];

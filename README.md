@@ -748,7 +748,7 @@ Use `@` followed by a path to inline file contents:
 model: claude
 ---
 Follow these coding standards:
-@~/.config/coding-standards.md
+@./docs/coding-standards.md
 
 Now review this code:
 @./src/api.ts
@@ -758,7 +758,9 @@ Now review this code:
 - `@./path` - Relative to current markdown file
 - `@/path` - Absolute path
 
-Imports are recursive. Imported files can have their own `@` imports.
+Paths (including symlinks) must resolve inside the import root, normally the invocation directory. A directly imported file can contain nested `@` context references. Its text is data: shell markers, shebang fences and Liquid expressions inside it are not executed. Declare commands and Liquid control flow in the flow itself. The same data rule applies to URL content, provider output and values supplied on stdin or the command line.
+
+If you intentionally interpolate a value *into an authored shell command*, you are still constructing a shell program. On POSIX shells, pass each external argument through the `q` filter as a standalone word; do not add another layer of quotes.
 
 ### Glob Imports
 
@@ -1045,14 +1047,13 @@ export PATH="$HOME/agents:$PATH"  # Your agent library
 Install versioned flows from a URL or GitHub into the registry:
 
 ```bash
-md install gh:myorg/agents/code-review.claude.md@v1.2   # project scope (./.mdflow/registry/)
+md install gh:myorg/agents/code-review.claude.md@v1.2 --project
 md install https://example.com/agents/review.claude.md --global  # user scope (~/.mdflow/registry/)
 md list                     # list installed flows
 md remove review.claude.md  # remove one
 ```
 
-Every install is pinned in `.mdflow/mdflow.lock.json` (source, resolved ref,
-sha256) — commit it for reproducible CI runs.
+Each install records its source, requested ref (if supplied), registry-relative path and SHA-256 in `.mdflow/mdflow.lock.json`. A registry run verifies the installed bytes against that lock before it processes the flow. Commit **both** the reviewed flow and its lock to run those same bytes in CI. A URL or branch can change on reinstall; a digest is not a publisher signature. To edit an installed flow, copy it out of the registry first.
 
 ---
 

@@ -11,7 +11,9 @@
 
 import { homedir } from "os";
 import { join } from "path";
-import { mkdir } from "fs/promises";
+import { readFileSync } from "node:fs";
+import { atomicWriteFile, withAtomicFileLock } from "./state-file";
+import { validateUrl } from "./security";
 import type { AgentFrontmatter } from "./types";
 
 const CONFIG_DIR = join(homedir(), ".mdflow");
@@ -36,64 +38,35 @@ export function extractDomain(url: string): string {
  * Load trusted domains from ~/.mdflow/known_hosts
  * Returns an empty set if the file doesn't exist
  */
-export async function loadKnownHosts(): Promise<Set<string>> {
-  try {
-    const file = Bun.file(KNOWN_HOSTS_FILE);
-    if (!await file.exists()) {
-      return new Set();
-    }
-    const content = await file.text();
-    const domains = content
-      .split("\n")
-      .map(line => line.trim())
-      .filter(line => line && !line.startsWith("#"));
-    return new Set(domains);
-  } catch {
-    return new Set();
-  }
+function readHosts(): Set<string> {
+  try { return new Set(readFileSync(KNOWN_HOSTS_FILE, "utf8").split("\n").map(s => s.trim()).filter(s => s && !s.startsWith("#"))); }
+  catch (cause) { if ((cause as NodeJS.ErrnoException).code === "ENOENT") return new Set(); throw cause; }
 }
+export async function loadKnownHosts(): Promise<Set<string>> { return readHosts(); }
 
-/**
- * Save trusted domains to ~/.mdflow/known_hosts
- */
+function writeHosts(hosts: Set<string>): void {
+  atomicWriteFile(KNOWN_HOSTS_FILE, ["# mdflow known hosts", "# Origins trusted for remote execution (bare hosts mean HTTPS on its default port).", ...[...hosts].sort(), ""].join("\n"));
+}
 export async function saveKnownHosts(hosts: Set<string>): Promise<void> {
-  // Ensure config directory exists
-  await mkdir(CONFIG_DIR, { recursive: true });
-
-  const content = [
-    "# mdflow known hosts",
-    "# Domains listed here are trusted for remote execution",
-    "# Add one domain per line",
-    "",
-    ...Array.from(hosts).sort(),
-    "",
-  ].join("\n");
-
-  await Bun.write(KNOWN_HOSTS_FILE, content);
+  withAtomicFileLock(KNOWN_HOSTS_FILE, () => writeHosts(hosts));
 }
-
-/**
- * Check if a domain is already trusted
- */
 export async function isDomainTrusted(url: string): Promise<boolean> {
-  const domain = extractDomain(url);
-  const knownHosts = await loadKnownHosts();
-  return knownHosts.has(domain);
+  const parsed = validateUrl(url, {});
+  const hosts = readHosts();
+  return hosts.has(parsed.origin) || (parsed.protocol === "https:" && !parsed.port && hosts.has(parsed.hostname));
 }
-
-/**
- * Add a domain to the known_hosts file
- */
 export async function addTrustedDomain(url: string): Promise<void> {
-  const domain = extractDomain(url);
-  const knownHosts = await loadKnownHosts();
-  knownHosts.add(domain);
-  await saveKnownHosts(knownHosts);
+  const origin = validateUrl(url, {}).origin;
+  withAtomicFileLock(KNOWN_HOSTS_FILE, () => writeHosts(readHosts().add(origin)));
 }
 
-/**
- * Format frontmatter for display
- */
+/** Escape terminal controls and bidi overrides before displaying remote bytes at a consent prompt. */
+function displayUntrusted(text: string): string {
+  return text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,
+    ch => "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0"));
+}
+
+/** Format frontmatter for display. */
 function formatFrontmatter(frontmatter: AgentFrontmatter): string {
   const entries = Object.entries(frontmatter);
   if (entries.length === 0) {
@@ -143,30 +116,30 @@ export async function promptForTrust(
   frontmatter: AgentFrontmatter,
   body: string
 ): Promise<TrustPromptResult> {
-  const domain = extractDomain(url);
+  const domain = validateUrl(url, {}).origin;
 
   console.error("\n");
   console.error("=".repeat(70));
   console.error("SECURITY WARNING: Remote Agent Execution");
   console.error("=".repeat(70));
   console.error("");
-  console.error(`URL: ${url}`);
+  console.error(`URL: ${displayUntrusted(url)}`);
   console.error(`Domain: ${domain}`);
   console.error("");
   console.error("-".repeat(70));
   console.error("Command to execute:");
   console.error("-".repeat(70));
-  console.error(`  ${command}`);
+  console.error(`  ${displayUntrusted(command)}`);
   console.error("");
   console.error("-".repeat(70));
   console.error("Frontmatter (CLI flags):");
   console.error("-".repeat(70));
-  console.error(formatFrontmatter(frontmatter));
+  console.error(displayUntrusted(formatFrontmatter(frontmatter)));
   console.error("");
   console.error("-".repeat(70));
   console.error("Body preview:");
   console.error("-".repeat(70));
-  console.error(truncateBody(body));
+  console.error(displayUntrusted(truncateBody(body)));
   console.error("");
   console.error("=".repeat(70));
   console.error("");
@@ -190,7 +163,7 @@ export async function promptForTrust(
     message: `Trust ${domain} for future executions?`,
     choices: [
       { name: "No, ask me next time", value: "no" },
-      { name: `Yes, always trust ${domain}`, value: "yes" },
+      { name: `Yes, trust every path on ${domain}`, value: "yes" },
     ],
     default: "no",
   });

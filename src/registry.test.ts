@@ -103,7 +103,8 @@ describe("registry", () => {
     expect(entry.resolvedRef).toBe("main");
     expect(entry.sha256).toBe(createHash("sha256").update(content).digest("hex"));
     expect(entry.installedAt).toBe(installedDate.toISOString());
-    expect(readFileSync(entry.installedPath, "utf8")).toBe(content);
+    expect(entry.installedPath).toBe("review.claude.md");
+    expect(readFileSync(result.installedPath, "utf8")).toBe(content);
   });
 
   test("test_installAgent_uses_user_registry_when_project_mdflow_directory_is_missing", async () => {

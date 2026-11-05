@@ -182,6 +182,7 @@ export class AgentRuntime {
     let isRemote = false;
 
     if (isRemoteUrl(source)) {
+      if (!await (await import("./trust")).isDomainTrusted(source)) throw new Error("Untrusted remote source; use the md CLI to review it before execution");
       const remoteResult = await fetchRemote(source);
       if (!remoteResult.success) {
         throw new NetworkError(`Failed to fetch remote file: ${remoteResult.error}`);
@@ -200,7 +201,7 @@ export class AgentRuntime {
       throw new FileNotFoundError(`File not found: ${localPath}`);
     }
 
-    const content = await file.text();
+    const content = (await import("./project-root")).isRegistryPath(localPath) ? (await import("./registry")).readVerifiedRegistryFlow(localPath) : await file.text();
     const directory = dirname(resolve(localPath));
 
     return {
@@ -235,7 +236,7 @@ export class AgentRuntime {
     }
 
     // Load .env files from the markdown file's directory.
-    await loadEnvFiles(resolved.directory);
+    if (resolved.type !== "remote" && !(await import("./project-root")).isRegistryPath(resolved.path)) await loadEnvFiles(resolved.directory);
 
     // Parse frontmatter
     const { frontmatter: baseFrontmatter, body: rawBody } = parseFrontmatter(resolved.content);
@@ -256,14 +257,7 @@ export class AgentRuntime {
     const commandDefaults = await getCommandDefaults(command);
     const frontmatter = applyDefaults(baseFrontmatter, commandDefaults);
 
-    // Extract and apply environment variables (object form) to process.env
-    // This must happen BEFORE import expansion so !`command` inlines can use them
     const envVars = extractEnvVars(frontmatter);
-    if (envVars) {
-      for (const [key, value] of Object.entries(envVars)) {
-        process.env[key] = value;
-      }
-    }
 
     // Expand @file imports and !`command` inlines
     let expandedBody = rawBody;
@@ -272,7 +266,7 @@ export class AgentRuntime {
     if (hasImports(rawBody)) {
       try {
         getImportLogger().debug({ directory: resolved.directory }, "Expanding imports");
-        expandedBody = await expandImports(rawBody, resolved.directory, new Set(), false, resolvedImports);
+        expandedBody = await expandImports(rawBody, resolved.directory, new Set(), false, { resolvedImports, dryRun: options.dryRun, env: { ...process.env, ...envVars }, policyEnv: process.env });
         getImportLogger().debug({ originalLength: rawBody.length, expandedLength: expandedBody.length }, "Imports expanded");
       } catch (err) {
         getImportLogger().error({ error: (err as Error).message }, "Import expansion failed");
@@ -285,7 +279,7 @@ export class AgentRuntime {
     const preCommand = typeof preCommandRaw === 'string' ? preCommandRaw : undefined;
     let preHookOutput: string | undefined;
 
-    if (preCommand) {
+    if (preCommand && !options.dryRun) {
       getCommandLogger().debug({ preCommand }, "Running pre hook");
       try {
         preHookOutput = await runHookCommand(preCommand, resolved.directory, envVars);

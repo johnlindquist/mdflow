@@ -190,6 +190,16 @@ describe("flow document and capability boundaries", () => {
     expect(() => createEvolutionWorkspace(flow, join(state, "workspace"), BLUE)).toThrow("symlink escaping");
   });
 
+  it("does not copy dotenv credentials directly or through aliases in a fallback snapshot", () => {
+    const flow = writeFlow();
+    writeFileSync(join(repo, ".env.local"), "TOKEN=test-only");
+    symlinkSync(".env.local", join(repo, "public-looking.md"));
+    const snapshot = createEvolutionWorkspace(flow, join(state, "workspace"), BLUE);
+    expect(readFileSync(snapshot.flowPath, "utf8")).toBe(BLUE);
+    expect(existsSync(join(snapshot.root, ".env.local"))).toBe(false);
+    expect(existsSync(join(snapshot.root, "public-looking.md"))).toBe(false);
+  });
+
   it("does not send frontmatter secrets to the maintainer", () => {
     const prompt = buildMaintainerPrompt({
       flowContent: "---\n_env:\n  SECRET_TOKEN: should-not-leak\n---\nPublic body\n",
@@ -519,6 +529,29 @@ describe("transactional apply and rollback", () => {
     expect(readEvidence()[0]!.status).toBe("open");
   });
 
+  it("does not turn a proposed body into executable configuration", () => {
+    for (const candidate of ["---\nengine: sh\n---\nhello", "---   \n_env: { FOO: bar }\n---\nhello", "#!/usr/bin/env sh\nhello"]) {
+      expect(() => replaceFlowBody("hello", candidate)).toThrow(/Body-only/);
+    }
+  });
+
+  it("refuses altered proposal AND rollback artifacts without changing source or evidence", async () => {
+    const { flow, result } = await verifiedRun();
+    const id = result.runId!;
+    const proposal = join(evolutionRunPath(id), "proposal.md");
+    const originalProposal = readFileSync(proposal, "utf8");
+    writeFileSync(proposal, "Not the verified proposal");
+    await expect(applyEvolutionRun(id)).rejects.toThrow("hash mismatch");
+    expect(readFileSync(flow, "utf8")).toBe(BLUE);
+    expect(readEvidence()[0]!.status).toBe("targeted");
+    writeFileSync(proposal, originalProposal);
+    await applyEvolutionRun(id);
+    writeFileSync(join(evolutionRunPath(id), "current.md"), "Not the original");
+    expect(() => rollbackEvolutionRun(id)).toThrow("hash mismatch");
+    expect(readFileSync(flow, "utf8")).toBe(GREEN);
+    expect(readEvidence()[0]!.status).toBe("resolved");
+  });
+
   it("refuses to overwrite a human edit made after proposal creation", async () => {
     const { flow, result } = await verifiedRun();
     writeFileSync(flow, `${BLUE}\nHuman edit\n`);
@@ -564,6 +597,15 @@ describe("transactional apply and rollback", () => {
     expect(result.proposalPath).toStartWith(evolutionRunPath(result.runId!));
     expect(existsSync(result.proposalPath!)).toBe(true);
     expect(readEvolutionArtifact(result.runId!, "proposal.diff")).toContain("proposal.md");
+  });
+
+  it("prune derives owned job log paths instead of deleting a recorded absolute path", () => {
+    const outside = join(repo, "important.txt"); writeFileSync(outside, "KEEP");
+    const jobs = join(state, "jobs"); mkdirSync(jobs, { recursive: true });
+    writeFileSync(join(jobs, "evj_test.json"), JSON.stringify({ id: "evj_test", status: "completed", updatedAt: "2000-01-01", logPath: outside }));
+    writeFileSync(join(jobs, "evj_test.log"), "old log");
+    expect(pruneEvolutionData(0).jobs).toBe(1); expect(readFileSync(outside, "utf8")).toBe("KEEP");
+    expect(existsSync(join(jobs, "evj_test.log"))).toBe(false);
   });
 
   it("prunes old private proposals but retains applied rollback lineage", async () => {

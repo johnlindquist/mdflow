@@ -1,13 +1,13 @@
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
-import { resolveEngine, hasInteractiveMarker } from "./command";
-import { isCompatOnlyFrontmatter } from "./compat";
+import { resolveEngine } from "./command";
+import { isDocument } from "./flow-kind";
 import { getDeclaredFlowDirectories, loadFullConfig } from "./config";
 import { getFrecencyScore, loadHistory } from "./history";
 import { parseFrontmatter } from "./parse";
 import { resolveProjectRoot } from "./project-root";
-import { listAgents, type ListedAgent } from "./registry";
+import { listAgents, verifiedRegistryText, type ListedAgent } from "./registry";
 import { shouldOfferFirstRunSetup } from "./init";
 import type { AgentFile, FlowOrigin, FlowScope } from "./cli";
 
@@ -161,6 +161,7 @@ async function inspectPath(
 	source: FilesystemSource,
 	configEngine: string | undefined,
 	scorePath: (path: string) => number,
+	verifiedText?: string,
 ): Promise<AgentFile | undefined> {
 	let canonical: string;
 	try {
@@ -179,16 +180,11 @@ async function inspectPath(
 	if (!isContained(canonicalRoot, canonical)) return undefined;
 
 	try {
-		const parsed = parseFrontmatter(readFileSync(canonical, "utf8"));
+		const parsed = parseFrontmatter(verifiedText ?? readFileSync(canonical, "utf8"));
 		const resolved = resolveEngine(canonical, parsed.frontmatter, {
 			configEngine,
 		});
-		if (
-			["env", "config", "default"].includes(resolved.source) &&
-			!hasInteractiveMarker(canonical) &&
-			isCompatOnlyFrontmatter(parsed.frontmatter as Record<string, unknown>)
-		)
-			return undefined;
+		if (isDocument(canonical, parsed.frontmatter, resolved.source)) return undefined;
 		const relativePath =
 			relative(canonicalRoot, canonical) || basename(canonical);
 		return {
@@ -274,6 +270,10 @@ async function inspectRegistryEntry(
 			registry: metadata,
 		};
 	}
+	let verified: string;
+	try { verified = verifiedRegistryText(path, entry); } catch (err) {
+		return { ...unavailable(path, entry.lockfilePath, scope, origin, provenanceLabel, String(err), "invalid"), name: entry.name, registry: metadata };
+	}
 	const inspected = await inspectPath(
 		path,
 		{
@@ -286,6 +286,7 @@ async function inspectRegistryEntry(
 		},
 		configEngine,
 		scorePath,
+		verified,
 	);
 	if (!inspected) {
 		return {

@@ -14,7 +14,7 @@
     "og-image": "node scripts/generate-og-image.mjs"
   },
   "dependencies": {
-    "@vercel/functions": "^3.9.5",
+    "@vercel/functions": "^3.10.6",
     "@wterm/dom": "0.3.0",
     "@wterm/react": "0.3.0",
     "framer-motion": "^12.23.25",
@@ -28,9 +28,9 @@
     "autoprefixer": "^10.4.21",
     "marked": "^18.0.5",
     "postcss": "^8.5.6",
-    "puppeteer": "^24.32.1",
+    "puppeteer": "^25.16.0",
     "tailwindcss": "^3.4.17",
     "typescript": "~5.8.2",
-    "vite": "^6.4.1"
+    "vite": "^6.4.5"
   }
 }

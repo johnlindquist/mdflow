@@ -10,6 +10,8 @@ import { mkdir, stat, readFile, writeFile, rm, readdir } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
 import { createHash } from "crypto";
+import { atomicWriteFile } from "./state-file";
+import { MAX_INPUT_SIZE } from "./limits";
 
 /** Default TTL for cached content (1 hour in milliseconds) */
 export const DEFAULT_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -21,6 +23,7 @@ export const CACHE_DIR = join(homedir(), ".mdflow", "cache");
 export interface CacheMetadata {
   url: string;
   fetchedAt: number;
+  sha256: string;
   ttlMs: number;
   /** ETag from HTTP response for conditional requests */
   etag?: string;
@@ -180,17 +183,20 @@ export async function getCachedContent(
     const metadataRaw = await readFile(metadataPath, "utf-8");
     const metadata: CacheMetadata = JSON.parse(metadataRaw);
 
+    if (metadata.url !== url || !Number.isFinite(metadata.fetchedAt) || !Number.isFinite(metadata.ttlMs)) return { hit: false };
+    const info = await stat(contentPath);
+    if (!info.isFile() || info.size > MAX_INPUT_SIZE) return { hit: false };
+    const bytes = await readFile(contentPath);
+    if (createHash("sha256").update(bytes).digest("hex") !== metadata.sha256) return { hit: false };
+    const content = bytes.toString("utf8");
     // Check if cache is expired
     const now = Date.now();
     const age = now - metadata.fetchedAt;
     const effectiveTtl = metadata.ttlMs || ttlMs;
 
     if (age > effectiveTtl) {
-      return { hit: false, metadata, expired: true };
+      return { hit: false, metadata, content, expired: true };
     }
-
-    // Read content
-    const content = await readFile(contentPath, "utf-8");
 
     return { hit: true, content, metadata };
   } catch (error) {
@@ -215,17 +221,15 @@ export async function setCachedContent(
 
   const metadata: CacheMetadata = {
     url,
+    sha256: createHash("sha256").update(content).digest("hex"),
     fetchedAt: Date.now(),
     ttlMs,
     ...(etag && { etag }),
     ...(lastModified && { lastModified }),
   };
 
-  // Write both files
-  await Promise.all([
-    writeFile(contentPath, content, "utf-8"),
-    writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf-8"),
-  ]);
+  atomicWriteFile(contentPath, content);
+  atomicWriteFile(metadataPath, JSON.stringify(metadata));
 }
 
 /**
@@ -251,7 +255,7 @@ export async function touchCacheEntry(
       ...(lastModified && { lastModified }),
     };
 
-    await writeFile(metadataPath, JSON.stringify(updatedMetadata, null, 2), "utf-8");
+    atomicWriteFile(metadataPath, JSON.stringify(updatedMetadata));
     return true;
   } catch {
     return false;

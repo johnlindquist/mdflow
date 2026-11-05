@@ -37,7 +37,8 @@ import {
   resolveIsolationDefaults,
 } from "./isolation";
 import { extractSystemPromptSpec, applySystemPromptToFrontmatter } from "./system-prompt";
-import { expandContentImports, hasContentImports } from "./imports";
+import { renderFlowPrompt } from "./prompt-render";
+import { isRegistryPath } from "./project-root";
 import { substituteTemplateVars, extractTemplateVars } from "./template";
 import { isFormInputs, getFormInputDefaults } from "./form-inputs";
 import { isDomainTrusted, extractDomain, getKnownHostsPath } from "./trust";
@@ -49,6 +50,7 @@ const PROMPT_PREVIEW_LENGTH = 1000;
 
 export interface ExplainResult {
   agentPath: string;
+  sourceHash: string;
   isRemote: boolean;
   command: string;
   commandSource: string;
@@ -114,20 +116,18 @@ export async function analyzeAgent(
   passthroughArgs: string[] = [],
   cwd: string = process.cwd()
 ): Promise<ExplainResult> {
-  let localFilePath = filePath;
-  let isRemote = false;
+  if (!isRemoteUrl(filePath)) return analyzeLocal(filePath, filePath, false, passthroughArgs, cwd);
+  const fetched = await fetchRemote(filePath, { noCache: true });
+  if (!fetched.success || !fetched.localPath) throw new Error(`Failed to fetch remote file: ${fetched.error}`);
+  try { return await analyzeLocal(filePath, fetched.localPath, true, passthroughArgs, cwd); }
+  finally { await cleanupRemote(fetched.localPath); }
+}
 
-  if (isRemoteUrl(filePath)) {
-    const remoteResult = await fetchRemote(filePath, { noCache: true });
-    if (!remoteResult.success) throw new Error(`Failed to fetch remote file: ${remoteResult.error}`);
-    localFilePath = remoteResult.localPath!;
-    isRemote = true;
-  }
-
+async function analyzeLocal(filePath: string, localFilePath: string, isRemote: boolean, passthroughArgs: string[], cwd: string): Promise<ExplainResult> {
   if (!isRemote && !existsSync(localFilePath)) {
     throw new Error(`File not found: ${filePath}`);
   }
-  const content = await Bun.file(localFilePath).text();
+  const content = isRegistryPath(localFilePath) ? (await import("./registry")).readVerifiedRegistryFlow(localFilePath) : await Bun.file(localFilePath).text();
   const { frontmatter: originalFrontmatter, body: rawBody } = parseFrontmatter(content);
 
   const globalConfig = await loadGlobalConfig();
@@ -257,7 +257,7 @@ export async function analyzeAgent(
       flowPath: localFilePath,
       frontmatterValue: frontmatter._hooks,
       cliValue: cliHooksValue,
-      isRemote,
+      isRemote: isRemote || isRegistryPath(localFilePath),
     });
     if (resolvedHooks.kind === "file") {
       hooksResult = { file: resolvedHooks.path, source: resolvedHooks.source, events: [] };
@@ -367,20 +367,16 @@ export async function analyzeAgent(
     }
   }
 
-  let expandedBody = rawBody;
-  const fileDir = dirname(resolve(localFilePath));
-  if (hasContentImports(rawBody)) {
-    try {
-      expandedBody = await expandContentImports(rawBody, fileDir, new Set(), false, { invocationCwd: cwd });
-    } catch (err) {
-      expandedBody = rawBody + `\n\n[Import expansion error: ${(err as Error).message}]`;
-    }
-  }
-
-  for (const v of extractTemplateVars(expandedBody)) {
+  for (const v of extractTemplateVars(rawBody)) {
     if (!(v in templateVars)) templateVars[v] = `[MISSING: ${v}]`;
   }
-  const finalPromptFull = substituteTemplateVars(expandedBody, templateVars);
+  let finalPromptFull: string;
+  try {
+    finalPromptFull = await renderFlowPrompt(rawBody, dirname(resolve(localFilePath)), templateVars,
+      { invocationCwd: effectiveCwd }, isRemote ? "source-only" : "explain");
+  } catch (err) {
+    finalPromptFull = rawBody + `\n\n[Import expansion error: ${(err as Error).message}]`;
+  }
   const { text: finalPrompt, truncated: promptTruncated } = truncateText(finalPromptFull, PROMPT_PREVIEW_LENGTH);
 
   const templateVarNames = Object.keys(templateVars);
@@ -411,10 +407,8 @@ export async function analyzeAgent(
   const globalConfigPath = getConfigFile();
   const projectConfigPath = findProjectConfigPath(cwd);
 
-  if (isRemote) await cleanupRemote(localFilePath);
-
   return {
-    agentPath: filePath, isRemote, command, commandSource, finalFrontmatter: frontmatter,
+    agentPath: filePath, sourceHash: createHash("sha256").update(content).digest("hex"), isRemote, command, commandSource, finalFrontmatter: frontmatter,
     builtinDefaults, globalDefaults, projectDefaults, originalFrontmatter: originalFrontmatter as AgentFrontmatter,
     finalArgs, positionalMappings, finalPrompt, finalPromptFull, promptTruncated, tokenUsage, trustStatus, envKeys,
     interactiveMode: interactiveFromFilename || interactiveFromCli || interactiveFromFrontmatter,
@@ -674,6 +668,7 @@ export async function explainJsonFromResult(
   }
 
   const warnings: string[] = [];
+  if (result.isRemote) warnings.push("Remote source preview: nested context imports are not fetched or read.");
   if (result.isolation.warning) warnings.push(result.isolation.warning);
   if (result.systemPrompt?.error) warnings.push(result.systemPrompt.error);
   if (result.hooks?.error) warnings.push(result.hooks.error);
@@ -684,16 +679,13 @@ export async function explainJsonFromResult(
   // changes the events explain/render display and the -c override the flow
   // would run with — a cache keyed on this must therefore invalidate.
   const fullConfig = await loadFullConfig(cwd);
-  let flowContent = "";
-  try {
-    flowContent = await Bun.file(result.isRemote ? filePath : resolve(filePath)).text();
-  } catch {
-    // Remote flows were cleaned up after analysis; hash without content.
-  }
   const hasher = createHash("sha256")
     .update(JSON.stringify(fullConfig))
     .update("\0")
-    .update(flowContent)
+    .update(result.sourceHash)
+    .update("\0").update(prompt)
+    .update("\0").update(JSON.stringify(args))
+    .update("\0").update(effectiveCwd)
     .update("\0")
     .update(mdflowVersion());
   if (result.hooks && !result.hooks.error) {

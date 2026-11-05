@@ -287,9 +287,9 @@ export class ProcessManager {
    * Abort the current run
    * Signals all operations to cancel via AbortController
    */
-  abort(): void {
+  abort(reason?: string): void {
     if (!this.abortController.signal.aborted) {
-      this.abortController.abort();
+      this.abortController.abort(reason);
     }
   }
 
@@ -298,7 +298,7 @@ export class ProcessManager {
    */
   private async handleShutdown(signal: NodeJS.Signals): Promise<void> {
     // Abort any pending operations
-    this.abort();
+    this.abort(signal);
 
     // Kill all child processes
     this.killAll();
@@ -306,14 +306,7 @@ export class ProcessManager {
     // Restore terminal state
     this.restoreTerminal();
 
-    // Run cleanup callbacks
-    for (const callback of this.cleanupCallbacks) {
-      try {
-        await callback();
-      } catch {
-        // Ignore cleanup errors during shutdown
-      }
-    }
+    await this.releaseResources();
 
     // Exit with appropriate code
     // SIGINT = 2, SIGTERM = 15
@@ -323,6 +316,13 @@ export class ProcessManager {
     // isolation cleanup and other finally blocks. The normal CLI completion
     // path exits once that cleanup has finished.
     process.exitCode = exitCode;
+  }
+
+  /** Release resources on normal completion too, not only on signals. */
+  async releaseResources(): Promise<void> {
+    for (const callback of this.cleanupCallbacks.splice(0).reverse()) {
+      try { await callback(); } catch (err) { console.error("Resource cleanup failed:", err instanceof Error ? err.message : String(err)); }
+    }
   }
 
   /**

@@ -15,11 +15,14 @@
  */
 
 import { createHash } from "crypto";
-import { existsSync } from "fs";
-import { mkdir, rm } from "fs/promises";
+import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { containedWritePath } from "./contained-write";
+import { registryLocation } from "./project-root";
+import { fetchTextResource } from "./fetch";
+import { MAX_INPUT_SIZE } from "./limits";
 import { homedir } from "os";
-import { basename, join } from "path";
-import { atomicWriteFile, withAtomicFileLock } from "./evolution-store";
+import { basename, dirname, isAbsolute, join } from "path";
+import { atomicWriteFile, withAtomicFileLock } from "./state-file";
 import { toRawUrl } from "./remote";
 
 export type RegistryScope = "project" | "user";
@@ -206,52 +209,82 @@ function getRegistryPaths(scope: RegistryScope, options: RegistryOptions): Regis
   };
 }
 
-async function ensureRegistryDirectories(paths: RegistryPaths): Promise<void> {
-  await mkdir(paths.registryDir, { recursive: true });
+function registryTarget(paths: RegistryPaths, relativePath: string): string {
+  const parts = relativePath.split("/");
+  if (!relativePath.endsWith(".md") || parts.some(p => !/^[a-zA-Z0-9._-]+$/.test(p) || p === "." || p === "..")) {
+    throw new Error("Invalid path in registry lockfile: " + relativePath);
+  }
+  containedWritePath(dirname(paths.mdflowDir), MDFLOW_DIR_NAME, REGISTRY_DIR_NAME, ...parts);
+  return join(paths.registryDir, ...parts);
 }
 
-async function readLockfile(lockfilePath: string): Promise<RegistryLockfile> {
-  const file = Bun.file(lockfilePath);
-  if (!await file.exists()) {
-    return { entries: {} };
-  }
+// Old locks stored absolute paths. Relocate their registry-relative suffix;
+// never read, write or unlink the pathname supplied by an untrusted lock.
+function portablePath(recorded: string): string {
+  const path = recorded.replaceAll("\\", "/");
+  if (!isAbsolute(path) && !/^[A-Za-z]:/.test(path)) return path;
+  const marker = "/.mdflow/registry/";
+  const idx = path.lastIndexOf(marker);
+  if (idx < 0) throw new Error("Invalid installed path outside the registry");
+  return path.slice(idx + marker.length);
+}
 
+function readLockfile(paths: RegistryPaths): RegistryLockfile {
+  const entries: Record<string, LockfileEntry> = Object.create(null);
+  const owner = dirname(paths.mdflowDir);
+  if (!existsSync(owner)) return { entries };
+  containedWritePath(owner, MDFLOW_DIR_NAME, LOCKFILE_NAME);
   let parsed: unknown;
   try {
-    parsed = await file.json();
-  } catch (error) {
-    throw new Error(
-      `Failed to parse registry lockfile at "${lockfilePath}": ${(error as Error).message}`
-    );
+    if (statSync(paths.lockfilePath).size > MAX_INPUT_SIZE) throw new Error("lockfile too large");
+    parsed = JSON.parse(readFileSync(paths.lockfilePath, "utf8"));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { entries };
+    throw new Error("Unreadable registry lockfile: " + paths.lockfilePath, { cause: err });
   }
-
-  if (!isRecord(parsed)) {
-    throw new Error(`Invalid registry lockfile at "${lockfilePath}": expected an object`);
-  }
-
-  const entriesValue = parsed.entries;
-  if (entriesValue === undefined) {
-    return { entries: {} };
-  }
-  if (!isRecord(entriesValue)) {
-    throw new Error(`Invalid registry lockfile at "${lockfilePath}": "entries" must be an object`);
-  }
-
-  const entries: Record<string, LockfileEntry> = {};
-  for (const [name, value] of Object.entries(entriesValue)) {
-    if (!isLockfileEntry(value)) {
-      throw new Error(
-        `Invalid registry lockfile entry "${name}" in "${lockfilePath}": expected {source,resolvedRef?,sha256,installedPath,installedAt}`
-      );
+  if (!isRecord(parsed) || !isRecord(parsed.entries)) throw new Error("Invalid registry lockfile: expected entries");
+  const seen = new Set<string>();
+  for (const [name, value] of Object.entries(parsed.entries)) {
+    if (!/^[a-zA-Z0-9._-]+$/.test(name) || !isLockfileEntry(value) || !/^[a-f0-9]{64}$/.test(value.sha256)) {
+      throw new Error("Invalid registry lockfile entry: " + name);
     }
-    entries[name] = value;
+    const installedPath = portablePath(value.installedPath);
+    registryTarget(paths, installedPath);
+    if (seen.has(installedPath)) throw new Error("Duplicate installed path: " + installedPath);
+    seen.add(installedPath);
+    entries[name] = { ...value, installedPath };
   }
-
   return { entries };
 }
 
-async function writeLockfile(lockfilePath: string, lockfile: RegistryLockfile): Promise<void> {
-  await Bun.write(lockfilePath, `${JSON.stringify(lockfile, null, 2)}\n`);
+function writeLockfile(paths: RegistryPaths, lock: RegistryLockfile): void {
+  atomicWriteFile(paths.lockfilePath, JSON.stringify(lock, null, 2) + "\n", 0o600);
+}
+
+function changeRegistry<T>(paths: RegistryPaths, change: (lock: RegistryLockfile) => T): T {
+  containedWritePath(dirname(paths.mdflowDir), MDFLOW_DIR_NAME, LOCKFILE_NAME + ".lock");
+  return withAtomicFileLock(paths.lockfilePath, () => change(readLockfile(paths)));
+}
+
+export function verifiedRegistryText(path: string, entry: LockfileEntry): string {
+  if (statSync(path).size > MAX_INPUT_SIZE) throw new Error("Installed flow exceeds the input limit");
+  const bytes = readFileSync(path);
+  if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256) {
+    throw new Error("Registry integrity check failed (SHA-256 mismatch): " + path + ". Review the file and reinstall from the intended source.");
+  }
+  return bytes.toString("utf8");
+}
+
+/** Hash the very bytes returned to the parser, not an earlier file read. */
+export function readVerifiedRegistryFlow(path: string): string {
+  const location = registryLocation(path);
+  if (!location) throw new Error("Not a registry path: " + path);
+  const paths = getRegistryPaths("project", { cwd: location.owner });
+  const target = registryTarget(paths, location.member);
+  const lock = readLockfile(paths);
+  const entry = Object.values(lock.entries).find(e => e.installedPath === location.member);
+  if (!entry) throw new Error("Unpinned registry flow: " + path + ". Install it with md install before running it.");
+  return verifiedRegistryText(target, entry);
 }
 
 function buildCollisionName(name: string, source: string): string {
@@ -272,155 +305,71 @@ export async function installAgent(spec: string, options: RegistryOptions = {}):
   const resolved = resolveInstallSpec(spec);
   const scope = resolveScope(options);
   const paths = getRegistryPaths(scope, options);
-  await ensureRegistryDirectories(paths);
-
-  const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchFn(resolved.downloadUrl, {
-    headers: {
-      "User-Agent": "mdflow/registry",
-      Accept: "text/markdown, text/plain, */*",
-    },
+  const response = await fetchTextResource(resolved.downloadUrl, { fetchFn: options.fetchFn,
+    headers: { "User-Agent": "mdflow/registry", Accept: "text/markdown, text/plain, */*" },
   });
+  if (!response.ok) throw new Error(`Failed to install agent from "${resolved.downloadUrl}": HTTP ${response.status} ${response.statusText}`);
+  if (!response.text.trim()) throw new Error("Downloaded agent content is empty: " + resolved.downloadUrl);
 
-  if (!response.ok) {
-    throw new Error(
-      `Failed to install agent from "${resolved.downloadUrl}" (source: "${resolved.source}"): HTTP ${response.status} ${response.statusText}`
-    );
-  }
-
-  const content = await response.text();
-  if (content.trim().length === 0) {
-    throw new Error(
-      `Downloaded agent content is empty from "${resolved.downloadUrl}" (source: "${resolved.source}")`
-    );
-  }
-
-  const lockfile = await readLockfile(paths.lockfilePath);
-  let name = resolved.suggestedName;
-  const existing = lockfile.entries[name];
-  if (existing && existing.source !== resolved.source) {
-    name = buildCollisionName(name, resolved.source);
-    let collisionIndex = 2;
-    while (lockfile.entries[name] && lockfile.entries[name]!.source !== resolved.source) {
-      const base = getNameWithoutMdExtension(buildCollisionName(resolved.suggestedName, resolved.source));
-      name = `${base}-${collisionIndex}.md`;
-      collisionIndex += 1;
+  return changeRegistry(paths, lock => {
+    let name = resolved.suggestedName;
+    const collision = buildCollisionName(name, resolved.source);
+    for (let i = 1; lock.entries[name] && lock.entries[name]!.source !== resolved.source; i++) {
+      name = i === 1 ? collision : getNameWithoutMdExtension(collision) + "-" + i + ".md";
     }
-  }
-
-  const installedPath = join(paths.registryDir, name);
-
-  // Consent boundary: `md install` downloads ONLY the flow markdown — never
-  // sibling hook/eval programs. A pre-existing sidecar next to the install
-  // target was planted by something else and would otherwise ride along with
-  // the flow's name forever. Refuse until the user removes it deliberately.
-  // The check runs under the install lock (so a concurrent plant between
-  // check and write cannot slip through) and the write is atomic
-  // (temp + rename never follows a symlink planted at the destination).
-  withAtomicFileLock(installedPath, () => {
-    const stem = installedPath.replace(/\.md$/i, "");
-    const sidecars = [`${stem}.hooks.ts`, `${stem}.eval.ts`]
-      .filter((sidecar) => existsSync(sidecar));
-    if (sidecars.length > 0) {
-      throw new Error(
-        `Refusing to install "${name}": unexpected sidecar file(s) already exist next to the install target ` +
-          `(${sidecars.join(", ")}). mdflow never installs hook or eval programs from remote sources — ` +
-          `remove the file(s) and re-run md install.`
-      );
+    const member = lock.entries[name]?.installedPath ?? name;
+    const target = registryTarget(paths, member);
+    if (!lock.entries[name] && (existsSync(target) || Object.values(lock.entries).some(e => e.installedPath === member))) {
+      throw new Error("Refusing to overwrite a file not owned by this install: " + target);
     }
-    atomicWriteFile(installedPath, content, 0o644);
+    const stem = target.slice(0, -3);
+    if ([stem + ".hooks.ts", stem + ".eval.ts"].some(p => existsSync(p))) {
+      throw new Error("Refusing to install: unexpected sidecar file next to " + target + ". Remove it before installing.");
+    }
+    const entry: LockfileEntry = { source: resolved.source, sha256: hashSha256(response.text), installedPath: member,
+      installedAt: (options.now?.() ?? new Date()).toISOString(), ...(resolved.resolvedRef && { resolvedRef: resolved.resolvedRef }),
+    };
+    // Both renames are atomic individually. An interruption between them is
+    // detectable: a missing/mismatched pin can never authorize execution.
+    atomicWriteFile(target, response.text, 0o644);
+    lock.entries[name] = entry;
+    writeLockfile(paths, lock);
+    return { ...entry, name, scope, installedPath: target, lockfilePath: paths.lockfilePath };
   });
-
-  const entry: LockfileEntry = {
-    source: resolved.source,
-    sha256: hashSha256(content),
-    installedPath,
-    installedAt: (options.now ? options.now() : new Date()).toISOString(),
-  };
-  if (resolved.resolvedRef) {
-    entry.resolvedRef = resolved.resolvedRef;
-  }
-
-  lockfile.entries[name] = entry;
-  await writeLockfile(paths.lockfilePath, lockfile);
-
-  return {
-    name,
-    scope,
-    lockfilePath: paths.lockfilePath,
-    ...entry,
-  };
 }
 
 export async function removeAgent(name: string, options: RegistryOptions = {}): Promise<RemoveAgentResult> {
-  if (!name.trim()) {
-    throw new Error("Agent name is required");
-  }
-
-  const targetNames = getCandidateNames(name);
-  const scopes: RegistryScope[] = options.scope ? [options.scope] : ["project", "user"];
+  if (!name.trim()) throw new Error("Agent name is required");
   const removedFrom: RegistryScope[] = [];
-
+  const scopes: RegistryScope[] = options.scope ? [options.scope] : ["project", "user"];
   for (const scope of scopes) {
     const paths = getRegistryPaths(scope, options);
-    const hasLockfile = await Bun.file(paths.lockfilePath).exists();
-    const hasRegistryDir = existsSync(paths.registryDir);
-    if (!hasLockfile && !hasRegistryDir) continue;
-
-    let lockfile: RegistryLockfile = { entries: {} };
-    if (hasLockfile) {
-      lockfile = await readLockfile(paths.lockfilePath);
-    }
-
-    const matchedFromLock = targetNames.find((target) => lockfile.entries[target] !== undefined);
-    let matchedName = matchedFromLock;
-    if (!matchedName && hasRegistryDir) {
-      matchedName = targetNames.find((target) => existsSync(join(paths.registryDir, target)));
-    }
-    if (!matchedName) continue;
-
-    const lockEntry = lockfile.entries[matchedName];
-    const installedPath = lockEntry?.installedPath ?? join(paths.registryDir, matchedName);
-    await rm(installedPath, { force: true });
-
-    if (lockEntry) {
-      delete lockfile.entries[matchedName];
-      await writeLockfile(paths.lockfilePath, lockfile);
-    }
-
-    removedFrom.push(scope);
+    if (!existsSync(paths.mdflowDir)) continue;
+    changeRegistry(paths, lock => {
+      const match = getCandidateNames(name).find(key => Object.hasOwn(lock.entries, key));
+      if (!match) return;
+      const entry = lock.entries[match]!;
+      const target = registryTarget(paths, entry.installedPath);
+      if (existsSync(target)) {
+        verifiedRegistryText(target, entry); // never remove a locally replaced file
+        unlinkSync(target);
+      }
+      delete lock.entries[match];
+      writeLockfile(paths, lock);
+      removedFrom.push(scope);
+    });
   }
-
-  return {
-    name: normalizeAgentName(name),
-    removed: removedFrom.length > 0,
-    removedFrom,
-  };
+  return { name: normalizeAgentName(name), removed: removedFrom.length > 0, removedFrom };
 }
 
 export async function listAgents(options: RegistryOptions = {}): Promise<ListedAgent[]> {
   const scopes: RegistryScope[] = options.scope ? [options.scope] : ["project", "user"];
   const listed: ListedAgent[] = [];
-
   for (const scope of scopes) {
     const paths = getRegistryPaths(scope, options);
-    if (!await Bun.file(paths.lockfilePath).exists()) continue;
-
-    const lockfile = await readLockfile(paths.lockfilePath);
-    for (const [name, entry] of Object.entries(lockfile.entries)) {
-      listed.push({
-        name,
-        scope,
-        lockfilePath: paths.lockfilePath,
-        ...entry,
-      });
+    for (const [name, entry] of Object.entries(readLockfile(paths).entries)) {
+      listed.push({ ...entry, name, scope, lockfilePath: paths.lockfilePath, installedPath: registryTarget(paths, entry.installedPath) });
     }
   }
-
-  listed.sort((a, b) => {
-    if (a.installedAt === b.installedAt) return a.name.localeCompare(b.name);
-    return b.installedAt.localeCompare(a.installedAt);
-  });
-
-  return listed;
+  return listed.sort((a, b) => b.installedAt.localeCompare(a.installedAt) || a.name.localeCompare(b.name));
 }

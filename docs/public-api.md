@@ -30,7 +30,7 @@ Supported subcommands:
 | `md evolve show\|review\|apply\|reject\|retry\|rollback <run-id>` | Inspect the receipt/diff, make an explicit decision, retry, or perform hash-guarded apply/rollback. |
 | `md evolve history [flow.md]` | List durable evolution runs. |
 | `md evolve prune [--days <n>] [--yes]` | Delete eligible old private proposal/job data while retaining applied lineage. |
-| `md install <url\|gh:org/repo/path@ref>` | Install a flow from a URL or GitHub shorthand into the registry (project scope by default; `--global` for user scope). Writes `.mdflow/mdflow.lock.json`. |
+| `md install <url\|gh:org/repo/path@ref>` | Install a flow from a URL or GitHub shorthand into the registry (`--project` or `--global`; without either, an existing `.mdflow` in the working directory selects project scope, otherwise user scope). Writes a registry-relative path and content pin in `.mdflow/mdflow.lock.json`. Registry execution refuses missing or mismatched pins. |
 | `md remove <name>` | Remove an installed registry flow. |
 | `md list [--project\|--global]` | List installed registry flows. |
 | `md roster --json` | Machine-readable enumeration of project (`<projectRoot>/flows/`), global (`~/.mdflow/`), and registry (`.mdflow/registry/`) flows as a single Flow UX Protocol v1 JSON object. Documents (no frontmatter, no engine marker) are excluded. Always exits 0; soft failures land in `warnings`. |
@@ -240,10 +240,9 @@ excluded.
 Free (no engine call). Prints one JSON object: `protocolVersion`, `flowId`,
 `path`, `engine`, `command` (executable), `args` (full argv including the
 prompt positional; `promptIncluded` says whether the prompt rides in argv),
-`cwd` (effective run cwd with `_cwd`/`--_cwd` applied), `prompt` (fully
-resolved, untruncated), `promptTokensEstimate` (~chars/4), `inputs` (same
+`cwd` (effective run cwd with `_cwd`/`--_cwd` applied), `prompt` (untruncated preview; authored commands are displayed, not run, and nested context is not fetched for a direct remote source), `promptTokensEstimate` (~chars/4), `inputs` (same
 shape as roster), `warnings`, and `configFingerprint` (`sha256:<hex>` over the
-resolved config + flow content + mdflow version — cache explanations keyed on
+resolved config, inspected source digest, prompt, args, cwd, inspectable hook bytes and mdflow version — cache explanations keyed on
 `(path, mtimeMs, cwd, mdflowVersion, configFingerprint)`). `--_<name>` value
 overrides are applied to the prompt exactly as a run would.
 
@@ -259,7 +258,7 @@ text. Common envelope on every event:
 ```
 
 `seq` starts at 0 and increments by 1 with no gaps. Order contract:
-`protocol` first, `run.started` second, exactly one terminal event
+`protocol` first, `run.started` when dispatch starts (absent for preflight refusal), exactly one terminal event
 (`run.completed` \| `run.error` \| `run.cancelled`) last.
 
 | Event | Payload |
@@ -273,6 +272,8 @@ text. Common envelope on every event:
 | `run.error` | `{exitCode\|null, message, durationMs}` (nonzero exit, spawn failure, or pre-run error) |
 | `run.cancelled` | `{signal, durationMs}` |
 
+`--events` is an execution mode for flow files. Combining it with dry-run, context-only, edit, or `--json` yields a protocol refusal, not an engine launch. `_max_prompt_tokens` checks each final engine prompt (including workflow steps) and `_max_runtime_ms` bounds each engine process. A timed-out invocation is not a success (exit 124). An event run with `_output` reports success only after extraction, validation and requested sinks succeed. `_output` is a single-flow operation, not a workflow aggregation.
+
 `--events` implies non-interactive: `_inputs` values must arrive as
 `--_<name> <value>` overrides, and a TTY-only interactive flow emits
 `run.error` with message `interactive flow requires a terminal`. On SIGTERM,
@@ -281,7 +282,7 @@ exits cleanly.
 
 ## URL import policy API
 
-URL imports (`@https://...`) support only `http://` and `https://`.
+URL imports (`@https://...`) support only `http://` and `https://`, without embedded credentials. Rules apply **before each request**, including redirects. Full URL prefix rules match the exact origin and preserve path case. Fetches are limited to five redirects, 10 MiB per resource, and a deadline through the last body chunk. Host rules are not IP-level network isolation.
 
 Policy environment variables:
 

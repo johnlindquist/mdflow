@@ -765,6 +765,17 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
     return { exitCode: 127, stdout: "", stderr: "", output: "", process: null as unknown as ReturnType<typeof Bun.spawn> };
   }
 
+  if (process.env.MDFLOW_ACTIVE_FLOW && !ctx.allowNested) {
+    throw new CommandError(
+      "Nested flow run rejected (NESTED_FLOW): this engine run was started " +
+        "from inside another mdflow-launched session. Recursive flow " +
+        "handoff spends another engine invocation without a new consent " +
+        "boundary. If this nesting is deliberate, re-run with " +
+        "--_allow-nested.",
+      { errorCode: "NESTED_FLOW", context: { command: normalizedCommand } },
+    );
+  }
+
   // Engine adapters may contribute env vars (e.g. pi's bridged auth dir).
   // Precedence: adapter vars < process.env < explicit ctx.env — an adapter
   // never overrides something the user already set.
@@ -828,16 +839,6 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
   // flow frontmatter _env can never grant it. Ordinary shell pipelines
   // (`md plan.md | md build.md`) are unaffected: siblings spawned by the
   // user's shell never inherit an engine child's marker.
-  if (process.env.MDFLOW_ACTIVE_FLOW && !ctx.allowNested) {
-    throw new CommandError(
-      "Nested flow run rejected (NESTED_FLOW): this engine run was started " +
-        "from inside another mdflow-launched session. Recursive flow " +
-        "handoff spends another engine invocation without a new consent " +
-        "boundary. If this nesting is deliberate, re-run with " +
-        "--_allow-nested.",
-      { errorCode: "NESTED_FLOW", context: { command: normalizedCommand } },
-    );
-  }
   runEnv.MDFLOW_ACTIVE_FLOW = "1";
 
   // Determine stdout/stderr pipe config based on mode
@@ -886,7 +887,6 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
   }
 
   let primaryFailure: unknown;
-  try {
   const killTree = (signal: NodeJS.Signals) => {
     if (process.platform !== "win32") {
       try { process.kill(-proc.pid, signal); return; } catch {}
@@ -896,7 +896,8 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
 
   let timedOut = false;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = ctx.timeoutMs && ctx.timeoutMs > 0
+  const timeoutMs = ctx.timeoutMs ?? getProcessManager().timeouts.agentTimeout;
+  const timeout = timeoutMs > 0
     ? setTimeout(() => {
         timedOut = true;
         try {
@@ -905,9 +906,10 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
             killTree("SIGKILL");
           }, 2_000);
         } catch {}
-      }, ctx.timeoutMs)
+      }, timeoutMs)
     : undefined;
 
+  try {
   // Register with ProcessManager for centralized lifecycle management
   const pm = getProcessManager();
   pm.register(proc, formatSpawnPreview(normalizedCommand, finalArgs));
@@ -1042,15 +1044,12 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
   }
   // mode === "none" without spinner: stdout/stderr are inherited, nothing to capture
 
-  const exitCode = await proc.exited;
-  if (timeout) clearTimeout(timeout);
-  if (killTimer) clearTimeout(killTimer);
+  const status = await proc.exited;
+  const exitCode = timedOut ? 124 : status;
+  if (timedOut) killTree("SIGKILL");
 
   // Ensure spinner is stopped (in case process exited without output)
   stopSpinner();
-
-  // Clear reference after process exits
-  currentChildProcess = null;
 
   return {
     exitCode,
@@ -1062,8 +1061,13 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
   };
   } catch (err) {
     primaryFailure = err;
+    killTree("SIGKILL");
+    await proc.exited;
     throw err;
   } finally {
+    clearTimeout(timeout);
+    clearTimeout(killTimer);
+    if (currentChildProcess === proc) currentChildProcess = null;
     try {
       await preparedIsolation?.cleanup?.();
     } catch (cleanupError) {

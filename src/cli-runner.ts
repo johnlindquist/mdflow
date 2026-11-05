@@ -26,7 +26,6 @@ import {
 	getMissingRequiredInputs,
 } from "./form-inputs";
 import {
-	substituteTemplateVars,
 	extractTemplateVars,
 	extractRequiredTemplateVars,
 	extractForeignTemplateGlobals,
@@ -40,19 +39,12 @@ import {
 	extractEnvVars,
 	killCurrentChildProcess,
 	hasInteractiveMarker,
-	filenameNamesEngine,
 	levenshteinDistance,
 } from "./command";
 import type { ParsedWorkflow, WorkflowResult } from "./workflow";
 import { getProcessManager } from "./process-manager";
-import {
-	expandImports,
-	hasImports,
-	expandContentImports,
-	expandCommandImports,
-	hasContentImports,
-	hasCommandImports,
-} from "./imports";
+import { isDocument } from "./flow-kind";
+import { renderFlowPrompt } from "./prompt-render";
 import {
 	analyzeContext,
 	printDashboard,
@@ -81,9 +73,7 @@ import {
 import {
 	initLogger,
 	getParseLogger,
-	getTemplateLogger,
 	getCommandLogger,
-	getImportLogger,
 	getCurrentLogPath,
 	getLogger,
 	resetLogger,
@@ -115,7 +105,6 @@ import {
 import type { RunRecord } from "./telemetry";
 import {
 	compatNotice,
-	isCompatOnlyFrontmatter,
 	stampCompatFile,
 } from "./compat";
 import type { SystemEnvironment } from "./system-environment";
@@ -134,8 +123,14 @@ function isRemoteUrl(path: string): boolean {
  * Realpath-aware (src/project-root.ts) — a symlink outside the registry
  * cannot launder a registry flow into local provenance.
  */
-function isRegistryFlowPath(path: string): boolean {
-	return isRegistryPath(path);
+async function readFlowSource(path: string, fs: SystemEnvironment["fs"]): Promise<string> {
+	if (!isRegistryPath(path)) return fs.readText(path);
+	const { readVerifiedRegistryFlow } = await import("./registry");
+	return readVerifiedRegistryFlow(path);
+}
+
+function workflowIdentity(path: string, isolated: boolean, body: string, { _compat, ...config }: AgentFrontmatter): string {
+	return JSON.stringify([path, isolated, body, config]);
 }
 
 async function cleanupRemoteFile(localFilePath: string): Promise<void> {
@@ -194,33 +189,6 @@ async function getSaveVariableValuesFn() {
 		_saveVariableValues = mod.saveVariableValues;
 	}
 	return _saveVariableValues;
-}
-
-type StructuredOutputFormat = NonNullable<StructuredOutputConfig["format"]>;
-
-interface OutputModule {
-	extractStructured: (
-		stdout: string,
-		format?: StructuredOutputFormat,
-	) => unknown;
-	validateOutput?: (
-		schemaRef: string,
-		value: unknown,
-		options?: { baseDir?: string },
-	) => Promise<unknown>;
-	validate?: (
-		schemaRef: string,
-		value: unknown,
-		options?: { baseDir?: string },
-	) => Promise<unknown>;
-	sinkOutput?: (...args: unknown[]) => Promise<unknown> | unknown;
-	sinkSave?: (
-		targetPath: string,
-		value: unknown,
-		format: StructuredOutputFormat,
-		options?: { cwd?: string },
-	) => Promise<string>;
-	sinkApplyPatch?: (patchText: string, options?: { cwd?: string }) => void;
 }
 
 /** Result from CliRunner.run() */
@@ -806,32 +774,35 @@ export class CliRunner {
 		};
 	}
 
+	/** Every CLI projection crosses this boundary with its final (possibly edited,
+	 * retried, or workflow-generated) prompt. Rendering flags cannot lift a limit. */
 	private async executeCommand(
 		ctx: Parameters<typeof runCommand>[0],
-		jsonMode: boolean,
+		frontmatter: AgentFrontmatter,
+		parsed: { jsonMode: boolean; allowNested: boolean },
 	): Promise<Awaited<ReturnType<typeof runCommand>>> {
-		if (!jsonMode) return this.runCommandFn(ctx);
-
-		const spawnArgs = this.buildSpawnArgs(
-			ctx.args,
-			ctx.positionals,
-			ctx.positionalMappings,
-		);
-		this.recordJsonCommand(ctx.command, spawnArgs);
-
-		const originalLog = console.log;
-		const originalError = console.error;
-		console.log = () => {};
-		console.error = () => {};
-
-		try {
-			const result = await this.runCommandFn(ctx);
-			this.recordJsonResult(result.stdout, result.stderr);
-			return result;
-		} finally {
-			console.log = originalLog;
-			console.error = originalError;
+		getProcessManager().signal.throwIfAborted();
+		const limit = frontmatter._max_prompt_tokens;
+		if (limit !== undefined) {
+			if (!Number.isSafeInteger(limit) || limit <= 0) throw new ConfigurationError("_max_prompt_tokens must be a positive integer", 1);
+			const tokens = await countTokensAsync(ctx.positionals.join("\n"));
+			if (tokens > limit) throw new MarkdownAgentError(
+				`Prompt is ~${tokens.toLocaleString()} tokens, over the _max_prompt_tokens limit of ${limit.toLocaleString()}. Narrow the imports or raise the limit.`,
+				{ errorCode: "PROMPT_TOKEN_LIMIT", exitCode: 1 },
+			);
 		}
+		getProcessManager().signal.throwIfAborted();
+		ctx = { ...ctx, allowNested: parsed.allowNested, timeoutMs: frontmatter._max_runtime_ms };
+		if (!parsed.jsonMode || ctx.captureOutput === "stream") return this.runCommandFn(ctx);
+		this.recordJsonCommand(ctx.command, this.buildSpawnArgs(ctx.args, ctx.positionals, ctx.positionalMappings));
+		const result = await this.runCommandFn({ ...ctx, silentCapture: true });
+		this.recordJsonResult(result.stdout, result.stderr);
+		return result;
+	}
+
+	private async showContextOnly(path: string, body: string, dir: string): Promise<void> {
+		if (shouldShowDashboard(body)) printDashboard(await analyzeContext(path, body, dir));
+		else this.writeStderr("No imports found in this agent file.");
 	}
 
 	private calculateOutputBytes(stdout: string, stderr: string): number {
@@ -908,7 +879,7 @@ export class CliRunner {
 		localFilePath: string,
 		isRemote: boolean,
 	): void {
-		if (isRemote || process.env.MDFLOW_EVAL_RUN === "1") return;
+		if (isRemote || isRegistryPath(localFilePath) || process.env.MDFLOW_EVAL_RUN === "1") return;
 		try {
 			if (stampCompatFile(resolve(localFilePath))) {
 				getCommandLogger().debug(
@@ -940,7 +911,7 @@ export class CliRunner {
 		let logPath: string | null = null;
 		// Structured lifecycle commands own their JSON schema. Letting the generic
 		// flow wrapper capture them would double-encode their payload in `stdout`.
-		if (!jsonMode || nativeJsonSubcommand) {
+		if (!jsonMode || nativeJsonSubcommand || argv.includes("--events")) {
 			try {
 				return await this.runInternal(argv, (lp) => {
 					logPath = lp;
@@ -1416,6 +1387,7 @@ export class CliRunner {
 
 		// Parse md-owned flags before creating a file logger so previews remain
 		// side-effect free and never load Pino.
+		if (passthroughArgs.includes("--events")) throw new ConfigurationError("--events requires a flow file, not an ad-hoc prompt", 1);
 		const parsed = this.parseFlags(passthroughArgs);
 		resetLogger();
 		let logPath: string | null = null;
@@ -1433,6 +1405,10 @@ export class CliRunner {
 			{ frontmatter: baseFrontmatter, bodyLength: rawBody.length, adhoc: true },
 			"Virtual frontmatter parsed",
 		);
+		if (parsed.contextOnly) {
+			await this.showContextOnly(virtualFilename, rawBody, this.cwd);
+			return { exitCode: 0 };
+		}
 
 		const {
 			command,
@@ -1465,21 +1441,6 @@ export class CliRunner {
 				false,
 				virtualFilename,
 			);
-		}
-
-		// Edit before execute
-		// Hard prompt budget: _max_prompt_tokens blocks execution BEFORE any
-		// paid flow invocation starts when the fully resolved prompt exceeds the limit.
-		const maxPromptTokens = frontmatter._max_prompt_tokens;
-		if (typeof maxPromptTokens === "number" && maxPromptTokens > 0) {
-			const promptTokens = await countTokensAsync(finalBody);
-			if (promptTokens > maxPromptTokens) {
-				throw new MarkdownAgentError(
-					`Prompt is ~${promptTokens.toLocaleString()} tokens, over the _max_prompt_tokens limit of ${maxPromptTokens.toLocaleString()}. ` +
-						`Narrow the imports, raise the limit, or inspect with --_context.`,
-					{ errorCode: "PROMPT_TOKEN_LIMIT", exitCode: 1 },
-				);
-			}
 		}
 
 		let promptToRun = finalBody;
@@ -1558,7 +1519,7 @@ export class CliRunner {
 				flowPath,
 				cwd: commandCwd,
 			},
-			parsed.jsonMode,
+			frontmatter, parsed,
 		);
 		const commandDurationMs = Date.now() - commandStartedAt;
 
@@ -1687,9 +1648,9 @@ export class CliRunner {
 		};
 
 		const fileDir = dirname(resolve(localFilePath));
-		await loadEnvFiles(fileDir);
+		if (!isRemote && !isRegistryPath(localFilePath)) await loadEnvFiles(fileDir);
 
-		const content = await this.env.fs.readText(localFilePath);
+		const content = await readFlowSource(localFilePath, this.env.fs);
 		const { frontmatter: baseFrontmatter, body: rawBody } =
 			parseFrontmatter(content);
 		getParseLogger().debug(
@@ -1720,12 +1681,7 @@ export class CliRunner {
 
 		// Context-only mode: show dashboard and exit without executing
 		if (parsed.contextOnly) {
-			if (shouldShowDashboard(rawBody)) {
-				const analysis = await analyzeContext(localFilePath, rawBody, fileDir);
-				printDashboard(analysis);
-			} else {
-				this.writeStderr("No imports found in this agent file.");
-			}
+			await this.showContextOnly(localFilePath, rawBody, fileDir);
 			if (isRemote) await cleanupRemoteFile(localFilePath);
 			throw new EarlyExitRequest();
 		}
@@ -1748,7 +1704,7 @@ export class CliRunner {
 			() => this.readStdinOnce(),
 			parsed,
 			parsed.dryRun ? undefined : startLogger,
-			isRemote || isRegistryFlowPath(localFilePath),
+			isRemote || isRegistryPath(localFilePath),
 		);
 
 		// Show context dashboard before execution (unless --_quiet)
@@ -1818,6 +1774,7 @@ export class CliRunner {
 				captureOutput: captureMode,
 				resume: parsed.resume,
 				cacheDir: join(cacheBaseDir, ".mdflow", ".cache"),
+				flowIdentity: workflowIdentity(flowPath, isolated, rawBody, frontmatter),
 				runCommandFn: (ctx) =>
 					this.executeCommand(
 						{
@@ -1826,7 +1783,7 @@ export class CliRunner {
 							flowPath,
 							cwd: ctx.cwd ?? commandCwd,
 						},
-						parsed.jsonMode,
+						frontmatter, parsed,
 					),
 			});
 			const workflowDurationMs = Date.now() - workflowStartedAt;
@@ -2006,21 +1963,6 @@ export class CliRunner {
 			);
 		}
 
-		// Edit before execute
-		// Hard prompt budget: _max_prompt_tokens blocks execution BEFORE any
-		// paid flow invocation starts when the fully resolved prompt exceeds the limit.
-		const maxPromptTokens = frontmatter._max_prompt_tokens;
-		if (typeof maxPromptTokens === "number" && maxPromptTokens > 0) {
-			const promptTokens = await countTokensAsync(finalBody);
-			if (promptTokens > maxPromptTokens) {
-				throw new MarkdownAgentError(
-					`Prompt is ~${promptTokens.toLocaleString()} tokens, over the _max_prompt_tokens limit of ${maxPromptTokens.toLocaleString()}. ` +
-						`Narrow the imports, raise the limit, or inspect with --_context.`,
-					{ errorCode: "PROMPT_TOKEN_LIMIT", exitCode: 1 },
-				);
-			}
-		}
-
 		let promptToRun = finalBody;
 		if (parsed.editFlag && !parsed.jsonMode) {
 			const { editPrompt } = await import("./edit-prompt");
@@ -2111,7 +2053,7 @@ export class CliRunner {
 					flowPath,
 					cwd: commandCwd,
 				},
-				parsed.jsonMode,
+				frontmatter, parsed,
 			);
 
 			getCommandLogger().info(
@@ -2349,6 +2291,11 @@ export class CliRunner {
 
 		const emitter = createRunEventEmitter();
 		const startedAt = Date.now();
+		const pm = getProcessManager();
+		const cancelled = (): CliRunResult => {
+			emitter.emit("run.cancelled", { signal: String(pm.signal.reason), durationMs: Date.now() - startedAt });
+			return { exitCode: 0 };
+		};
 
 		// stdout purity: anything that would render for a human goes to stderr.
 		const originalLog = console.log;
@@ -2371,16 +2318,20 @@ export class CliRunner {
 		emitter.emit("protocol", { mdflowVersion: mdflowVersion() });
 
 		try {
+			const parsed = this.parseFlags(passthroughArgs);
+			if (parsed.dryRun || parsed.contextOnly || parsed.editFlag || parsed.jsonMode) {
+				return fail("--events describes an execution; use dry-run, context, edit or --json separately", 1);
+			}
+			parsed.jsonMode = true; // never prompt in an event stream
 			const localFilePath = await this.resolveFilePath(filePath);
 			if (!(await this.env.fs.exists(localFilePath))) {
 				return fail(this.fileNotFoundMessage(filePath, localFilePath));
 			}
 
-			const pm = getProcessManager();
 			pm.initialize();
 
 			const fileDir = dirname(resolve(localFilePath));
-			await loadEnvFiles(fileDir);
+			if (!isRegistryPath(localFilePath)) await loadEnvFiles(fileDir);
 
 			const logger = initLogger(localFilePath);
 			const logPath = getCurrentLogPath();
@@ -2390,14 +2341,9 @@ export class CliRunner {
 				"Event-stream session started",
 			);
 
-			const content = await this.env.fs.readText(localFilePath);
+			const content = await readFlowSource(localFilePath, this.env.fs);
 			const { frontmatter: baseFrontmatter, body: rawBody } =
 				parseFrontmatter(content);
-
-			const parsed = this.parseFlags(passthroughArgs);
-			// Event streams never prompt, never render, never show menus — reuse
-			// the non-interactive guarantees of --json mode inside processAgent.
-			parsed.jsonMode = true;
 
 			// --events implies non-interactive. A flow that requires a terminal
 			// cannot be hosted here; the caller should open a real terminal.
@@ -2419,15 +2365,7 @@ export class CliRunner {
 					configEngine: fullConfig.engine,
 				},
 			);
-			const engineIsImplicit =
-				!parsed.commandFromCli &&
-				(resolvedEngine.source === "env" ||
-					resolvedEngine.source === "config" ||
-					resolvedEngine.source === "default");
-			if (
-				engineIsImplicit &&
-				isCompatOnlyFrontmatter(baseFrontmatter as Record<string, unknown>)
-			) {
+			if (isDocument(localFilePath, baseFrontmatter, parsed.commandFromCli ? "cli" : resolvedEngine.source)) {
 				return fail(
 					`not a flow: ${localFilePath} is a document (no frontmatter or engine marker)`,
 				);
@@ -2450,7 +2388,7 @@ export class CliRunner {
 				() => this.readStdinOnce(),
 				parsed,
 				undefined,
-				isRegistryFlowPath(localFilePath),
+				isRegistryPath(localFilePath),
 			);
 
 			const flowId = flowIdForPath(resolve(localFilePath), { cwd: this.cwd });
@@ -2467,32 +2405,6 @@ export class CliRunner {
 					: [String(frontmatter._subcommand)];
 				finalRunArgs = [...subs, ...args];
 			}
-
-			// Cancellation: replace the process-wide kill-and-exit handlers so a
-			// SIGTERM forwards to the engine child, emits `run.cancelled`, and
-			// exits cleanly with the terminal event already flushed (the emitter
-			// writes synchronously to fd 1).
-			const onCancelSignal = (signal: NodeJS.Signals): void => {
-				try {
-					pm.killAll();
-				} catch {
-					// Best-effort: the child may already be gone.
-				}
-				emitter.emit("run.cancelled", {
-					signal,
-					durationMs: Date.now() - startedAt,
-				});
-				try {
-					pm.restoreTerminal();
-				} catch {
-					// Best-effort cleanup.
-				}
-				process.exit(0);
-			};
-			process.removeAllListeners("SIGTERM");
-			process.removeAllListeners("SIGINT");
-			process.once("SIGTERM", () => onCancelSignal("SIGTERM"));
-			process.once("SIGINT", () => onCancelSignal("SIGINT"));
 
 			// Chunk delta text: a single writeSync of a line larger than the pipe
 			// buffer (~64KiB) can partially write and corrupt the NDJSON stream
@@ -2538,6 +2450,7 @@ export class CliRunner {
 					captureOutput: "stream",
 					resume: parsed.resume,
 					cacheDir: join(effectiveCwd, ".mdflow", ".cache"),
+					flowIdentity: workflowIdentity(flowPath, isolated, rawBody, frontmatter),
 					onStepStart: (step) => {
 						emitter.emit("step.started", {
 							stepId: step.id,
@@ -2552,16 +2465,17 @@ export class CliRunner {
 						});
 					},
 					runCommandFn: (ctx) =>
-						this.runCommandFn({
+						this.executeCommand({
 							...ctx,
 							captureOutput: "stream",
 							onOutput: emitDelta,
 							isolated,
 							flowPath,
 							cwd: ctx.cwd ?? commandCwd,
-						}),
+						}, frontmatter, parsed),
 				});
 
+				if (pm.isAborted) return cancelled();
 				const durationMs = Date.now() - startedAt;
 				if (workflowResult.exitCode === 0) {
 					emitter.emit("run.completed", { exitCode: 0, durationMs });
@@ -2580,7 +2494,7 @@ export class CliRunner {
 			}
 
 			const positionals = promptPositionals(finalBody, false);
-			const runResult = await this.runCommandFn({
+			const runResult = await this.executeCommand({
 				command,
 				args: finalRunArgs,
 				positionals,
@@ -2607,8 +2521,13 @@ export class CliRunner {
 				isolated,
 				flowPath,
 				cwd: commandCwd,
-			});
+			}, frontmatter, parsed);
 
+			if (pm.isAborted) return cancelled();
+			const output = this.getStructuredOutputConfig(frontmatter);
+			if (runResult.exitCode === 0 && output) {
+				await this.processStructuredOutput({ stdout: runResult.stdout, output, baseDir: fileDir, sinkCwd: effectiveCwd, source: localFilePath });
+			}
 			const durationMs = Date.now() - startedAt;
 			if (runResult.exitCode === 0) {
 				emitter.emit("run.completed", { exitCode: 0, durationMs });
@@ -2625,6 +2544,7 @@ export class CliRunner {
 			);
 			return { exitCode: runResult.exitCode, logPath };
 		} catch (err) {
+			if (pm.isAborted) return cancelled();
 			if (err instanceof EarlyExitRequest) {
 				return fail("run ended before the engine started", null);
 			}
@@ -2657,156 +2577,14 @@ export class CliRunner {
 		return output;
 	}
 
-	private resolveStructuredOutputFormat(
-		output: StructuredOutputConfig,
-	): StructuredOutputFormat {
-		return output.format ?? (output.apply ? "patch" : "text");
-	}
-
-	private unwrapValidationResult(result: unknown): unknown {
-		if (!result || typeof result !== "object" || !("success" in result)) {
-			return result;
-		}
-
-		const validationResult = result as {
-			success?: unknown;
-			data?: unknown;
-			error?: unknown;
-		};
-
-		if (validationResult.success === true) {
-			return validationResult.data;
-		}
-
-		if (validationResult.success === false) {
-			const message =
-				typeof validationResult.error === "string"
-					? validationResult.error
-					: "Schema validation failed.";
-			throw new Error(message);
-		}
-
-		return result;
-	}
-
-	private serializeStructuredForSink(
-		value: unknown,
-		format: StructuredOutputFormat,
-	): string {
-		if (typeof value === "string") {
-			return value;
-		}
-
-		if (format === "json") {
-			return `${JSON.stringify(value, null, 2)}\n`;
-		}
-
-		return JSON.stringify(value);
-	}
-
 	private async processStructuredOutput(params: {
-		stdout: string;
-		output: StructuredOutputConfig;
-		baseDir: string;
-		sinkCwd: string;
-		source: string;
+		stdout: string; output: StructuredOutputConfig; baseDir: string; sinkCwd: string; source: string;
 	}): Promise<void> {
-		const { stdout, output, baseDir, sinkCwd, source } = params;
-		const format = this.resolveStructuredOutputFormat(output);
-
 		try {
-			getCommandLogger().info(
-				{
-					source,
-					format,
-					hasSchema: Boolean(output.schema),
-					save: output.save ?? null,
-					apply: Boolean(output.apply),
-					sinkCwd,
-				},
-				"Processing structured output",
-			);
-
-			const outputModule = (await import("./output")) as OutputModule;
-			let structured = outputModule.extractStructured(stdout, format);
-
-			if (output.schema) {
-				if (outputModule.validateOutput) {
-					const validationResult = await outputModule.validateOutput(
-						output.schema,
-						structured,
-						{ baseDir },
-					);
-					structured = this.unwrapValidationResult(validationResult);
-				} else if (outputModule.validate) {
-					structured = await outputModule.validate(output.schema, structured, {
-						baseDir,
-					});
-				} else {
-					throw new Error("validateOutput() is unavailable in src/output.ts");
-				}
-			}
-
-			if (output.save || output.apply) {
-				if (outputModule.sinkOutput) {
-					if (outputModule.sinkOutput.length >= 3) {
-						await outputModule.sinkOutput(structured, output, {
-							cwd: sinkCwd,
-							format,
-						});
-					} else {
-						const sinkContent = this.serializeStructuredForSink(
-							structured,
-							format,
-						);
-						await outputModule.sinkOutput(
-							{ save: output.save, apply: output.apply, cwd: sinkCwd },
-							sinkContent,
-						);
-					}
-				} else {
-					if (output.save) {
-						if (!outputModule.sinkSave) {
-							throw new Error(
-								"sinkOutput() and sinkSave() are unavailable in src/output.ts",
-							);
-						}
-						await outputModule.sinkSave(output.save, structured, format, {
-							cwd: sinkCwd,
-						});
-					}
-
-					if (output.apply) {
-						if (format !== "patch") {
-							throw new Error("Output apply=true requires format=patch.");
-						}
-						if (typeof structured !== "string") {
-							throw new Error("Patch output must be string data.");
-						}
-						if (!outputModule.sinkApplyPatch) {
-							throw new Error(
-								"sinkOutput() and sinkApplyPatch() are unavailable in src/output.ts",
-							);
-						}
-						outputModule.sinkApplyPatch(structured, { cwd: sinkCwd });
-					}
-				}
-			}
-
-			getCommandLogger().info(
-				{ source, format },
-				"Structured output processed",
-			);
-		} catch (err) {
-			const details = err instanceof Error ? err.message : String(err);
-			getCommandLogger().error(
-				{ source, format, error: details, outputConfig: output },
-				"Structured output processing failed",
-			);
-			throw new ConfigurationError(
-				`Structured output processing failed: ${details}`,
-				1,
-			);
+			const { processStructuredOutput } = await import("./output");
+			await processStructuredOutput({ ...params, cwd: params.sinkCwd, suppressDefaultStdoutSink: true });
+		} catch (cause) {
+			throw new ConfigurationError(`Structured output processing failed: ${cause instanceof Error ? cause.message : String(cause)}`, 1);
 		}
 	}
 
@@ -3086,16 +2864,7 @@ export class CliRunner {
 		// Compat-only keys (_mdflow_version/_compat) are invisible metadata and
 		// don't count: automatic version stamping must never flip a document
 		// into an executable flow.
-		if (
-			engineIsImplicit &&
-			!hasInteractiveMarker(localFilePath) &&
-			// A filename engine (task.echo.md) is an execution intent, so the
-			// file is a flow even when env/config overrides which engine runs.
-			// Without this, `MDFLOW_ENGINE=claude md task.echo.md` PRINTED the
-			// file instead of running it on claude (chaos round 6).
-			!filenameNamesEngine(localFilePath) &&
-			isCompatOnlyFrontmatter(baseFrontmatter as Record<string, unknown>)
-		) {
+		if (isDocument(localFilePath, baseFrontmatter, engineSource)) {
 			// Print the document WITHOUT its (empty or compat-only) frontmatter
 			// fences — they are flow plumbing, not document content.
 			const documentText = await this.env.fs.readText(localFilePath);
@@ -3187,6 +2956,8 @@ export class CliRunner {
 		const commandCwd = resolve(
 			cwdFromCli ?? (frontmatter._cwd as string | undefined) ?? this.cwd,
 		);
+		if (frontmatter._output && frontmatter._steps !== undefined) throw new ConfigurationError("_output is not supported on a workflow; declare a single output-producing flow instead", 1);
+		if (isRemoteFlow && frontmatter._output?.schema) throw new SecurityError("Remote/registry flows cannot load executable _output.schema sidecars. Review a local copy instead.", 1);
 		let isolationOwnedHookArgs: string[] = [];
 
 		// Some engines require an environment boundary in addition to CLI flags.
@@ -3220,6 +2991,7 @@ export class CliRunner {
 				command,
 				frontmatter,
 				systemPromptSpec,
+				parsed.dryRun ? () => "<generated system prompt file>" : undefined,
 			);
 			frontmatter = applied.frontmatter;
 			getProcessManager().onCleanup(applied.cleanup);
@@ -3306,6 +3078,7 @@ export class CliRunner {
 			}
 		}
 
+		const importEnv = { ...this.processEnv };
 		const envVars = extractEnvVars(frontmatter);
 		if (envVars)
 			Object.entries(envVars).forEach(([k, v]) => {
@@ -3320,7 +3093,7 @@ export class CliRunner {
 				) {
 					return;
 				}
-				this.processEnv[k] = v;
+				importEnv[k] = v;
 			});
 
 		// Template vars - all use _prefix (e.g., _name in frontmatter → {{ _name }} in body)
@@ -3458,42 +3231,7 @@ export class CliRunner {
 		// Update remaining to only contain flag args (positionals consumed for templates)
 		remaining = flagArgs;
 
-		// 3-Phase Import Pipeline:
-		// Phase 1: Expand content imports (file, glob, url, symbol) - leave commands untouched
-		// Phase 2: LiquidJS template processing ({% capture %}, {{ var }}, etc.)
-		// Phase 3: Expand command imports with resolved template vars
-
 		const fileDir = dirname(resolve(localFilePath));
-		// Phase 1: Expand content imports only
-		let phase1Body = rawBody;
-		if (hasContentImports(rawBody)) {
-			try {
-				getImportLogger().debug(
-					{ fileDir, commandCwd },
-					"Phase 1: Expanding content imports",
-				);
-				phase1Body = await expandContentImports(
-					rawBody,
-					fileDir,
-					new Set(),
-					false,
-					{
-						invocationCwd: commandCwd,
-						dryRun: parsed.dryRun,
-					},
-				);
-				getImportLogger().debug(
-					{ originalLength: rawBody.length, expandedLength: phase1Body.length },
-					"Phase 1 complete",
-				);
-			} catch (err) {
-				getImportLogger().error(
-					{ error: (err as Error).message },
-					"Phase 1 import expansion failed",
-				);
-				throw new ImportError(`Import error: ${(err as Error).message}`);
-			}
-		}
 
 		// Handle form inputs if using the new object format
 		if (isFormInputs(frontmatter._inputs)) {
@@ -3555,7 +3293,7 @@ export class CliRunner {
 		// have a value ({{ _v | default: … }} occurrences are optional).
 		const referencedVars = [
 			...new Set([
-				...extractTemplateVars(phase1Body),
+				...extractTemplateVars(rawBody),
 				...extractTemplateVars(JSON.stringify(frontmatter)),
 			]),
 		];
@@ -3573,7 +3311,7 @@ export class CliRunner {
 			: "";
 		const requiredVars = [
 			...new Set([
-				...extractRequiredTemplateVars(phase1Body),
+				...extractRequiredTemplateVars(rawBody),
 				...extractRequiredTemplateVars(stepTemplateText),
 			]),
 		];
@@ -3605,7 +3343,7 @@ export class CliRunner {
 			// And for the body itself: {{ place }} (no underscore) is not an
 			// mdflow variable — Liquid renders it as an EMPTY string with no
 			// error, so "Hello {{place}}!" silently became "Hello !".
-			for (const name of extractForeignTemplateGlobals(phase1Body)) {
+			for (const name of extractForeignTemplateGlobals(rawBody)) {
 				this.writeStderr(
 					`Warning [UNRESOLVED_TEMPLATE_VAR]: {{ ${name} }} has no value and renders ` +
 						`as empty — mdflow variables use an underscore prefix ` +
@@ -3683,44 +3421,13 @@ export class CliRunner {
 		(templateVars as Record<string, unknown>)["__resolvedFilePath__"] =
 			resolvedFilePath;
 
-		// Phase 2: LiquidJS template substitution
-		getTemplateLogger().debug(
-			{ vars: Object.keys(templateVars) },
-			"Phase 2: Substituting template variables",
-		);
-		const phase2Body = substituteTemplateVars(phase1Body, templateVars);
-		getTemplateLogger().debug(
-			{ bodyLength: phase2Body.length },
-			"Phase 2 complete",
-		);
-
-		// Phase 3: Expand command imports with resolved template vars
-		let phase3Body = phase2Body;
-		if (hasCommandImports(phase2Body)) {
-			try {
-				getImportLogger().debug(
-					{ commandCwd, templateVarCount: Object.keys(templateVars).length },
-					"Phase 3: Expanding command imports",
-				);
-				phase3Body = await expandCommandImports(phase2Body, fileDir, false, {
-					invocationCwd: commandCwd,
-					templateVars,
-					dryRun: parsed.dryRun,
-				});
-				getImportLogger().debug(
-					{ expandedLength: phase3Body.length },
-					"Phase 3 complete",
-				);
-			} catch (err) {
-				getImportLogger().error(
-					{ error: (err as Error).message },
-					"Phase 3 command expansion failed",
-				);
-				throw new ImportError(`Command error: ${(err as Error).message}`);
-			}
+		let finalBody: string;
+		try {
+			finalBody = await renderFlowPrompt(rawBody, fileDir, templateVars, { invocationCwd: commandCwd, env: importEnv, policyEnv: this.processEnv }, parsed.dryRun ? "dry-run" : "run");
+		} catch (cause) {
+			if (cause instanceof ImportError) throw new ImportError(`Import error: ${cause.message}`, { errorCode: cause.errorCode, cause });
+			throw cause;
 		}
-
-		const finalBody = phase3Body;
 
 		// An interactive engine UI cannot run without a terminal — spawning
 		// it headless produces a confusing engine-side failure (or a hung

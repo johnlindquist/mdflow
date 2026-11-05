@@ -6,7 +6,8 @@
  * Source changes only through an explicit, compare-and-swap apply command.
  */
 
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, rmSync, openSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { getAdapter as getEngineAdapter } from "./adapters";
 import { buildArgs, extractPositionalMappings, resolveEngine, runCommand } from "./command";
@@ -46,6 +47,7 @@ import {
   atomicWriteFile,
   appendEvolutionEvent,
   applyEvolutionRun,
+  dismissEvolutionRun,
   createEvolutionRun,
   createEvolutionJob,
   evidenceFilePath,
@@ -330,22 +332,20 @@ export function makeEngineDrafter(
     }
     if (options.model) frontmatter.model = options.model;
     const positionalMappings = extractPositionalMappings(frontmatter);
-    const args = buildArgs(frontmatter, new Set<string>(), engine);
+    let args = buildArgs(frontmatter, new Set<string>(), engine);
+    if (options.isolated !== false && adapter.finalizeIsolationArgs) args = adapter.finalizeIsolationArgs(args, { interactive: false });
     if (frontmatter._subcommand) {
       const subcommands = Array.isArray(frontmatter._subcommand) ? frontmatter._subcommand : [frontmatter._subcommand];
       args.unshift(...subcommands.map(String));
     }
+    // Project configuration selects the maintainer; its working directory
+    // must not hand a drafting agent the live source to edit. Not a sandbox.
+    const directory = mkdtempSync(join(tmpdir(), "mdflow-maintainer-"));
     const result = await runCommand({
-      command: engine,
-      args,
-      positionals: [buildMaintainerPrompt(input)],
-      positionalMappings,
-      captureOutput: true,
-      captureStderr: true,
-      silentCapture: true,
-      timeoutMs: options.timeoutMs ?? 180_000,
-      cwd: options.cwd,
-    });
+      command: engine, args, positionals: [buildMaintainerPrompt(input)], positionalMappings,
+      captureOutput: true, captureStderr: true, silentCapture: true,
+      timeoutMs: options.timeoutMs ?? 180_000, cwd: directory, isolated: options.isolated !== false,
+    }).finally(() => rmSync(directory, { recursive: true, force: true }));
     if (result.timedOut) throw new Error(`maintainer engine '${engine}' timed out`);
     if (result.exitCode !== 0) {
       throw new Error(`maintainer engine '${engine}' exited ${result.exitCode}: ${result.stderr.slice(0, 400)}`);
@@ -1198,8 +1198,7 @@ Example (agent-safe sequence):
     if (!target) return fail("USAGE", "Usage: md evolve reject <run-id> [--reason <message>]");
     const index = clean.indexOf("--reason");
     const reason = index === -1 ? "rejected by user" : clean.slice(index + 1).join(" ");
-    const run = updateEvolutionRun(target, { status: "dismissed", resultReason: reason });
-    for (const id of run.evidenceIds) updateEvidenceStatus(id, "open", target);
+    const run = dismissEvolutionRun(target, reason);
     emit({ run }, json);
     return 0;
   }

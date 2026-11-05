@@ -111,12 +111,12 @@ function matchesDomainRule(url: URL, rawRule: string): boolean {
   if (!rule) return false;
   if (rule === "*") return true;
 
-  const href = url.href.toLowerCase();
   const hostname = url.hostname.toLowerCase();
   const hostWithPort = url.port ? `${hostname}:${url.port}` : hostname;
 
   if (rule.startsWith("http://") || rule.startsWith("https://")) {
-    return href.startsWith(rule);
+    const prefix = new URL(rawRule.trim());
+    return url.origin === prefix.origin && url.href.startsWith(prefix.href);
   }
 
   if (rule.startsWith("*.")) {
@@ -140,6 +140,7 @@ function parseHttpUrl(rawUrl: string): URL {
       `Unsupported URL protocol "${parsed.protocol}". Only http:// and https:// are allowed.`
     );
   }
+  if (parsed.username || parsed.password) throw new Error("Credentials in URLs are not supported");
   return parsed;
 }
 

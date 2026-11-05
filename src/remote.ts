@@ -9,16 +9,14 @@
 import { mkdtemp, rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { resilientFetch } from "./fetch";
+import { fetchTextResource } from "./fetch";
 import {
   getCachedContent,
   setCachedContent,
-  touchCacheEntry,
-  getCachePaths,
   DEFAULT_CACHE_TTL_MS,
-  type CacheOptions,
 } from "./cache";
-import { readFile } from "fs/promises";
+
+const ownedDownloads = new Map<string, string>();
 
 export interface RemoteResult {
   success: boolean;
@@ -47,28 +45,21 @@ export function isRemoteUrl(path: string): boolean {
  * Convert GitHub URLs to raw content URLs
  */
 export function toRawUrl(url: string): string {
-  // GitHub Gist
-  if (url.includes("gist.github.com")) {
-    // https://gist.github.com/user/id -> https://gist.githubusercontent.com/user/id/raw
-    const match = url.match(/gist\.github\.com\/([^\/]+)\/([a-f0-9]+)/);
-    if (match) {
-      return `https://gist.githubusercontent.com/${match[1]}/${match[2]}/raw`;
-    }
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return url;
+  if (parsed.hostname === "gist.github.com") {
+    const match = parsed.pathname.match(/^\/([^/]+)\/([a-f0-9]+)\/?$/i);
+    if (match) return `https://gist.githubusercontent.com/${match[1]}/${match[2]}/raw`;
   }
-
-  // GitHub blob URL
-  // https://github.com/user/repo/blob/branch/path -> https://raw.githubusercontent.com/user/repo/branch/path
-  if (url.includes("github.com") && url.includes("/blob/")) {
-    return url
-      .replace("github.com", "raw.githubusercontent.com")
-      .replace("/blob/", "/");
+  if (parsed.hostname === "github.com" && /^\/[^/]+\/[^/]+\/blob\//.test(parsed.pathname)) {
+    parsed.hostname = "raw.githubusercontent.com";
+    parsed.pathname = parsed.pathname.replace(/^(\/[^/]+\/[^/]+)\/blob\//, "$1/");
+    return parsed.href;
   }
-
-  // GitLab raw
-  if (url.includes("gitlab.com") && url.includes("/-/blob/")) {
-    return url.replace("/-/blob/", "/-/raw/");
+  if (parsed.hostname === "gitlab.com" && parsed.pathname.includes("/-/blob/")) {
+    parsed.pathname = parsed.pathname.replace("/-/blob/", "/-/raw/");
+    return parsed.href;
   }
-
   return url;
 }
 
@@ -93,9 +84,8 @@ export async function fetchRemote(
   }
 
   const { noCache = false, cacheTtlMs = DEFAULT_CACHE_TTL_MS } = options;
-  const rawUrl = toRawUrl(url);
-
   try {
+    const rawUrl = toRawUrl(url);
     // Check cache first (unless noCache is set)
     const cacheResult = await getCachedContent(rawUrl, {
       noCache,
@@ -105,7 +95,7 @@ export async function fetchRemote(
     let content: string;
     let fromCache = false;
 
-    if (cacheResult.hit && cacheResult.content) {
+    if (cacheResult.hit && cacheResult.content !== undefined) {
       // Cache hit and not expired - use cached content
       console.error(`Cache hit: ${rawUrl}`);
       content = cacheResult.content;
@@ -134,27 +124,18 @@ export async function fetchRemote(
         console.error(`Fetching: ${rawUrl}`);
       }
 
-      const response = await resilientFetch(rawUrl, { headers });
+      const response = await fetchTextResource(rawUrl, { headers });
 
       // Handle 304 Not Modified - content hasn't changed
-      if (response.status === 304 && cacheResult.metadata) {
+      if (response.status === 304 && cacheResult.metadata && cacheResult.content !== undefined) {
         console.error(`Not modified (304), using cache: ${rawUrl}`);
 
-        // Read cached content directly from disk
-        const { contentPath } = getCachePaths(rawUrl);
-        const cachedContent = await readFile(contentPath, "utf-8");
-
-        // Update cache metadata to refresh TTL
-        const newEtag = response.headers.get("etag") || cachedMeta?.etag;
-        const newLastModified = response.headers.get("last-modified") || cachedMeta?.lastModified;
-
-        await touchCacheEntry(rawUrl, {
-          ttlMs: cacheTtlMs,
-          etag: newEtag,
-          lastModified: newLastModified,
+        // Reuse the digest-checked snapshot that supplied the validators.
+        content = cacheResult.content;
+        await setCachedContent(rawUrl, content, {
+          ttlMs: cacheTtlMs, etag: response.headers.get("etag") ?? cachedMeta?.etag,
+          lastModified: response.headers.get("last-modified") ?? cachedMeta?.lastModified,
         });
-
-        content = cachedContent;
         fromCache = true;
       } else if (!response.ok) {
         return {
@@ -164,7 +145,7 @@ export async function fetchRemote(
         };
       } else {
         // New content - extract cache headers and store
-        content = await response.text();
+        content = response.text;
 
         const etag = response.headers.get("etag") || undefined;
         const lastModified = response.headers.get("last-modified") || undefined;
@@ -184,7 +165,8 @@ export async function fetchRemote(
     const localPath = join(tempDir, fileName);
 
     // Write content to temp file
-    await Bun.write(localPath, content);
+    try { await Bun.write(localPath, content); } catch (err) { await rm(tempDir, { recursive: true, force: true }); throw err; }
+    ownedDownloads.set(localPath, tempDir);
 
     if (!fromCache) {
       console.error(`Saved to: ${localPath}`);
@@ -219,11 +201,9 @@ function extractFileName(url: string): string | null {
  * Cleanup temporary remote file
  */
 export async function cleanupRemote(localPath: string): Promise<void> {
-  try {
-    const tempDir = join(localPath, "..");
-    await rm(tempDir, { recursive: true });
-  } catch {
-    // Ignore cleanup errors
-  }
+  const dir = ownedDownloads.get(localPath);
+  if (!dir) return;
+  await rm(dir, { recursive: true, force: true });
+  ownedDownloads.delete(localPath);
 }
 

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoverFlowCatalog } from "./flow-discovery";
@@ -106,13 +108,13 @@ describe("discoverFlowCatalog", () => {
 					"team-review": {
 						source: "gh:team/flows/review.claude.md",
 						resolvedRef: "main",
-						sha256: "abc",
+						sha256: createHash("sha256").update(readFileSync(installed)).digest("hex"),
 						installedPath: installed,
 						installedAt: "2026-01-01T00:00:00.000Z",
 					},
 					missing: {
 						source: "gh:team/flows/missing.claude.md",
-						sha256: "def",
+						sha256: "0".repeat(64),
 						installedPath: missing,
 						installedAt: "2026-01-02T00:00:00.000Z",
 					},
