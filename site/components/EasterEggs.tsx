@@ -1,8 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { createDesk } from './night-shift/desk';
+import { eggIds, restoreDiscoveries } from './night-shift/records';
+import { door, roomForHash } from './night-shift/rooms';
 import { shaderAudio } from './shaderAudio';
 
 /**
- * 23 hidden easter eggs + a five-step secret puzzle.
+ * The original discoveries and the Night Shift share a ledger. The five-star puzzle is separate.
  *
  * Every egg pairs a discovery trigger with its own sound (composed from
  * shaderAudio's generic voices) and its own visual (composed from the
@@ -29,7 +32,8 @@ const A3 = 220, C4 = 261.63, D4 = 293.66, E4 = 329.63, G4 = 392, A4 = 440,
 const PENTA = [A3, C4, D4, E4, G4, A4, C5, D4 * 2, E5, G4 * 2];
 const CHORD = [A3, C4, E4, A4];
 
-const EGG_COUNT = 23;
+const EGG_COUNT = eggIds.size;
+const NightShift = React.lazy(() => import('./night-shift/NightShift').then(m => ({ default: m.NightShift })));
 
 const HINTS = [
     '★ The egg likes attention. Boop it three times.',
@@ -52,7 +56,8 @@ const save = (key: string, v: unknown) => {
 
 export const EasterEggs: React.FC = () => {
     const [toast, setToast] = useState<{ text: string; big?: boolean } | null>(null);
-    const [foundCount, setFoundCount] = useState(() => load<string[]>('mdflow-eggs', []).length);
+    const [found] = useState(() => restoreDiscoveries(load<unknown>('mdflow-eggs', [])));
+    const [foundCount, setFoundCount] = useState(found.size);
     const [step, setStep] = useState(() => load<number>('mdflow-puzzle', 0));
     const toastTimer = useRef(0);
 
@@ -62,10 +67,31 @@ export const EasterEggs: React.FC = () => {
         toastTimer.current = window.setTimeout(() => setToast(null), ms);
     };
 
+    const discover = (id: string, label: string) => {
+        if (found.has(id)) return;
+        for (const old of restoreDiscoveries(load<unknown>('mdflow-eggs', []))) found.add(old);
+        found.add(id); save('mdflow-eggs', [...found]); setFoundCount(found.size);
+        show(`🥚 ${found.size}/${EGG_COUNT} — ${label}`);
+        shaderAudio.playNotes([{ f: A5, type: 'sine', gain: 0.03, decay: 0.6, wet: 0.6 },
+            { f: A5 * 1.5, at: 0.09, type: 'sine', gain: 0.025, decay: 0.8, wet: 0.6 }]);
+    };
+    const [desk] = useState(() => createDesk(s => discover(s.id, s.title), () => found, note =>
+        shaderAudio.playNotes([{ f: note === 'tin' ? A4 : note === 'glass' ? E5 : C4, type: 'triangle', gain: 0.04, decay: 0.5 }])));
+    const night = useSyncExternalStore(desk.subscribe, desk.getSnapshot, desk.getSnapshot);
+    useEffect(() => {
+        window.mdflowNightShift = desk.api;
+        const route = () => { const r = roomForHash(location.hash); if (r) desk.api.open(r); else if (desk.getSnapshot().room) desk.api.close(); };
+        route(); window.addEventListener('hashchange', route);
+        const off = desk.subscribe(() => {
+            const r = desk.getSnapshot().room;
+            if (roomForHash(location.hash)) history.replaceState(history.state, '', location.pathname + location.search + (r ? door(r) : ''));
+        });
+        return () => { off(); window.removeEventListener('hashchange', route); if (window.mdflowNightShift === desk.api) delete window.mdflowNightShift; };
+    }, [desk]);
+
     useEffect(() => {
         // touch devices play too: tap/hold/scroll/two-finger eggs all work;
         // keyboard and hover eggs simply never fire there
-        const found = new Set(load<string[]>('mdflow-eggs', []));
         let puzzleStep = load<number>('mdflow-puzzle', 0);
         const cools = new Map<string, number>();
         const timers: number[] = [];
@@ -75,16 +101,6 @@ export const EasterEggs: React.FC = () => {
             if ((cools.get(id) ?? 0) > now) return false;
             cools.set(id, now + ms);
             return true;
-        };
-        const discover = (id: string, label: string) => {
-            if (found.has(id)) return;
-            found.add(id);
-            save('mdflow-eggs', [...found]);
-            setFoundCount(found.size);
-            show(`🥚 ${found.size}/${EGG_COUNT} — ${label}`);
-            // first-find sparkle on top of the egg's own voice
-            shaderAudio.playNotes([{ f: A5, type: 'sine', gain: 0.03, decay: 0.6, wet: 0.6 },
-                { f: A5 * 1.5, at: 0.09, type: 'sine', gain: 0.025, decay: 0.8, wet: 0.6 }]);
         };
         const center = () => ({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
 
@@ -158,7 +174,7 @@ export const EasterEggs: React.FC = () => {
         let typeBuf = '';
         let arrowBuf: { k: string; t: number }[] = [];
         const onKey = (e: KeyboardEvent) => {
-            if (e.metaKey || e.ctrlKey || e.altKey) return;
+            if (e.metaKey || e.ctrlKey || e.altKey || (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable=true], [role=textbox]'))) return;
             const k = e.key.toLowerCase();
             keyBuf = [...keyBuf, k].slice(-10);
             if (KONAMI.every((v, i) => keyBuf[i] === v)) {
@@ -474,7 +490,7 @@ export const EasterEggs: React.FC = () => {
                 shaderAudio.playNotes([E5, C5, A4, C5, E5, A5].map((f, i) => (
                     { f, at: i * 0.5, type: 'sine' as OscillatorType, gain: 0.028, decay: 1.4, wet: 0.8 })));
             }, 30000);
-            timers.push(idleTimer);
+            // Re-arming replaces the previous timer; retain only the live handle.
         };
         const activity = () => armIdle();
         window.addEventListener('pointermove', activity, { passive: true });
@@ -564,6 +580,7 @@ export const EasterEggs: React.FC = () => {
             volBtn?.removeEventListener('pointerenter', volEnter);
             volBtn?.removeEventListener('pointerleave', volLeave);
             document.removeEventListener('visibilitychange', onVis);
+            window.clearTimeout(idleTimer); window.clearTimeout(toastTimer.current);
             for (const id of timers) { window.clearTimeout(id); window.clearInterval(id); }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -603,6 +620,7 @@ export const EasterEggs: React.FC = () => {
                         </span>
                     ))}
                 </button>
+                <a href={door('radio')} title="Clock in for the night shift" aria-label="Open the night shift" className="rounded border border-zinc-700 bg-zinc-950/85 px-2 py-1 font-mono text-[10px] text-zinc-300 hover:text-amber-300">◐ 2nd shift</a>
                 {foundCount > 0 && (
                     <button
                         aria-label={`${foundCount} of ${EGG_COUNT} easter eggs found`}
@@ -613,9 +631,11 @@ export const EasterEggs: React.FC = () => {
                     </button>
                 )}
             </div>
+            {night.room && <Suspense fallback={null}><NightShift desk={desk} state={night} found={found} /></Suspense>}
             {/* discovery / hint toast */}
             {toast && (
                 <div
+                    role="status"
                     className={`fixed bottom-10 left-3 z-50 max-w-sm rounded-lg border px-4 py-3 font-mono backdrop-blur-md pointer-events-none ${
                         toast.big
                             ? 'text-sm border-amber-500/60 bg-amber-950/60 text-amber-200 shadow-[0_0_30px_rgba(251,191,36,0.35)]'

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import middleware from './middleware';
+import middleware, { config } from './middleware';
 
 describe('page representation negotiation', () => {
     test.each([
@@ -25,6 +25,14 @@ describe('page representation negotiation', () => {
     test('rewrites article representation without losing query parameters', () => {
         const response = middleware(new Request('https://mdflow.dev/docs/?from=agent', { headers: { Accept: 'text/markdown' } }));
         expect(response.headers.get('x-middleware-rewrite')).toBe('https://mdflow.dev/docs.md?from=agent');
+    });
+
+    test('the field note is negotiated at its public URL as well as directly readable as Markdown', () => {
+        for (const path of ['/the-trust-boundary', '/the-trust-boundary/']) {
+            expect(config.matcher).toContain(path);
+            const r = middleware(new Request('https://mdflow.dev' + path, { headers: { Accept: 'text/markdown' } }));
+            expect(r.headers.get('x-middleware-rewrite')).toBe('https://mdflow.dev/the-trust-boundary.md');
+        }
     });
 
     test.each(['application/json', 'text/html;q=0,text/markdown;q=0,*/*;q=1'])('rejects unsupported representations: %s', async (accept) => {

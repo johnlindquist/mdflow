@@ -160,8 +160,15 @@ Operations distinguish \`FREE\` (no engine invocation), \`LOCAL_WRITE\` (changes
 
 A real flow run, eval run, evolution proposal, and source-changing apply each require separate consent. Preview eval cost with \`md eval <flow.md> --plan\`; preview evolution with \`md evolve plan <flow.md>\`. Proposals remain private and off-path until an explicit \`md evolve apply <run-id>\`. Context isolation strips supported engine context, not host access or credentials.
 
+## Night shift: optional browser controls
+
+The little service hatches on the homepage open five playable instruments. Open [the shortwave door](https://mdflow.dev/#night-shift/radio) or look for an AUX plate. Each room has a desk note if you want a clue. There is no countdown; the organ works with sound off. Escape or **Clock out** closes the door. Discoveries belong to this browser, not a server account.
+
+On the hydrated homepage, browser agents can use \`window.mdflowNightShift\` (version 1). \`inspect()\` returns the rooms, active room, revision, available action strings, instrument settings, printed slip ID and local collection. \`open(roomId)\` operates a door; \`act(action, revision)\` operates the displayed instrument; \`close()\` clocks out. For example, open \`radio\`, read its revision, and send \`listen\` with that revision. Failed commands return \`{ok:false, error, state}\` (closed, stale, unknown room or invalid action). Refresh from the returned state; do not replay stale commands blindly. These are the same controls as the buttons. They do not run CLI commands, access credentials, or change server state.
+
 ## Reference library
 
+- [A prompt is not a shell](https://mdflow.dev/the-trust-boundary/): what the execution-boundary audit found and what to change in a flow.
 - [Complete CLI reference](https://mdflow.dev/docs/public-api.md): flags, configuration, JSON objects, event ordering, and error contracts.
 - [Project README](https://mdflow.dev/README.md): installation and workflow examples.
 - [Evolution specification](https://mdflow.dev/docs/evolve.md) and [illustrated deep dive](https://mdflow.dev/evolve-deep-dive/): feedback, proof, review, apply, and rollback.

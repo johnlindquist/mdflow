@@ -3,7 +3,7 @@ import { next, rewrite } from '@vercel/functions';
 // Pages negotiate HTML/Markdown; the source-facts resource is read-only JSON.
 // Other static assets and nonexistent routes retain their own HTTP semantics.
 export const config = {
-    matcher: ['/', '/index.html', '/about', '/about/', '/contact', '/contact/', '/privacy', '/privacy/', '/docs', '/docs/', '/evolve-deep-dive', '/evolve-deep-dive/', '/facts.json'],
+    matcher: ['/', '/index.html', '/about', '/about/', '/contact', '/contact/', '/privacy', '/privacy/', '/docs', '/docs/', '/evolve-deep-dive', '/evolve-deep-dive/', '/the-trust-boundary', '/the-trust-boundary/', '/facts.json'],
 };
 
 function quality(accept: string, type: string): number {
