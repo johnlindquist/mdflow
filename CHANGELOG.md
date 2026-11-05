@@ -1,3 +1,18 @@
+# [5.0.0](https://github.com/johnlindquist/mdflow/compare/v4.9.0...v5.0.0) (2026-11-05)
+
+
+* fix!: bind execution and stored mutations to verified inputs ([46b14d5](https://github.com/johnlindquist/mdflow/commit/46b14d5c4f6d2beb00e164e4ff90501867758d61))
+
+
+### Bug Fixes
+
+* read subprocess and redirected stdin through the native Bun stream ([b4bb39a](https://github.com/johnlindquist/mdflow/commit/b4bb39a5f00cbf56f1b8d12f6d3661abdfcd86ec))
+
+
+### BREAKING CHANGES
+
+* Imported context is data, not executable Liquid or shell source. Registry execution requires a matching lockfile pin; move editable flows outside the registry. Mixed event and inspection modes are rejected.
+
 # [4.9.0](https://github.com/johnlindquist/mdflow/compare/v4.8.0...v4.9.0) (2026-07-25)
 
 
