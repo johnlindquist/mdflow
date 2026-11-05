@@ -1,7 +1,5 @@
 import React, { useEffect, useRef } from 'react';
 import { shaderAudio, NOTE_COLUMNS, NOTE_ROWS, BPM } from './shaderAudio';
-import { fxBridge } from './play-fx/catalog';
-import { filterGLSL } from './play-fx/filters';
 
 /**
  * Full-page WebGL overlay that guides the eye toward key conversion points —
@@ -114,7 +112,6 @@ uniform float u_tremble;    // 0..1 — hero ripples shiver (workshop hover)
 uniform vec4  u_mon[${MAX_MONSTERS}];     // pixel monster: xy device px, half-size css px, seed
 uniform vec4  u_monPop[${MAX_MONSTERS}];  // alive fade, capture dissolve, hue, wobble phase
 uniform float u_px;         // device pixel ratio
-uniform vec3 u_patch;       // active filter and canvas dimensions
 
 float hash(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
@@ -511,7 +508,6 @@ void main() {
          * mix(AMBER, ORANGE, glow);
   }
 
-  ${filterGLSL}
   // dither to avoid banding on the dark background
   col += (hash(uv + u_time) - 0.5) / 255.0;
   gl_FragColor = vec4(col, 1.0);
@@ -651,7 +647,6 @@ export const ShaderGuide: React.FC = () => {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    const uPatch = gl.getUniformLocation(program, 'u_patch');
     const uTime = gl.getUniformLocation(program, 'u_time');
     const uMouse = gl.getUniformLocation(program, 'u_mouse');
     const uVel = gl.getUniformLocation(program, 'u_vel');
@@ -1328,7 +1323,6 @@ export const ShaderGuide: React.FC = () => {
         // THE GATE: the closed shape is a capture net — every pixel
         // monster inside the polygon dissolves; near-misses bolt away
         const poly = [...chain.pts, { x, y }];
-        fxBridge.net?.((px, py) => inPoly(px, py, poly));
         for (const mn of monsters) {
           if (mn.pop > 0 || mn.fleeing) continue;
           // the boss is far too big for a light net — darts only
@@ -1407,7 +1401,7 @@ export const ShaderGuide: React.FC = () => {
     // out. Suppress the cause and always clear on the next gesture. Editable
     // targets (the editor textarea) keep native selection behavior.
     const isEditable = (t: EventTarget | null) =>
-      t instanceof Element && !!t.closest('input, textarea, [contenteditable], [data-fx-ui]');
+      t instanceof Element && !!t.closest('input, textarea, [contenteditable]');
     const clearSelection = () => {
       if (isEditable(document.activeElement)) return;
       const sel = window.getSelection();
@@ -2319,7 +2313,6 @@ export const ShaderGuide: React.FC = () => {
         // darts bring one down; a brief invulnerability window keeps a
         // single spread from one-shotting it.
         if (p.volleyId > 0) {
-          if (fxBridge.dart?.(p.x, p.y, ox, oy)) { p.active = false; volleySparkResolved(p, false); continue; }
           for (const mn of monsters) {
             if (mn.pop > 0 || mn.fleeing || mn.alive < 0.4) continue;
             if (now - mn.hitAt < 350) continue;
@@ -2788,7 +2781,6 @@ export const ShaderGuide: React.FC = () => {
       lastDrawAt = now;
       draws++;
 
-      gl.uniform3f(uPatch, fxBridge.shader, canvas.width, canvas.height);
       gl.uniform1f(uTime, shaderT);
       gl.uniform2f(uMouse, smooth.x * dpr, canvas.height - smooth.y * dpr);
       gl.uniform2f(uVel, vel.x * dpr, -vel.y * dpr);
@@ -2978,7 +2970,7 @@ export const ShaderGuide: React.FC = () => {
     <canvas
       ref={canvasRef}
       aria-hidden="true"
-      data-shader-layer="" className="fixed inset-0 w-full h-full z-[5] pointer-events-none mix-blend-screen"
+      className="fixed inset-0 w-full h-full z-[5] pointer-events-none mix-blend-screen"
     />
   );
 };

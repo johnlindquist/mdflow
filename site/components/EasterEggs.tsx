@@ -1,10 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { eggIds, restoreDiscoveries } from './play-fx/catalog';
-import { Playground } from './play-fx/Playground';
 import { shaderAudio } from './shaderAudio';
 
 /**
- * The original discoveries and live FX patches share a ledger. The five-star puzzle is separate.
+ * 23 hidden easter eggs + a five-step secret puzzle.
  *
  * Every egg pairs a discovery trigger with its own sound (composed from
  * shaderAudio's generic voices) and its own visual (composed from the
@@ -31,7 +29,15 @@ const A3 = 220, C4 = 261.63, D4 = 293.66, E4 = 329.63, G4 = 392, A4 = 440,
 const PENTA = [A3, C4, D4, E4, G4, A4, C5, D4 * 2, E5, G4 * 2];
 const CHORD = [A3, C4, E4, A4];
 
-const EGG_COUNT = eggIds.size;
+const EGG_IDS = new Set([
+    'konami', 'type-mdflow', 'type-egg', 'key-b', 'key-h', 'arrow-dance', 'alt-click', 'double-click',
+    'triple-click', 'corners', 'footer-zap', 'v3-badge', 'logo-disco', 'middle-click', 'shake', 'circle',
+    'overload', 'monster-hunt', 'egg-pop', 'idle-fireflies', 'elevator', 'shy-volume', 'welcome-back',
+]);
+const EGG_COUNT = EGG_IDS.size;
+const discoveries = (ids: unknown) => new Set<string>(
+    Array.isArray(ids) ? ids.filter(id => EGG_IDS.has(id)) : [],
+);
 
 const HINTS = [
     '★ The egg likes attention. Boop it three times.',
@@ -52,10 +58,9 @@ const save = (key: string, v: unknown) => {
     try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* private mode */ }
 };
 
-export const EasterEggs: React.FC<{muted:boolean;onMuteChange:(m:boolean)=>void}> = ({muted,onMuteChange}) => {
+export const EasterEggs: React.FC = () => {
     const [toast, setToast] = useState<{ text: string; big?: boolean } | null>(null);
-    const [found] = useState(() => restoreDiscoveries(load<unknown>('mdflow-eggs', [])));
-    const [foundCount, setFoundCount] = useState(found.size);
+    const [foundCount, setFoundCount] = useState(0);
     const [step, setStep] = useState(() => load<number>('mdflow-puzzle', 0));
     const toastTimer = useRef(0);
 
@@ -65,20 +70,22 @@ export const EasterEggs: React.FC<{muted:boolean;onMuteChange:(m:boolean)=>void}
         toastTimer.current = window.setTimeout(() => setToast(null), ms);
     };
 
-    const discover = (id: string, label: string) => {
-        if (found.has(id)) return;
-        const saved=load<unknown>('mdflow-eggs', []);
-        for (const old of restoreDiscoveries(saved)) found.add(old);
-        // Retired ticket IDs stay on disk but are not mislabeled as new FX discoveries.
-        const retired=Array.isArray(saved)?saved.filter(k=>typeof k==='string'&&k.startsWith('night-')).slice(0,25):[];
-        found.add(id); save('mdflow-eggs', [...found,...retired]); setFoundCount(found.size);
-        show(`🥚 ${found.size}/${EGG_COUNT} — ${label}`);
-        shaderAudio.playNotes([{ f: A5, type: 'sine', gain: 0.03, decay: 0.6, wet: 0.6 },
-            { f: A5 * 1.5, at: 0.09, type: 'sine', gain: 0.025, decay: 0.8, wet: 0.6 }]);
-    };
     useEffect(() => {
-        // touch devices play too: tap/hold/scroll/two-finger eggs all work;
-        // keyboard and hover eggs simply never fire there
+        const saved = load<unknown>('mdflow-eggs', []);
+        const found = discoveries(saved);
+        // Returning players keep their original discoveries and separate puzzle progress.
+        if (Array.isArray(saved) && saved.length !== found.size) save('mdflow-eggs', [...found]);
+        setFoundCount(found.size);
+        const discover = (id: string, label: string) => {
+            if (found.has(id)) return;
+            for (const other of discoveries(load<unknown>('mdflow-eggs', []))) found.add(other);
+            found.add(id);
+            save('mdflow-eggs', [...found]);
+            setFoundCount(found.size);
+            show(`🥚 ${found.size}/${EGG_COUNT} — ${label}`);
+            shaderAudio.playNotes([{ f: A5, type: 'sine', gain: 0.03, decay: 0.6, wet: 0.6 },
+                { f: A5 * 1.5, at: 0.09, type: 'sine', gain: 0.025, decay: 0.8, wet: 0.6 }]);
+        };
         let puzzleStep = load<number>('mdflow-puzzle', 0);
         const cools = new Map<string, number>();
         const timers: number[] = [];
@@ -179,9 +186,6 @@ export const EasterEggs: React.FC<{muted:boolean;onMuteChange:(m:boolean)=>void}
             }
             if (k.length === 1) {
                 typeBuf = (typeBuf + k).slice(-8);
-                if (typeBuf.endsWith('aurora') || typeBuf.endsWith('moth')) {
-                    window.mdflowPlayground?.play(typeBuf.endsWith('moth') ? 'moths' : 'aurora'); typeBuf = '';
-                }
                 if (typeBuf.endsWith('mdflow')) {
                     discover('type-mdflow', 'you spoke its name');
                     const logo = document.querySelector('nav .font-display')?.getBoundingClientRect();
@@ -250,7 +254,6 @@ export const EasterEggs: React.FC<{muted:boolean;onMuteChange:(m:boolean)=>void}
         let corners: Set<string> = new Set();
         let cornersAt = 0;
         const onClick = (e: MouseEvent) => {
-            if (e.target instanceof Element && e.target.closest('[data-fx-ui]')) return;
             const now = performance.now();
             // alt+click: gravity flip
             if (e.altKey && cool('alt-click', 6000)) {
@@ -403,7 +406,6 @@ export const EasterEggs: React.FC<{muted:boolean;onMuteChange:(m:boolean)=>void}
                 if (Math.abs(turn) > Math.PI * 2.1 && cool('circle', 6000)) {
                     turn = 0;
                     discover('circle', 'you drew the halo');
-                    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && !document.documentElement.dataset.playFx) window.mdflowPlayground?.play('orbit');
                     fx({ type: 'burst', x: e.clientX, y: e.clientY, n: 12, speed: 300, amp: 0.6, grace: 1.2, freqs: PENTA.slice(0, 5).map(f => f * 2) });
                     shaderAudio.playNotes(PENTA.slice(0, 10).map((f, i) => (
                         { f: f * 2, at: i * 0.06, type: 'triangle' as OscillatorType, gain: 0.03, decay: 0.5, wet: 0.6 })));
@@ -416,7 +418,6 @@ export const EasterEggs: React.FC<{muted:boolean;onMuteChange:(m:boolean)=>void}
         let holdTimer = 0;
         let holdStart = { x: 0, y: 0 };
         const onDown = (e: PointerEvent) => {
-            if (e.target instanceof Element && e.target.closest('[data-fx-ui]')) return;
             holdStart = { x: e.clientX, y: e.clientY };
             window.clearTimeout(holdTimer);
             holdTimer = window.setTimeout(() => {
@@ -545,7 +546,7 @@ export const EasterEggs: React.FC<{muted:boolean;onMuteChange:(m:boolean)=>void}
             try {
                 if (found.size === 0 && !sessionStorage.getItem('mdflow-nudge')) {
                     sessionStorage.setItem('mdflow-nudge', '1');
-                    show(`✨ try Play FX — ${EGG_COUNT} of them, and five stars`, false, 6000);
+                    show(`✨ this page keeps secrets — ${EGG_COUNT} of them, and five stars`, false, 6000);
                 }
             } catch { /* private mode */ }
         }, 25000);
@@ -616,14 +617,13 @@ export const EasterEggs: React.FC<{muted:boolean;onMuteChange:(m:boolean)=>void}
                 {foundCount > 0 && (
                     <button
                         aria-label={`${foundCount} of ${EGG_COUNT} easter eggs found`}
-                        onClick={() => show(`🥚 ${foundCount}/${EGG_COUNT} found. Choose Play FX to try a patch or see the original gestures.`, false, 5000)}
+                        onClick={() => show(`🥚 ${foundCount}/${EGG_COUNT} easter eggs found. Keep poking.`, false, 5000)}
                         className="text-[10px] font-mono text-zinc-600 hover:text-zinc-300 transition-colors opacity-70 hover:opacity-100 bg-transparent cursor-pointer"
                     >
                         {'🥚'}{foundCount}/{EGG_COUNT}
                     </button>
                 )}
             </div>
-            <Playground found={found} discover={discover} muted={muted} onMuteChange={onMuteChange} />
             {/* discovery / hint toast */}
             {toast && (
                 <div

@@ -11,7 +11,6 @@ import { Zap, Volume2, VolumeX } from 'lucide-react';
 import { FlowMark } from './components/FlowMark';
 import { CraftedBy } from './components/CraftedBy';
 import { FlowWorkbenchDemo } from './components/FlowWorkbenchDemo';
-import './components/play-fx/playground.css';
 
 // Decorative overlays are client-only enhancements. Product content renders
 // on the server and hydrates without waiting for these heavier chunks.
@@ -253,7 +252,7 @@ export default function App() {
         />
 
         {/* Collectible discoveries and the independent five-star puzzle. */}
-        <EasterEggs muted={muted} onMuteChange={setMuted} />
+        <EasterEggs />
 
         {/* heart HUD for the alien defense game (ShaderGuide owns the rules) */}
         <AlienDefense />
@@ -269,8 +268,7 @@ export default function App() {
                 </div>
                 <span className="bg-clip-text text-transparent bg-gradient-to-r from-white to-zinc-400 group-hover:to-white transition-all">mdflow</span>
             </div>
-            <div className="flex items-center gap-3 sm:gap-6 text-sm font-medium text-zinc-400">
-                <a href="#playground" className="fx-nav" data-fx-link data-fx-ui>✦ Play FX</a>
+            <div className="flex items-center gap-6 text-sm font-medium text-zinc-400">
                 <a href="https://github.com/johnlindquist/mdflow" target="_blank" rel="noreferrer" className="hover:text-white transition-colors flex items-center gap-2 hover:drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]">
                     <GithubMark size={18} />
                     <span className="hidden sm:inline">GitHub</span>

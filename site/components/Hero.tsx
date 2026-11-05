@@ -71,7 +71,7 @@ export const Hero: React.FC = () => {
                     {/* The LCP content is rendered at build time and stays visible
                         while React hydrates the interactive enhancements. */}
                     <div className="select-none">
-                        <div className="flex items-center gap-3 mb-3">
+                        <div className="flex items-center gap-3 mb-8">
                             <div data-egg="v3" className="inline-flex items-center px-4 py-1.5 rounded-full border border-orange-500/50 bg-orange-950/30 text-xs font-mono text-orange-200 backdrop-blur-md shadow-[0_0_15px_rgba(249,115,22,0.3)] cursor-pointer">
                                 <Zap size={12} className="mr-2 text-orange-400 fill-orange-400" />
                                 <span className="font-bold tracking-wider">{`V${facts.versionBase} LIVE`}</span>
@@ -85,10 +85,6 @@ export const Hero: React.FC = () => {
                                 <span className="font-bold tracking-wider">OPEN SOURCE ❤️</span>
                             </a>
                         </div>
-
-                        <nav className="fx-quick mb-5" aria-label="Try the homepage effects" data-fx-ui>
-                            <span>PLAY WITH THE PAGE</span><a data-fx-link href="#fx/comet">⌁ Paint comets</a><a data-fx-link href="#fx/jellies">♟ Summon jellies</a><a data-fx-link data-fx-listen href="#fx/outrun">♪ Hear synthwave</a>
-                        </nav>
 
                         {/* Scaled down text for mobile */}
                         <h1 data-shader-headline className="select-none text-5xl lg:text-8xl font-display font-bold tracking-tighter text-white leading-[0.9] text-glow">

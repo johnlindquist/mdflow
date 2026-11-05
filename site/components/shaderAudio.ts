@@ -17,8 +17,6 @@
  * gesture), so there are no autoplay violations.
  */
 
-import { scoreBeat, type Score } from './play-fx/scores';
-
 const SCALE = [220.0, 261.63, 293.66, 329.63, 392.0, 440.0, 523.25, 587.33, 659.25, 783.99];
 const PENTA = 5; // notes per octave in SCALE (it spans two octaves)
 
@@ -135,45 +133,7 @@ class ShaderAudioEngine {
   private alienCount = 0;   // pixel monsters on the page (invasion march)
   private alienUrgent = false; // one is raiding / they're taunt-dancing
   private tauntUntil = 0;   // aliens-won: march runs hot until this time
-  private score: Score | null = null;
-  private scoreTimer = 0;
-  private scoreIndex = 0;
-  private scoreNext = 0;
-  private meter: AnalyserNode | null = null;
-  private meterSamples = new Float32Array(256);
   private muted = true;
-
-  /** A bounded look-ahead uses the audio clock, not the shader frame rate. */
-  startScore(score: Score | null, high: () => boolean = () => false) {
-    window.clearInterval(this.scoreTimer);
-    this.score = score; this.scoreIndex = 0; this.scoreNext = 0;
-    if (!score) return;
-    const fill = () => {
-      if (!this.ready() || document.hidden || this.ctx!.state !== 'running') return;
-      const now = this.ctx!.currentTime, unit = 60 / score.bpm / 4;
-      if (this.scoreNext < now) this.scoreNext = now + .015;
-      while (this.scoreNext < now + .12) {
-        const step = this.scoreIndex++, t = this.scoreNext + (step%4===2 ? unit*score.swing : 0);
-        const p = scoreBeat(score, step, high());
-        if (p.kick) this.kick(t,.65);
-        if (p.snare) this.snare(t,.54);
-        if (p.hat) this.hat(t, step%4===0 ? .36 : .61);
-        if (p.bass) this.bass(t,p.bass,.32);
-        if (p.lead) this.note(p.lead,{type:score.wave,gain:score.wave==='square'||score.wave==='sawtooth'?.034:.074,delay:t-now,decay:score.tail,wet:.24});
-        if (p.harmony) this.note(p.harmony,{type:'sine',gain:.032,delay:t-now,decay:.55,wet:.3});
-        this.scoreNext += unit;
-      }
-    };
-    fill(); this.scoreTimer = window.setInterval(fill,45);
-  }
-
-  outputStatus() {
-    // Tap the existing master (never a microphone). Allocate a meter only on inspection.
-    if (this.master && !this.meter) { this.meter=this.ctx!.createAnalyser(); this.meter.fftSize=256; this.master.connect(this.meter); }
-    this.meter?.getFloatTimeDomainData(this.meterSamples);
-    let sum=0; for (const n of this.meterSamples) sum+=n*n;
-    return {muted:this.muted, context:this.ctx?.state ?? 'not-started', scheduledSteps:this.scoreIndex, rms:Math.sqrt(sum/256)};
-  }
   private lastTick = 0;
 
   get isMuted() {
@@ -1477,7 +1437,7 @@ class ShaderAudioEngine {
       g.gain.setTargetAtTime(lv * 0.035, t, 0.8); // slow, pad-like fades
     });
 
-    if (!this.score) this.scheduleGroove(prox);
+    this.scheduleGroove(prox);
   }
 }
 

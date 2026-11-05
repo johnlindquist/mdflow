@@ -160,14 +160,6 @@ Operations distinguish \`FREE\` (no engine invocation), \`LOCAL_WRITE\` (changes
 
 A real flow run, eval run, evolution proposal, and source-changing apply each require separate consent. Preview eval cost with \`md eval <flow.md> --plan\`; preview evolution with \`md evolve plan <flow.md>\`. Proposals remain private and off-path until an explicit \`md evolve apply <run-id>\`. Context isolation strips supported engine context, not host access or credentials.
 
-## Play with the page
-
-[Play FX](https://mdflow.dev/#playground) opens 25 patches on the homepage. Paint with the pointer, pop a bubble for a note, throw slingshot darts at an alien, or bend a shader across the page. The original gestures still work; **Original gestures** in the rack shows examples. [Try comet ink](https://mdflow.dev/#fx/comet) or [summon jellyfish](https://mdflow.dev/#fx/jellies). Nothing needs unlocking. Discoveries are local to this browser.
-
-The page starts muted. **Listen** in the Tracks bank or **Hear synthwave** on the homepage enables sound. An incoming URL stays muted. **Stop** or Escape releases the current patch. Reduced motion uses still compositions; non-WebGL devices use a canvas rendering. The product documentation works without the playground.
-
-On the hydrated homepage, browser agents can use \`window.mdflowPlayground\` (version 1). \`list()\` returns effect IDs, names, groups and play instructions. \`play(id)\` uses the same instrument as the controls, without changing mute; \`pulse()\` strikes the field or fires at an enemy. \`inspect()\` reports the active ID, activation serial, remaining time, renderer, pointer, enemies, captures and audio output. \`stop(serial)\` refuses a stale activation; \`stop()\` releases the current one. Unknown IDs and idle pulses return explicit errors. These operations affect only the current page, never a CLI or a server.
-
 ## Reference library
 
 - [A prompt is not a shell](https://mdflow.dev/the-trust-boundary/): what the execution-boundary audit found and what to change in a flow.
