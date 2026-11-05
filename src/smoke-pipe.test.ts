@@ -158,6 +158,15 @@ Body content
     expect(result.stdout).toContain("test-model");
   });
 
+  test("regular-file stdin decodes multibyte text across chunk boundaries", async () => {
+    const text = "x".repeat(65_535) + "🥚é";
+    const files = await createTestFiles(testDir, { "message.txt": text, "redirect.echo.md": "{{ _stdin }}" });
+    const proc = spawn({ cmd: [process.execPath, "run", CLI_PATH, files["redirect.echo.md"]!],
+      stdin: Bun.file(files["message.txt"]!), stdout: "pipe", stderr: "pipe" });
+    const [output, error, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    expect(code, error).toBe(0); expect(output.trimEnd()).toBe(text);
+  });
+
   test("empty stdin is handled gracefully", async () => {
     const agent = await createTestAgent(
       testDir,

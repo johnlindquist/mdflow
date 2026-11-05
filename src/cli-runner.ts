@@ -457,14 +457,24 @@ export class CliRunner {
 	private async readStdin(): Promise<string> {
 		if (this.stdinContent !== undefined) return this.stdinContent;
 		if (this.isStdinTTY) return "";
-		const chunks: Buffer[] = [];
+		// A subprocess caller may supply a regular/anonymous file descriptor, not
+		// just a shell pipe. Read both through Bun's native file/pipe reader.
+		const reader = Bun.stdin.stream().getReader();
+		const chunks: Uint8Array[] = [];
 		let totalBytes = 0;
-		for await (const chunk of process.stdin) {
-			totalBytes += chunk.length;
-			if (exceedsLimit(totalBytes)) throw new StdinSizeLimitError(totalBytes);
-			chunks.push(chunk);
-		}
-		return Buffer.concat(chunks).toString("utf-8").trim();
+		try {
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				totalBytes += value.byteLength;
+				if (exceedsLimit(totalBytes)) {
+					await reader.cancel();
+					throw new StdinSizeLimitError(totalBytes);
+				}
+				chunks.push(value);
+			}
+		} finally { reader.releaseLock(); }
+		return Buffer.concat(chunks, totalBytes).toString("utf-8").trim();
 	}
 
 	// Draining stdin blocks until EOF, and a headless caller (hook, cron job,

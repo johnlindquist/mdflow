@@ -37,7 +37,7 @@ describe("the flow declares actions; data cannot add one", () => {
   test("stdin, positional and named inputs reach the real engine literally", async () => {
     file("run.proofengine.md", "{{ _stdin }}\n{{ _1 }}\n{{ _text }}");
     const result = await md(["run.proofengine.md", payload, "--_text", payload], payload);
-    expect(result.exitCode).toBe(0); expect(ran()).toBe(true);
+    expect(result.exitCode, result.stderr).toBe(0); expect(ran()).toBe(true);
     expect(result.stdout).toBe([payload, payload, payload].join("\n")); expect(ran("injected")).toBe(false);
   });
   test("URL and nested file contents cannot introduce shell actions or Liquid", async () => {
@@ -51,7 +51,7 @@ describe("the flow declares actions; data cannot add one", () => {
     const input = "'` !`touch injected` {{ _stdin }}";
     file("run.proofengine.md", "{% for i in (1..2) %}!`printf '%s:%s' {{ i }} {{ _stdin | q }}`\n{% endfor %}{% if false %}!`touch injected`{% endif %}");
     const result = await md(["run.proofengine.md", "--_quiet"], input);
-    expect(result.exitCode).toBe(0); expect(result.stdout.trimEnd()).toBe(`1:${input}\n2:${input}`); expect(ran("injected")).toBe(false);
+    expect(result.exitCode, result.stderr).toBe(0); expect(result.stdout.trimEnd()).toBe(`1:${input}\n2:${input}`); expect(ran("injected")).toBe(false);
   });
   test("in-project symlinks work; symlinks out of the import root do not disclose bytes", async () => {
     file("inside.md", "inside"); symlinkSync(join(project, "inside.md"), join(project, "link.md"));
